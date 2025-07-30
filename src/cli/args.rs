@@ -277,22 +277,6 @@ pub enum StorageCommands {
         #[arg(long)]
         pki_mount: Option<String>,
     },
-    /// Clean up expired or all stored certificates
-    Cleanup {
-        /// Only remove expired certificates
-        #[arg(long)]
-        expired_only: bool,
-    },
-    /// Create encrypted backup of all stored certificates
-    Backup {
-        /// Output backup file
-        output_file: String,
-    },
-    /// Restore certificates from encrypted backup
-    Restore {
-        /// Backup file to restore
-        backup_file: String,
-    },
     /// Decrypt storage file for debugging
     Decrypt {
         /// Path to encrypted file

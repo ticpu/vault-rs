@@ -1,4 +1,5 @@
 use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::get_vault_addr;
 use reqwest::{Client, Response};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -35,8 +36,9 @@ pub struct VaultClient {
 }
 
 impl VaultClient {
-    pub fn new(vault_addr: String) -> Self {
+    pub async fn new() -> Self {
         let client = super::create_http_client().expect("Failed to create HTTP client");
+        let vault_addr = get_vault_addr().await.expect("Failed to get vault address");
 
         Self {
             client,

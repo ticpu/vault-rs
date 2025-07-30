@@ -1,7 +1,7 @@
 use crate::utils::errors::{Result, VaultCliError};
 use ordermap::OrderSet;
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::{env, fs};
 use trust_dns_resolver::TokioAsyncResolver;
 
 #[derive(Serialize, Deserialize)]
@@ -9,6 +9,17 @@ struct CachedVaultAddr {
     address: String,
     cached_at: u64, // Unix timestamp
     ttl_seconds: u64,
+}
+
+pub async fn get_vault_addr() -> Result<String> {
+    // First try environment variable
+    if let Ok(vault_addr) = env::var("VAULT_ADDR") {
+        return Ok(vault_addr);
+    }
+
+    // Fall back to DNS discovery
+    tracing::info!("VAULT_ADDR not set, attempting DNS discovery...");
+    discover_vault_addr().await
 }
 
 /// Discover Vault server address using DNS SRV records with caching

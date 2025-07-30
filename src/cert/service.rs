@@ -9,9 +9,9 @@ pub struct CertificateService {
 }
 
 impl CertificateService {
-    pub fn new(vault_addr: String) -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         Ok(Self {
-            client: VaultClient::new(vault_addr),
+            client: VaultClient::new().await,
             cache: CertificateCache::new()?,
         })
     }

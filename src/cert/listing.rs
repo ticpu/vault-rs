@@ -1,5 +1,5 @@
-use crate::cert::{CertificateColumn, CertificateMetadata, CertificateService};
-use crate::storage::{local::LocalStorage, metadata::CertificateStorage};
+use crate::cert::{CertificateColumn, CertificateService};
+use crate::storage::local::LocalStorage;
 use crate::utils::errors::Result;
 use std::str::FromStr;
 
@@ -98,13 +98,14 @@ impl CertificateListingService {
         };
 
         // Parse columns with support for + prefix (append to defaults)
-        let columns = if let Some(columns_str) = columns {
+        let column_names: Vec<String> = if let Some(columns_str) = columns {
             if let Some(stripped) = columns_str.strip_prefix('+') {
                 // Append mode: start with defaults and add specified columns
-                let mut result_columns = default_columns;
-                let additional_cols: Vec<&str> = stripped
+                let mut result_columns: Vec<String> =
+                    default_columns.into_iter().map(|s| s.to_string()).collect();
+                let additional_cols: Vec<String> = stripped
                     .split(',')
-                    .map(|s| s.trim())
+                    .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect();
                 result_columns.extend(additional_cols);
@@ -113,18 +114,18 @@ impl CertificateListingService {
                 // Override mode: use only specified columns
                 columns_str
                     .split(',')
-                    .map(|s| s.trim())
+                    .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect()
             }
         } else {
-            default_columns
+            default_columns.into_iter().map(|s| s.to_string()).collect()
         };
 
         // Parse column enums
-        let parsed_columns: std::result::Result<Vec<CertificateColumn>, _> = columns
+        let parsed_columns: std::result::Result<Vec<CertificateColumn>, _> = column_names
             .into_iter()
-            .map(|col| CertificateColumn::from_str(col))
+            .map(|col| CertificateColumn::from_str(&col))
             .collect();
 
         match parsed_columns {

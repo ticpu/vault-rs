@@ -1,11 +1,11 @@
 use crate::cli::args::*;
 use crate::storage::local::LocalStorage;
+use crate::utils::dns_discovery::get_vault_addr;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use crate::vault::{auth::VaultAuth, client::VaultClient};
 use clap::CommandFactory;
 use clap_complete::{generate, Shell};
-use std::env;
 use std::io;
 
 pub async fn handle_command(cli: Cli) -> Result<()> {
@@ -33,7 +33,7 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Auth { command } => handle_auth_command(command, &output).await,
         Commands::Cert { command } => handle_cert_command(command, &output).await,
-        Commands::Storage { command } => handle_storage_command(command, &output).await,
+        Commands::Storage { command } => handle_storage_command(command).await,
         Commands::Cache { command } => handle_cache_command(command, &output).await,
         Commands::Completion { ref command } => handle_completion_command(command, &cli),
         Commands::CompletionHelper { ref command } => {
@@ -114,9 +114,8 @@ async fn handle_auth_command(command: AuthCommands, output: &OutputFormat) -> Re
             Ok(())
         }
         AuthCommands::InitEncryption => {
-            let token = auth.get_token().await?;
-            let encryption_manager = crate::crypto::encryption::EncryptionManager::new(vault_addr);
-            encryption_manager.init_encryption_key(&token).await?;
+            let encryption_manager = crate::crypto::encryption::EncryptionManager::new().await;
+            encryption_manager.init_encryption_key().await?;
             println!("Encryption key initialized in personal vault");
             Ok(())
         }
@@ -408,11 +407,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
     }
 }
 
-async fn handle_storage_command(command: StorageCommands, output: &OutputFormat) -> Result<()> {
-    let vault_addr = get_vault_addr().await?;
-    let auth = VaultAuth::new(vault_addr.clone());
-    let token = auth.get_token().await?;
-    let storage = LocalStorage::new(vault_addr);
+async fn handle_storage_command(command: StorageCommands) -> Result<()> {
+    let storage = LocalStorage::new().await;
 
     match command {
         StorageCommands::List {
@@ -439,21 +435,6 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
         StorageCommands::Remove { cn, pki_mount } => {
             println!("Remove stored certificate - CN: {cn}, PKI: {pki_mount:?}");
             // TODO: Implement storage remove
-            Ok(())
-        }
-        StorageCommands::Cleanup { expired_only } => {
-            println!("Cleanup certificates - Expired only: {expired_only}");
-            // TODO: Implement cleanup
-            Ok(())
-        }
-        StorageCommands::Backup { output_file } => {
-            println!("Backup to: {output_file}");
-            // TODO: Implement backup
-            Ok(())
-        }
-        StorageCommands::Restore { backup_file } => {
-            println!("Restore from: {backup_file}");
-            // TODO: Implement restore
             Ok(())
         }
         StorageCommands::Decrypt { file_path } => {
@@ -492,7 +473,7 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
             };
 
             let context = format!("cert-{pki_mount}-{cn}");
-            let decrypted_data = storage.decrypt_file(&token, &context, path).await?;
+            let decrypted_data = storage.decrypt_file(&context, path).await?;
 
             let content = String::from_utf8_lossy(&decrypted_data);
             println!("{content}");
@@ -503,11 +484,7 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
 
 async fn handle_cache_command(command: CacheCommands, _output: &OutputFormat) -> Result<()> {
     use crate::cert::CertificateService;
-
-    let vault_addr = get_vault_addr().await?;
-    let auth = VaultAuth::new(vault_addr.clone());
-    let _token = auth.get_token().await?;
-    let cert_service = CertificateService::new(vault_addr.clone())?;
+    let cert_service = CertificateService::new().await?;
 
     match command {
         CacheCommands::Status => {
@@ -661,15 +638,4 @@ async fn handle_completion_helper_command(
 async fn handle_vault_command(subcommand: &str, args: &[String]) -> Result<()> {
     let vault_addr = get_vault_addr().await?;
     crate::vault::wrapper::exec_vault_command(vault_addr, subcommand, args).await
-}
-
-async fn get_vault_addr() -> Result<String> {
-    // First try environment variable
-    if let Ok(vault_addr) = env::var("VAULT_ADDR") {
-        return Ok(vault_addr);
-    }
-
-    // Fall back to DNS discovery
-    tracing::info!("VAULT_ADDR not set, attempting DNS discovery...");
-    crate::utils::dns_discovery::discover_vault_addr().await
 }

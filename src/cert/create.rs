@@ -107,7 +107,7 @@ pub async fn create_certificate(
 
     // Store locally unless --no-store
     if !request.no_store {
-        let storage = LocalStorage::new(client.vault_addr().to_string());
+        let storage = LocalStorage::new().await;
         let metadata = StorageCertificateMetadata {
             serial: serial.to_string(),
             cn: request.cn.clone(),
@@ -130,13 +130,7 @@ pub async fn create_certificate(
             ca_chain_pem: &ca_chain,
             metadata,
         };
-
-        // Get token from VaultAuth for storage encryption
-        let vault_addr = client.vault_addr().to_string();
-        let auth = crate::vault::auth::VaultAuth::new(vault_addr);
-        let token = auth.get_token().await?;
-        storage.store_certificate(&token, cert_data).await?;
-
+        storage.store_certificate(cert_data).await?;
         eprintln!("✓ Certificate stored encrypted locally");
     }
 

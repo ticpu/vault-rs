@@ -1,44 +1,42 @@
+use crate::client::VaultClient;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::PROGRAM_NAME;
 use aes_gcm::{Aes256Gcm, Key, KeyInit};
 use rand::RngCore;
-use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
 const DEFAULT_KV_MOUNT: &str = "secret";
 const KV_PATH: &str = "vault-rs/encryption-key";
 
 pub struct KeyManager {
-    client: Client,
-    vault_addr: String,
+    client: VaultClient,
 }
 
 impl KeyManager {
-    pub fn new(vault_addr: String) -> Self {
-        let client = crate::vault::create_http_client().expect("Failed to create HTTP client");
-
-        Self { client, vault_addr }
+    pub async fn new() -> Self {
+        let client = VaultClient::new().await;
+        Self { client }
     }
 
     /// Get or create the master encryption key from Vault
-    pub async fn get_master_key(&self, vault_token: &str) -> Result<[u8; 32]> {
+    pub async fn get_master_key(&self) -> Result<[u8; 32]> {
         // Try to retrieve existing key first
-        if let Ok(key) = self.retrieve_key_from_vault(vault_token).await {
+        if let Ok(key) = self.retrieve_key_from_vault().await {
             return Ok(key);
         }
 
         // If key doesn't exist, create and store a new one
         let new_key = self.generate_master_key();
-        self.store_key_in_vault(vault_token, &new_key).await?;
+        self.store_key_in_vault(&new_key).await?;
 
         Ok(new_key)
     }
 
     /// Initialize encryption key in personal vault
-    pub async fn init_encryption_key(&self, vault_token: &str) -> Result<()> {
+    pub async fn init_encryption_key(&self) -> Result<()> {
         let key = self.generate_master_key();
-        self.store_key_in_vault(vault_token, &key).await?;
+        self.store_key_in_vault(&key).await?;
         tracing::info!("Encryption key initialized in personal vault");
         Ok(())
     }
@@ -51,20 +49,9 @@ impl KeyManager {
     }
 
     /// Find available KV mounts and return the first one found
-    async fn find_kv_mount(&self, vault_token: &str) -> Result<Option<(String, String)>> {
-        let mounts_url = format!("{}/v1/sys/mounts", self.vault_addr);
-        let response = self
-            .client
-            .get(&mounts_url)
-            .header("X-Vault-Token", vault_token)
-            .send()
-            .await?;
+    async fn find_kv_mount(&self) -> Result<Option<(String, String)>> {
+        let mounts = self.client.list_mounts().await?;
 
-        if !response.status().is_success() {
-            return Ok(None);
-        }
-
-        let mounts: Value = response.json().await?;
         if let Some(data) = mounts.get("data").and_then(|d| d.as_object()) {
             // Look for KV mounts
             for (mount_path, mount_info) in data {
@@ -93,19 +80,12 @@ impl KeyManager {
     }
 
     /// Get the appropriate KV path for reading/writing
-    async fn get_kv_path(&self, vault_token: &str) -> Result<String> {
+    async fn get_kv_path(&self) -> Result<String> {
         // First check if default "secret" mount exists
-        let mounts_url = format!("{}/v1/sys/mounts", self.vault_addr);
-        let response = self
-            .client
-            .get(&mounts_url)
-            .header("X-Vault-Token", vault_token)
-            .send()
-            .await?;
+        let mounts = self.client.list_mounts().await?;
 
-        if response.status().is_success() {
-            let mounts: Value = response.json().await?;
-            if let Some(secret_mount) = mounts["data"][format!("{DEFAULT_KV_MOUNT}/")].as_object() {
+        if let Some(data) = mounts.get("data").and_then(|d| d.as_object()) {
+            if let Some(secret_mount) = data.get(&format!("{DEFAULT_KV_MOUNT}/")) {
                 if let Some(version) = secret_mount
                     .get("options")
                     .and_then(|opts| opts.get("version"))
@@ -122,7 +102,7 @@ impl KeyManager {
         }
 
         // If no "secret" mount, look for any KV mount
-        if let Some((mount_name, path)) = self.find_kv_mount(vault_token).await? {
+        if let Some((mount_name, path)) = self.find_kv_mount().await? {
             tracing::info!("Using KV mount '{}' for encryption key storage", mount_name);
             return Ok(path);
         }
@@ -133,24 +113,13 @@ impl KeyManager {
     }
 
     /// Retrieve key from Vault KV store
-    async fn retrieve_key_from_vault(&self, vault_token: &str) -> Result<[u8; 32]> {
-        let kv_path = self.get_kv_path(vault_token).await?;
-        let url = format!("{}/v1/{}", self.vault_addr, kv_path);
+    async fn retrieve_key_from_vault(&self) -> Result<[u8; 32]> {
+        let kv_path = self.get_kv_path().await?;
 
-        let response = self
-            .client
-            .get(&url)
-            .header("X-Vault-Token", vault_token)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            return Err(VaultCliError::Storage(
-                "Encryption key not found in vault".to_string(),
-            ));
-        }
-
-        let data: Value = response.json().await?;
+        let data =
+            self.client.get(&kv_path).await.map_err(|_| {
+                VaultCliError::Storage("Encryption key not found in vault".to_string())
+            })?;
 
         // Handle both KV v1 and v2 response formats
         let key_hex = if kv_path.contains("/data/") {
@@ -177,9 +146,8 @@ impl KeyManager {
     }
 
     /// Store key in Vault KV store
-    async fn store_key_in_vault(&self, vault_token: &str, key: &[u8; 32]) -> Result<()> {
-        let kv_path = self.get_kv_path(vault_token).await?;
-        let url = format!("{}/v1/{}", self.vault_addr, kv_path);
+    async fn store_key_in_vault(&self, key: &[u8; 32]) -> Result<()> {
+        let kv_path = self.get_kv_path().await?;
         let key_hex = hex::encode(key);
 
         let key_data = json!({
@@ -197,25 +165,10 @@ impl KeyManager {
             key_data
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .header("X-Vault-Token", vault_token)
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(VaultCliError::Storage(format!(
-                "Failed to store key in vault: {status} - {error_text}"
-            )));
-        }
+        self.client
+            .post(&kv_path, payload)
+            .await
+            .map_err(|e| VaultCliError::Storage(format!("Failed to store key in vault: {e}")))?;
 
         Ok(())
     }

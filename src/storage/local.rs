@@ -21,18 +21,14 @@ pub struct LocalStorage {
 }
 
 impl LocalStorage {
-    pub fn new(vault_addr: String) -> Self {
+    pub async fn new() -> Self {
         Self {
-            encryption_manager: EncryptionManager::new(vault_addr),
+            encryption_manager: EncryptionManager::new().await,
         }
     }
 
     /// Store certificate data encrypted locally
-    pub async fn store_certificate(
-        &self,
-        vault_token: &str,
-        cert_data: CertificateData<'_>,
-    ) -> Result<()> {
+    pub async fn store_certificate(&self, cert_data: CertificateData<'_>) -> Result<()> {
         let cert_dir = VaultCliPaths::cert_storage_dir(
             cert_data.pki_mount,
             cert_data.cn,
@@ -51,32 +47,17 @@ impl LocalStorage {
 
         // Encrypt and store certificate
         self.encryption_manager
-            .encrypt_to_file(
-                vault_token,
-                cert_data.certificate_pem.as_bytes(),
-                &context,
-                &cert_file,
-            )
+            .encrypt_to_file(cert_data.certificate_pem.as_bytes(), &context, &cert_file)
             .await?;
 
         // Encrypt and store private key
         self.encryption_manager
-            .encrypt_to_file(
-                vault_token,
-                cert_data.private_key_pem.as_bytes(),
-                &context,
-                &key_file,
-            )
+            .encrypt_to_file(cert_data.private_key_pem.as_bytes(), &context, &key_file)
             .await?;
 
         // Encrypt and store CA chain
         self.encryption_manager
-            .encrypt_to_file(
-                vault_token,
-                cert_data.ca_chain_pem.as_bytes(),
-                &context,
-                &ca_file,
-            )
+            .encrypt_to_file(cert_data.ca_chain_pem.as_bytes(), &context, &ca_file)
             .await?;
 
         // Create P12 bundle and store it
@@ -87,7 +68,7 @@ impl LocalStorage {
         )?;
         let p12_file = cert_dir.join("p12.enc");
         self.encryption_manager
-            .encrypt_to_file(vault_token, &p12_data, &context, &p12_file)
+            .encrypt_to_file(&p12_data, &context, &p12_file)
             .await?;
 
         // Create file info map
@@ -141,11 +122,11 @@ impl LocalStorage {
         };
 
         self.encryption_manager
-            .encrypt_yaml_to_file(vault_token, &cert_storage, &context, &metadata_file)
+            .encrypt_yaml_to_file(&cert_storage, &context, &metadata_file)
             .await?;
 
         // Update master index
-        self.update_master_index(vault_token, cert_storage).await?;
+        self.update_master_index(cert_storage).await?;
 
         tracing::info!(
             "Certificate stored encrypted locally: {}",
@@ -157,7 +138,6 @@ impl LocalStorage {
     /// Retrieve certificate data from local storage (finds latest by expiration)
     pub async fn get_certificate(
         &self,
-        vault_token: &str,
         pki_mount: &str,
         cn: &str,
     ) -> Result<(String, String, String, StorageCertificateMetadata)> {
@@ -178,22 +158,22 @@ impl LocalStorage {
 
             let certificate_pem = String::from_utf8(
                 self.encryption_manager
-                    .decrypt_from_file(vault_token, &context, &old_cert_file)
+                    .decrypt_from_file(&context, &old_cert_file)
                     .await?,
             )?;
             let private_key_pem = String::from_utf8(
                 self.encryption_manager
-                    .decrypt_from_file(vault_token, &context, &cn_dir.join("private_key.pem.enc"))
+                    .decrypt_from_file(&context, &cn_dir.join("private_key.pem.enc"))
                     .await?,
             )?;
             let ca_chain_pem = String::from_utf8(
                 self.encryption_manager
-                    .decrypt_from_file(vault_token, &context, &cn_dir.join("ca_chain.pem.enc"))
+                    .decrypt_from_file(&context, &cn_dir.join("ca_chain.pem.enc"))
                     .await?,
             )?;
             let metadata: StorageCertificateMetadata = self
                 .encryption_manager
-                .decrypt_yaml_from_file(vault_token, &context, &old_metadata_file)
+                .decrypt_yaml_from_file(&context, &old_metadata_file)
                 .await?;
 
             return Ok((certificate_pem, private_key_pem, ca_chain_pem, metadata));
@@ -225,7 +205,7 @@ impl LocalStorage {
 
             match self
                 .encryption_manager
-                .decrypt_yaml_from_file(vault_token, &context, &metadata_file)
+                .decrypt_yaml_from_file(&context, &metadata_file)
                 .await
             {
                 Ok(metadata) => cert_metadata.push((serial.clone(), metadata)),
@@ -266,17 +246,17 @@ impl LocalStorage {
 
         let certificate_pem = String::from_utf8(
             self.encryption_manager
-                .decrypt_from_file(vault_token, &context, &cert_file)
+                .decrypt_from_file(&context, &cert_file)
                 .await?,
         )?;
         let private_key_pem = String::from_utf8(
             self.encryption_manager
-                .decrypt_from_file(vault_token, &context, &key_file)
+                .decrypt_from_file(&context, &key_file)
                 .await?,
         )?;
         let ca_chain_pem = String::from_utf8(
             self.encryption_manager
-                .decrypt_from_file(vault_token, &context, &ca_file)
+                .decrypt_from_file(&context, &ca_file)
                 .await?,
         )?;
 
@@ -289,18 +269,13 @@ impl LocalStorage {
     }
 
     /// List all locally stored certificates
-    pub async fn list_certificates(&self, vault_token: &str) -> Result<Vec<CertificateStorage>> {
-        let index = self.get_master_index(vault_token).await?;
+    pub async fn list_certificates(&self) -> Result<Vec<CertificateStorage>> {
+        let index = self.get_master_index().await?;
         Ok(index.certificates)
     }
 
     /// Remove certificate from local storage
-    pub async fn remove_certificate(
-        &self,
-        vault_token: &str,
-        pki_mount: &str,
-        cn: &str,
-    ) -> Result<()> {
+    pub async fn remove_certificate(&self, pki_mount: &str, cn: &str) -> Result<()> {
         let cn_dir = VaultCliPaths::cert_cn_dir(pki_mount, cn)?;
 
         if cn_dir.exists() {
@@ -309,7 +284,7 @@ impl LocalStorage {
         }
 
         // Update master index - find and remove all certificates for this CN and PKI mount
-        let mut index = self.get_master_index(vault_token).await?;
+        let mut index = self.get_master_index().await?;
         let serials_to_remove: Vec<String> = index
             .certificates
             .iter()
@@ -322,7 +297,7 @@ impl LocalStorage {
         }
 
         if !index.certificates.is_empty() {
-            self.store_master_index(vault_token, &index).await?;
+            self.store_master_index(&index).await?;
         }
 
         Ok(())
@@ -331,7 +306,6 @@ impl LocalStorage {
     /// Remove specific certificate by serial from local storage
     pub async fn remove_certificate_by_serial(
         &self,
-        vault_token: &str,
         pki_mount: &str,
         cn: &str,
         serial: &str,
@@ -344,9 +318,9 @@ impl LocalStorage {
         }
 
         // Update master index
-        let mut index = self.get_master_index(vault_token).await?;
+        let mut index = self.get_master_index().await?;
         if index.remove_certificate(serial) {
-            self.store_master_index(vault_token, &index).await?;
+            self.store_master_index(&index).await?;
         }
 
         Ok(())
@@ -355,15 +329,13 @@ impl LocalStorage {
     /// Export certificate in various formats
     pub async fn export_certificate(
         &self,
-        vault_token: &str,
         pki_mount: &str,
         cn: &str,
         output_dir: &str,
         formats: &[String],
         _decrypt: bool,
     ) -> Result<()> {
-        let (cert_pem, key_pem, ca_pem, _metadata) =
-            self.get_certificate(vault_token, pki_mount, cn).await?;
+        let (cert_pem, key_pem, ca_pem, _metadata) = self.get_certificate(pki_mount, cn).await?;
 
         let output_path = PathBuf::from(output_dir);
         fs::create_dir_all(&output_path)?;
@@ -379,15 +351,14 @@ impl LocalStorage {
                     fs::write(output_path.join(format!("{cn}_chain.pem")), &ca_pem)?;
 
                     // Find the latest certificate serial for this CN
-                    let (_, _, _, metadata) =
-                        self.get_certificate(vault_token, pki_mount, cn).await?;
+                    let (_, _, _, metadata) = self.get_certificate(pki_mount, cn).await?;
                     let cert_dir =
                         VaultCliPaths::cert_storage_dir(pki_mount, cn, &metadata.serial)?;
                     let p12_file = cert_dir.join("p12.enc");
                     let context = format!("cert-{pki_mount}-{cn}");
                     let p12_data = self
                         .encryption_manager
-                        .decrypt_from_file(vault_token, &context, &p12_file)
+                        .decrypt_from_file(&context, &p12_file)
                         .await?;
                     fs::write(output_path.join(format!("{cn}.p12")), p12_data)?;
 
@@ -413,15 +384,14 @@ impl LocalStorage {
                 }
                 "p12" => {
                     // Find the latest certificate serial for this CN
-                    let (_, _, _, metadata) =
-                        self.get_certificate(vault_token, pki_mount, cn).await?;
+                    let (_, _, _, metadata) = self.get_certificate(pki_mount, cn).await?;
                     let cert_dir =
                         VaultCliPaths::cert_storage_dir(pki_mount, cn, &metadata.serial)?;
                     let p12_file = cert_dir.join("p12.enc");
                     let context = format!("cert-{pki_mount}-{cn}");
                     let p12_data = self
                         .encryption_manager
-                        .decrypt_from_file(vault_token, &context, &p12_file)
+                        .decrypt_from_file(&context, &p12_file)
                         .await?;
                     fs::write(output_path.join(format!("{cn}.p12")), p12_data)?;
                 }
@@ -438,7 +408,7 @@ impl LocalStorage {
     }
 
     /// Get master index
-    async fn get_master_index(&self, vault_token: &str) -> Result<MasterIndex> {
+    async fn get_master_index(&self) -> Result<MasterIndex> {
         let index_file = VaultCliPaths::master_index()?;
 
         if !index_file.exists() {
@@ -447,26 +417,26 @@ impl LocalStorage {
 
         let index: MasterIndex = self
             .encryption_manager
-            .decrypt_yaml_from_file(vault_token, "master-index", &index_file)
+            .decrypt_yaml_from_file("master-index", &index_file)
             .await?;
 
         Ok(index)
     }
 
     /// Store master index
-    async fn store_master_index(&self, vault_token: &str, index: &MasterIndex) -> Result<()> {
+    async fn store_master_index(&self, index: &MasterIndex) -> Result<()> {
         let index_file = VaultCliPaths::master_index()?;
         self.encryption_manager
-            .encrypt_yaml_to_file(vault_token, index, "master-index", &index_file)
+            .encrypt_yaml_to_file(index, "master-index", &index_file)
             .await
     }
 
     /// Update master index with new certificate
-    async fn update_master_index(&self, vault_token: &str, cert: CertificateStorage) -> Result<()> {
-        let mut index = self.get_master_index(vault_token).await?;
+    async fn update_master_index(&self, cert: CertificateStorage) -> Result<()> {
+        let mut index = self.get_master_index().await?;
         index.add_certificate(cert);
         index.update_last_sync();
-        self.store_master_index(vault_token, &index).await
+        self.store_master_index(&index).await
     }
 
     /// Create P12 bundle from PEM files
@@ -486,14 +456,14 @@ impl LocalStorage {
     }
 
     /// Clean up expired certificates
-    pub async fn cleanup_expired(&self, vault_token: &str) -> Result<usize> {
-        let index = self.get_master_index(vault_token).await?;
+    pub async fn cleanup_expired(&self) -> Result<usize> {
+        let index = self.get_master_index().await?;
         let expired_certs = index.get_expired().into_iter().cloned().collect::<Vec<_>>();
         let mut removed_count = 0;
 
         for cert in expired_certs {
             if let Err(e) = self
-                .remove_certificate(vault_token, &cert.pki_mount, &cert.meta.cn)
+                .remove_certificate(&cert.pki_mount, &cert.meta.cn)
                 .await
             {
                 tracing::warn!(
@@ -513,21 +483,16 @@ impl LocalStorage {
     /// Decrypt a file for debugging purposes
     pub async fn decrypt_file(
         &self,
-        vault_token: &str,
         context: &str,
         file_path: &std::path::Path,
     ) -> Result<Vec<u8>> {
         self.encryption_manager
-            .decrypt_from_file(vault_token, context, file_path)
+            .decrypt_from_file(context, file_path)
             .await
     }
 
-    pub async fn find_by_serial(
-        &self,
-        vault_token: &str,
-        serial: &str,
-    ) -> Result<Option<CertificateStorage>> {
-        let index = self.get_master_index(vault_token).await?;
+    pub async fn find_by_serial(&self, serial: &str) -> Result<Option<CertificateStorage>> {
+        let index = self.get_master_index().await?;
         Ok(index.find_by_serial(serial).cloned())
     }
 }
