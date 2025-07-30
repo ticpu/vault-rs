@@ -198,6 +198,9 @@ pub enum CertCommands {
         /// Skip passphrase prompt for P12 export (creates unprotected P12)
         #[arg(long)]
         no_passphrase: bool,
+        /// Include OpenSSL-style text output before PEM data
+        #[arg(long)]
+        text: bool,
     },
     /// Extract and store from Vault JSON response
     Extract {

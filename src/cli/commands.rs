@@ -284,6 +284,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             output,
             decrypt: _,
             no_passphrase,
+            text,
         } => {
             use crate::cert::{
                 export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
@@ -297,6 +298,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         format,
                         output_dir: output,
                         no_passphrase,
+                        text,
                     };
                     export_certificate(&client, request).await?;
                 }
@@ -370,6 +372,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         format,
                         output_dir: Some(output),
                         no_passphrase: false, // Extract command defaults to no passphrase
+                        text: false,          // ExportBySerial doesn't support --text flag
                     };
                     export_certificate(&client, request).await?;
                 }
