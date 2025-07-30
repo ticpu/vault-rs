@@ -21,7 +21,6 @@ pub struct CreateCertificateRequest {
 
 pub async fn create_certificate(
     client: &VaultClient,
-    token: &str,
     request: CreateCertificateRequest,
 ) -> Result<()> {
     // Use PKI mount directly - no system-specific suffixes
@@ -32,7 +31,7 @@ pub async fn create_certificate(
         crypto_type.as_str().to_string()
     } else {
         tracing::info!("Auto-detecting crypto type for PKI mount: {full_pki}");
-        let detected = client.detect_crypto_type(token, &full_pki).await?;
+        let detected = client.detect_crypto_type(&full_pki).await?;
         tracing::info!("Detected crypto type: {detected}");
         detected
     };
@@ -52,7 +51,7 @@ pub async fn create_certificate(
     }
 
     // Validate role exists (optional check with helpful error)
-    if let Ok(available_roles) = client.list_roles(token, &full_pki).await {
+    if let Ok(available_roles) = client.list_roles(&full_pki).await {
         if !available_roles.is_empty() && !available_roles.contains(&request.role) {
             eprintln!(
                 "Warning: Role '{}' not found in available roles for PKI '{full_pki}'",
@@ -86,7 +85,7 @@ pub async fn create_certificate(
         ttl: request.ttl.as_deref(),
     };
 
-    let cert_data = client.issue_certificate(token, issue_request).await?;
+    let cert_data = client.issue_certificate(issue_request).await?;
 
     // Extract certificate components
     let certificate = cert_data["data"]["certificate"]
@@ -121,7 +120,7 @@ pub async fn create_certificate(
         };
 
         // Get CA chain for storage
-        let ca_chain = client.get_ca_chain(token, &full_pki).await?;
+        let ca_chain = client.get_ca_chain(&full_pki).await?;
 
         let cert_data = CertificateData {
             pki_mount: &full_pki,
@@ -132,7 +131,11 @@ pub async fn create_certificate(
             metadata,
         };
 
-        storage.store_certificate(token, cert_data).await?;
+        // Get token from VaultAuth for storage encryption
+        let vault_addr = client.vault_addr().to_string();
+        let auth = crate::vault::auth::VaultAuth::new(vault_addr);
+        let token = auth.get_token().await?;
+        storage.store_certificate(&token, cert_data).await?;
 
         eprintln!("✓ Certificate stored encrypted locally");
     }
@@ -143,7 +146,7 @@ pub async fn create_certificate(
         fs::create_dir_all(export_path)?;
 
         // Get CA chain for export
-        let ca_chain = client.get_ca_chain(token, &full_pki).await?;
+        let ca_chain = client.get_ca_chain(&full_pki).await?;
 
         // Write certificate files
         fs::write(export_path.join(format!("{}.crt", request.cn)), certificate)?;

@@ -8,7 +8,6 @@ pub struct RevokeRequest {
 
 pub async fn revoke_certificate(
     client: &VaultClient,
-    token: &str,
     request: RevokeRequest,
 ) -> Result<()> {
     use crate::cert::lookup::find_certificate_by_identifier;
@@ -16,7 +15,6 @@ pub async fn revoke_certificate(
     // Find the certificate first
     let (serial, mount, _cn) = find_certificate_by_identifier(
         client,
-        token,
         &request.identifier,
         request.pki_mount.as_deref(),
     )
@@ -26,7 +24,7 @@ pub async fn revoke_certificate(
     eprintln!("PKI mount: {mount}");
 
     // Revoke the certificate
-    client.revoke_certificate(token, &mount, &serial).await?;
+    client.revoke_certificate(&mount, &serial).await?;
     eprintln!("✓ Certificate revoked successfully");
 
     Ok(())

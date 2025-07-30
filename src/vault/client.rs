@@ -31,13 +31,33 @@ pub struct IssueCertificateRequest<'a> {
 pub struct VaultClient {
     client: Client,
     vault_addr: String,
+    token: Option<String>,
 }
 
 impl VaultClient {
     pub fn new(vault_addr: String) -> Self {
         let client = super::create_http_client().expect("Failed to create HTTP client");
 
-        Self { client, vault_addr }
+        Self { client, vault_addr, token: None }
+    }
+
+    /// Create a VaultClient with an authenticated token
+    pub fn with_token(vault_addr: String, token: String) -> Self {
+        let client = super::create_http_client().expect("Failed to create HTTP client");
+
+        Self { client, vault_addr, token: Some(token) }
+    }
+
+    /// Set or update the authentication token
+    pub fn set_token(&mut self, token: String) {
+        self.token = Some(token);
+    }
+
+    /// Get the current token if available
+    fn get_token(&self) -> Result<&str> {
+        self.token.as_deref().ok_or_else(|| {
+            VaultCliError::Auth("No token available. Please authenticate first.".to_string())
+        })
     }
 
     /// Get vault address
@@ -60,7 +80,8 @@ impl VaultClient {
     }
 
     /// Generic GET request to Vault API
-    pub async fn get(&self, token: &str, path: &str) -> Result<Value> {
+    pub async fn get(&self, path: &str) -> Result<Value> {
+        let token = self.get_token()?;
         let url = format!("{}/v1/{}", self.vault_addr, path);
         let response = self
             .client
@@ -73,7 +94,8 @@ impl VaultClient {
     }
 
     /// Generic POST request to Vault API
-    pub async fn post(&self, token: &str, path: &str, data: Value) -> Result<Value> {
+    pub async fn post(&self, path: &str, data: Value) -> Result<Value> {
+        let token = self.get_token()?;
         let url = format!("{}/v1/{}", self.vault_addr, path);
         let response = self
             .client
@@ -88,8 +110,8 @@ impl VaultClient {
     }
 
     /// List all secret engines (mounts)
-    pub async fn list_mounts(&self, token: &str) -> Result<HashMap<String, Value>> {
-        let response = self.get(token, "sys/mounts").await?;
+    pub async fn list_mounts(&self) -> Result<HashMap<String, Value>> {
+        let response = self.get("sys/mounts").await?;
 
         if let Some(data) = response.get("data") {
             if let Some(mounts) = data.as_object() {
@@ -107,8 +129,8 @@ impl VaultClient {
     }
 
     /// List PKI mounts only
-    pub async fn list_pki_mounts(&self, token: &str) -> Result<Vec<String>> {
-        let mounts = self.list_mounts(token).await?;
+    pub async fn list_pki_mounts(&self) -> Result<Vec<String>> {
+        let mounts = self.list_mounts().await?;
         let mut pki_mounts = Vec::new();
 
         for (mount_path, mount_info) in mounts {
@@ -125,7 +147,8 @@ impl VaultClient {
     }
 
     /// List certificates for a PKI mount
-    pub async fn list_certificates(&self, token: &str, pki_mount: &str) -> Result<Vec<String>> {
+    pub async fn list_certificates(&self, pki_mount: &str) -> Result<Vec<String>> {
+        let token = self.get_token()?;
         let url = format!("{}/v1/{}/certs", self.vault_addr, pki_mount);
         tracing::debug!("Making LIST request to: {}", url);
         tracing::debug!("Token: {}***", &token[..8]);
@@ -146,18 +169,16 @@ impl VaultClient {
     /// Get certificate details by serial number
     pub async fn get_certificate_info(
         &self,
-        token: &str,
         pki_mount: &str,
         serial: &str,
     ) -> Result<Value> {
         let path = format!("{pki_mount}/cert/{serial}");
-        self.get(token, &path).await
+        self.get(&path).await
     }
 
     /// Get certificate PEM data
     pub async fn get_certificate_pem(
         &self,
-        token: &str,
         pki_mount: &str,
         serial: &str,
     ) -> Result<String> {
@@ -171,7 +192,7 @@ impl VaultClient {
 
         for serial_format in serial_formats {
             match self
-                .get_certificate_info(token, pki_mount, &serial_format)
+                .get_certificate_info(pki_mount, &serial_format)
                 .await
             {
                 Ok(cert_info) => {
@@ -195,7 +216,6 @@ impl VaultClient {
     /// Issue a new certificate
     pub async fn issue_certificate(
         &self,
-        token: &str,
         request: IssueCertificateRequest<'_>,
     ) -> Result<Value> {
         let mut payload = json!({
@@ -215,11 +235,12 @@ impl VaultClient {
         }
 
         let path = format!("{}/issue/{}", request.pki_mount, request.role);
-        self.post(token, &path, payload).await
+        self.post(&path, payload).await
     }
 
     /// Get CA chain for a PKI mount (returns raw PEM data)
-    pub async fn get_ca_chain(&self, token: &str, pki_mount: &str) -> Result<String> {
+    pub async fn get_ca_chain(&self, pki_mount: &str) -> Result<String> {
+        let token = self.get_token()?;
         let url = format!("{}/v1/{}/ca_chain", self.vault_addr, pki_mount);
         let response = self
             .client
@@ -239,7 +260,8 @@ impl VaultClient {
     }
 
     /// List roles for a PKI mount
-    pub async fn list_roles(&self, token: &str, pki_mount: &str) -> Result<Vec<String>> {
+    pub async fn list_roles(&self, pki_mount: &str) -> Result<Vec<String>> {
+        let token = self.get_token()?;
         let url = format!("{}/v1/{}/roles", self.vault_addr, pki_mount);
         let response = self
             .client
@@ -254,16 +276,16 @@ impl VaultClient {
     }
 
     /// Get PKI mount issuer configuration to determine crypto type
-    pub async fn get_pki_issuer_info(&self, token: &str, pki_mount: &str) -> Result<Value> {
+    pub async fn get_pki_issuer_info(&self, pki_mount: &str) -> Result<Value> {
         let path = format!("{pki_mount}/config/issuers");
-        self.get(token, &path).await
+        self.get(&path).await
     }
 
     /// Detect crypto type for a PKI mount based on its first issuer
-    pub async fn detect_crypto_type(&self, token: &str, pki_mount: &str) -> Result<String> {
+    pub async fn detect_crypto_type(&self, pki_mount: &str) -> Result<String> {
         tracing::debug!("Detecting crypto type for PKI mount: {pki_mount}");
 
-        let issuer_config = self.get_pki_issuer_info(token, pki_mount).await?;
+        let issuer_config = self.get_pki_issuer_info(pki_mount).await?;
 
         if let Some(data) = issuer_config.get("data") {
             if let Some(default_issuer_id) = data.get("default") {
@@ -272,7 +294,7 @@ impl VaultClient {
 
                     // Get the issuer certificate details
                     let issuer_path = format!("{pki_mount}/issuer/{issuer_id}/json");
-                    match self.get(token, &issuer_path).await {
+                    match self.get(&issuer_path).await {
                         Ok(issuer_info) => {
                             if let Some(issuer_data) = issuer_info.get("data") {
                                 if let Some(certificate) = issuer_data.get("certificate") {
@@ -329,7 +351,6 @@ impl VaultClient {
     /// Sign a certificate from CSR
     pub async fn sign_certificate(
         &self,
-        token: &str,
         request: SignCertificateRequest<'_>,
     ) -> Result<Value> {
         let mut payload = json!({
@@ -350,13 +371,12 @@ impl VaultClient {
         }
 
         let path = format!("{}/sign/{}", request.pki_mount, request.role);
-        self.post(token, &path, payload).await
+        self.post(&path, payload).await
     }
 
     /// Revoke certificate by serial number
     pub async fn revoke_certificate(
         &self,
-        token: &str,
         pki_mount: &str,
         serial: &str,
     ) -> Result<Value> {
@@ -365,7 +385,7 @@ impl VaultClient {
         });
 
         let path = format!("{pki_mount}/revoke");
-        self.post(token, &path, payload).await
+        self.post(&path, payload).await
     }
 
     /// Handle HTTP response from Vault

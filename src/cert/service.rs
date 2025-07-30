@@ -16,26 +16,33 @@ impl CertificateService {
         })
     }
 
+    /// Create a new service with an authenticated client
+    pub fn with_token(vault_addr: String, token: String) -> Result<Self> {
+        Ok(Self {
+            client: VaultClient::with_token(vault_addr, token),
+            cache: CertificateCache::new()?,
+        })
+    }
+
     /// List certificates with metadata from all PKI mounts or specific mount
     pub async fn list_certificates_with_metadata(
         &self,
-        token: &str,
         pki_mount: Option<&str>,
     ) -> Result<Vec<CertificateMetadata>> {
         if let Some(mount) = pki_mount {
-            self.list_certificates_single_mount(token, mount).await
+            self.list_certificates_single_mount(mount).await
         } else {
-            self.list_certificates_all_mounts(token).await
+            self.list_certificates_all_mounts().await
         }
     }
 
     /// List certificates with metadata from all PKI mounts
-    async fn list_certificates_all_mounts(&self, token: &str) -> Result<Vec<CertificateMetadata>> {
-        let pki_mounts = self.client.list_pki_mounts(token).await?;
+    async fn list_certificates_all_mounts(&self) -> Result<Vec<CertificateMetadata>> {
+        let pki_mounts = self.client.list_pki_mounts().await?;
         let mut all_certificates = Vec::new();
 
         for mount in pki_mounts {
-            if let Ok(certs) = self.list_certificates_single_mount(token, &mount).await {
+            if let Ok(certs) = self.list_certificates_single_mount(&mount).await {
                 all_certificates.extend(certs);
             }
             // Silently skip mounts that fail (might not have permissions)
@@ -50,13 +57,12 @@ impl CertificateService {
     /// List certificates with metadata from a single PKI mount, using cache when possible
     async fn list_certificates_single_mount(
         &self,
-        token: &str,
         pki_mount: &str,
     ) -> Result<Vec<CertificateMetadata>> {
         tracing::debug!("Listing certificates for PKI mount: {}", pki_mount);
 
         // Get list of certificate serials from Vault
-        let serials = self.client.list_certificates(token, pki_mount).await?;
+        let serials = self.client.list_certificates(pki_mount).await?;
         tracing::debug!("Found {} certificates in Vault", serials.len());
 
         let mut results = Vec::new();
@@ -80,7 +86,7 @@ impl CertificateService {
 
             for serial in to_fetch {
                 match self
-                    .fetch_certificate_metadata(token, pki_mount, &serial)
+                    .fetch_certificate_metadata(pki_mount, &serial)
                     .await
                 {
                     Ok(metadata) => {
@@ -113,7 +119,6 @@ impl CertificateService {
     /// Fetch certificate metadata from Vault and parse it
     async fn fetch_certificate_metadata(
         &self,
-        token: &str,
         pki_mount: &str,
         serial: &str,
     ) -> Result<CertificateMetadata> {
@@ -121,7 +126,7 @@ impl CertificateService {
 
         let pem_data = self
             .client
-            .get_certificate_pem(token, pki_mount, serial)
+            .get_certificate_pem(pki_mount, serial)
             .await?;
         let metadata = CertificateParser::parse_pem(&pem_data, pki_mount)?;
 
@@ -134,16 +139,16 @@ impl CertificateService {
     }
 
     /// Sync cache with Vault for a PKI mount
-    pub async fn sync_cache(&self, token: &str, pki_mount: &str) -> Result<usize> {
+    pub async fn sync_cache(&self, pki_mount: &str) -> Result<usize> {
         tracing::info!("Syncing cache for PKI mount: {}", pki_mount);
 
-        let serials = self.client.list_certificates(token, pki_mount).await?;
+        let serials = self.client.list_certificates(pki_mount).await?;
         let mut synced_count = 0;
 
         for serial in serials {
             if self.cache.needs_refresh(pki_mount, &serial)? {
                 match self
-                    .fetch_certificate_metadata(token, pki_mount, &serial)
+                    .fetch_certificate_metadata(pki_mount, &serial)
                     .await
                 {
                     Ok(metadata) => {
@@ -181,20 +186,20 @@ impl CertificateService {
     }
 
     /// Rebuild cache from Vault
-    pub async fn rebuild_cache(&self, token: &str, pki_mount: Option<&str>) -> Result<usize> {
+    pub async fn rebuild_cache(&self, pki_mount: Option<&str>) -> Result<usize> {
         let mut total_rebuilt = 0;
 
         if let Some(mount) = pki_mount {
             // Rebuild specific mount
             self.clear_cache(mount)?;
-            total_rebuilt += self.sync_cache(token, mount).await?;
+            total_rebuilt += self.sync_cache(mount).await?;
         } else {
             // Rebuild all PKI mounts
-            let pki_mounts = self.client.list_pki_mounts(token).await?;
+            let pki_mounts = self.client.list_pki_mounts().await?;
 
             for mount in pki_mounts {
                 self.clear_cache(&mount)?;
-                total_rebuilt += self.sync_cache(token, &mount).await?;
+                total_rebuilt += self.sync_cache(&mount).await?;
             }
         }
 

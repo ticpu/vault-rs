@@ -17,10 +17,13 @@ pub fn format_serial_with_colons(serial: &str) -> String {
 /// Returns (certificate_pem, serial, pki_mount)
 pub async fn find_certificate_by_identifier(
     client: &VaultClient,
-    token: &str,
     identifier: &str,
     pki_mount_filter: Option<&str>,
 ) -> Result<(String, String, String)> {
+    // Get token from VaultAuth for service operations
+    let vault_addr = client.vault_addr().to_string();
+    let auth = crate::vault::auth::VaultAuth::new(vault_addr);
+    let token = auth.get_token().await?;
     // Check if identifier looks like a serial number (hex string, typically 30+ chars)
     let is_serial = identifier.len() >= 16 && identifier.chars().all(|c| c.is_ascii_hexdigit());
 
@@ -29,7 +32,7 @@ pub async fn find_certificate_by_identifier(
         let pki_mounts = if let Some(mount) = pki_mount_filter {
             vec![mount.to_string()]
         } else {
-            client.list_pki_mounts(token).await?
+            client.list_pki_mounts().await?
         };
 
         for mount in &pki_mounts {
@@ -46,7 +49,7 @@ pub async fn find_certificate_by_identifier(
             for serial_format in serial_formats {
                 tracing::trace!("Trying to find serial {} in mount {}", serial_format, mount);
                 match client
-                    .get_certificate_pem(token, mount, &serial_format)
+                    .get_certificate_pem(mount, &serial_format)
                     .await
                 {
                     Ok(pem) => {
@@ -82,12 +85,12 @@ pub async fn find_certificate_by_identifier(
     } else {
         // Search by CN - find latest certificate with matching CN
         tracing::debug!("Searching for certificate by CN: '{}'", identifier);
-        let cert_service = CertificateService::new(client.vault_addr().to_string())?;
+        let cert_service = CertificateService::with_token(client.vault_addr().to_string(), token.clone())?;
 
         let pki_mounts = if let Some(mount) = pki_mount_filter {
             vec![mount.to_string()]
         } else {
-            client.list_pki_mounts(token).await?
+            client.list_pki_mounts().await?
         };
 
         let mut matching_certs = Vec::new();
@@ -95,7 +98,7 @@ pub async fn find_certificate_by_identifier(
         for mount in &pki_mounts {
             tracing::debug!("Searching for CN '{}' in mount '{}'", identifier, mount);
             match cert_service
-                .list_certificates_with_metadata(token, Some(mount))
+                .list_certificates_with_metadata(Some(mount))
                 .await
             {
                 Ok(certificates) => {
@@ -141,7 +144,7 @@ pub async fn find_certificate_by_identifier(
 
         // Fetch the PEM data for the latest certificate
         let pem = client
-            .get_certificate_pem(token, mount, &latest_cert.serial)
+            .get_certificate_pem(mount, &latest_cert.serial)
             .await?;
 
         tracing::debug!(

@@ -98,10 +98,9 @@ async fn handle_auth_command(command: AuthCommands, output: &OutputFormat) -> Re
 
                             // Check specific capabilities
                             println!("\nChecking permissions:");
-                            let client = VaultClient::new(vault_addr.clone());
-
-                            // Test sys/mounts access
-                            match client.get(&token, "sys/mounts").await {
+                            // Test sys/mounts access  
+                            let test_client = VaultClient::with_token(vault_addr.clone(), token.clone());
+                            match test_client.get("sys/mounts").await {
                                 Ok(_) => println!("✓ Can list secret engines"),
                                 Err(_) => println!("✗ Cannot list secret engines (sys/mounts)"),
                             }
@@ -122,9 +121,9 @@ async fn handle_auth_command(command: AuthCommands, output: &OutputFormat) -> Re
         }
         AuthCommands::ListSecrets => {
             let token = auth.get_token().await?;
-            let client = VaultClient::new(vault_addr.clone());
+            let client = VaultClient::with_token(vault_addr.clone(), token);
 
-            match client.get(&token, "sys/mounts").await {
+            match client.get("sys/mounts").await {
                 Ok(mounts) => {
                     if let Some(data) = mounts.get("data").and_then(|d| d.as_object()) {
                         let mut mount_list: Vec<_> = data.iter().collect();
@@ -177,10 +176,10 @@ async fn handle_auth_command(command: AuthCommands, output: &OutputFormat) -> Re
 
 async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Result<()> {
     let vault_addr = get_vault_addr().await?;
-    let client = VaultClient::new(vault_addr.clone());
     let auth = VaultAuth::new(vault_addr.clone());
     let token = auth.get_token().await?;
     tracing::debug!("Using token: {}***", &token[..8]);
+    let client = VaultClient::with_token(vault_addr.clone(), token.clone());
 
     match command {
         CertCommands::List { pki_mount, columns } => {
@@ -195,10 +194,10 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
 
             // Parse columns with support for + prefix (append to defaults)
             let columns = if let Some(columns_str) = columns {
-                if columns_str.starts_with('+') {
+                if let Some(stripped) = columns_str.strip_prefix('+') {
                     // Append mode: start with defaults and add specified columns
                     let mut result_columns = default_columns;
-                    let additional_cols: Vec<&str> = columns_str[1..] // Remove the + prefix
+                    let additional_cols: Vec<&str> = stripped
                         .split(',')
                         .map(|s| s.trim())
                         .filter(|s| !s.is_empty())
@@ -238,10 +237,10 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             };
 
             // Create certificate service and get metadata
-            let cert_service = CertificateService::new(vault_addr.clone())?;
+            let cert_service = CertificateService::with_token(vault_addr.clone(), token.clone())?;
 
             let certificates = match cert_service
-                .list_certificates_with_metadata(&token, pki_mount.as_deref())
+                .list_certificates_with_metadata(pki_mount.as_deref())
                 .await
             {
                 Ok(certs) => certs,
@@ -271,12 +270,12 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         }
         CertCommands::ListMounts => {
             // List all PKI mounts with crypto types - UNIX friendly output
-            let pki_mounts = client.list_pki_mounts(&token).await?;
+            let pki_mounts = client.list_pki_mounts().await?;
 
             let mut mount_data = Vec::new();
             for mount in pki_mounts {
                 let crypto_type = client
-                    .detect_crypto_type(&token, &mount)
+                    .detect_crypto_type(&mount)
                     .await
                     .unwrap_or_else(|_| "unknown".to_string());
                 mount_data.push((mount, crypto_type));
@@ -287,7 +286,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         }
         CertCommands::ListRoles { pki_mount } => {
             // List available roles in PKI mount - UNIX friendly output
-            match client.list_roles(&token, &pki_mount).await {
+            match client.list_roles(&pki_mount).await {
                 Ok(roles) => {
                     if !roles.is_empty() {
                         output.print_list(&roles);
@@ -327,7 +326,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 export_plain,
             };
 
-            create_certificate(&client, &token, request).await?;
+            create_certificate(&client, request).await?;
             Ok(())
         }
         CertCommands::Sign {
@@ -357,7 +356,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 export_plain,
             };
 
-            sign_certificate_from_csr(&client, &token, request).await
+            sign_certificate_from_csr(&client, request).await
         }
         CertCommands::Export {
             identifier,
@@ -368,7 +367,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             no_passphrase,
         } => {
             use crate::cert::{export_certificate, find_certificate_by_identifier, ExportCertificateRequest};
-            match find_certificate_by_identifier(&client, &token, &identifier, pki_mount.as_deref())
+            match find_certificate_by_identifier(&client, &identifier, pki_mount.as_deref())
                 .await
             {
                 Ok((pem, _serial, mount)) => {
@@ -380,7 +379,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         output_dir: output,
                         no_passphrase,
                     };
-                    export_certificate(&client, &token, request).await?;
+                    export_certificate(&client, request).await?;
                 }
                 Err(e) => {
                     eprintln!("Error: {e}");
@@ -404,7 +403,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             // Use shared lookup function to find certificate
             use crate::cert::find_certificate_by_identifier;
-            match find_certificate_by_identifier(&client, &token, &identifier, pki_mount.as_deref())
+            match find_certificate_by_identifier(&client, &identifier, pki_mount.as_deref())
                 .await
             {
                 Ok((pem, _serial, mount)) => {
@@ -443,7 +442,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             // Use shared lookup function (serial is treated as identifier)
             use crate::cert::{export_certificate, find_certificate_by_identifier, ExportCertificateRequest};
-            match find_certificate_by_identifier(&client, &token, &serial, None).await {
+            match find_certificate_by_identifier(&client, &serial, None).await {
                 Ok((pem, _found_serial, mount)) => {
                     let request = ExportCertificateRequest {
                         pem_data: pem,
@@ -453,7 +452,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         output_dir: Some(output),
                         no_passphrase: false, // Extract command defaults to no passphrase
                     };
-                    export_certificate(&client, &token, request).await?;
+                    export_certificate(&client, request).await?;
                 }
                 Err(e) => {
                     eprintln!("Error: {e}");
@@ -478,7 +477,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 pki_mount: pki_mount.clone(),
             };
 
-            revoke_certificate(&client, &token, request).await?;
+            revoke_certificate(&client, request).await?;
             Ok(())
         }
     }
@@ -750,22 +749,23 @@ async fn handle_completion_helper_command(
 ) -> Result<()> {
     let vault_addr = get_vault_addr().await?;
     let auth = VaultAuth::new(vault_addr.clone());
-    let client = VaultClient::new(vault_addr.clone());
 
     // Silently fail if no token - completion should not show errors
     let token = match auth.get_token().await {
         Ok(token) => token,
         Err(_) => return Ok(()),
     };
+    
+    let client = VaultClient::with_token(vault_addr.clone(), token);
 
     match command {
         CompletionHelperCommands::PkiMounts => {
-            if let Ok(pki_mounts) = client.list_pki_mounts(&token).await {
+            if let Ok(pki_mounts) = client.list_pki_mounts().await {
                 output.print_list(&pki_mounts);
             }
         }
         CompletionHelperCommands::Roles { pki_mount } => {
-            if let Ok(roles) = client.list_roles(&token, pki_mount).await {
+            if let Ok(roles) = client.list_roles(pki_mount).await {
                 output.print_list(&roles);
             }
         }

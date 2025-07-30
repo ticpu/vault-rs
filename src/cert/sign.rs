@@ -21,7 +21,6 @@ pub struct CsrSignRequest {
 
 pub async fn sign_certificate_from_csr(
     client: &VaultClient,
-    token: &str,
     request: CsrSignRequest,
 ) -> Result<()> {
     // Use PKI mount directly - no system-specific suffixes
@@ -32,7 +31,7 @@ pub async fn sign_certificate_from_csr(
         crypto_type.as_str().to_string()
     } else {
         tracing::info!("Auto-detecting crypto type for PKI mount: {full_pki}");
-        let detected = client.detect_crypto_type(token, &full_pki).await?;
+        let detected = client.detect_crypto_type(&full_pki).await?;
         tracing::info!("Detected crypto type: {detected}");
         detected
     };
@@ -69,7 +68,7 @@ pub async fn sign_certificate_from_csr(
     }
 
     // Validate role exists (optional check with helpful error)
-    if let Ok(available_roles) = client.list_roles(token, &full_pki).await {
+    if let Ok(available_roles) = client.list_roles(&full_pki).await {
         if !available_roles.is_empty() && !available_roles.contains(&request.role) {
             eprintln!(
                 "Warning: Role '{}' not found in available roles for PKI '{full_pki}'",
@@ -105,7 +104,7 @@ pub async fn sign_certificate_from_csr(
         ttl: request.ttl.as_deref(),
     };
 
-    let cert_data = client.sign_certificate(token, sign_request).await?;
+    let cert_data = client.sign_certificate(sign_request).await?;
 
     // Extract certificate components
     let certificate = cert_data["data"]["certificate"].as_str().ok_or_else(|| {
@@ -135,7 +134,7 @@ pub async fn sign_certificate_from_csr(
         };
 
         // Get CA chain for storage
-        let ca_chain = client.get_ca_chain(token, &full_pki).await?;
+        let ca_chain = client.get_ca_chain(&full_pki).await?;
 
         // Note: For CSR signing, we don't have the private key, so we store empty string
         let cert_data = CertificateData {
@@ -147,7 +146,11 @@ pub async fn sign_certificate_from_csr(
             metadata,
         };
 
-        storage.store_certificate(token, cert_data).await?;
+        // Get token from VaultAuth for storage encryption
+        let vault_addr = client.vault_addr().to_string();
+        let auth = crate::vault::auth::VaultAuth::new(vault_addr);
+        let token = auth.get_token().await?;
+        storage.store_certificate(&token, cert_data).await?;
 
         eprintln!("✓ Certificate stored encrypted locally (without private key)");
     }
@@ -158,7 +161,7 @@ pub async fn sign_certificate_from_csr(
         fs::create_dir_all(export_path)?;
 
         // Get CA chain for export
-        let ca_chain = client.get_ca_chain(token, &full_pki).await?;
+        let ca_chain = client.get_ca_chain(&full_pki).await?;
 
         // Write certificate files (no private key for CSR signing)
         fs::write(export_path.join(format!("{}.crt", request.cn)), certificate)?;

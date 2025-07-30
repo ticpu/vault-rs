@@ -16,9 +16,12 @@ pub struct ExportCertificateRequest {
 /// Export certificate in various formats
 pub async fn export_certificate(
     client: &VaultClient,
-    token: &str,
     request: ExportCertificateRequest,
 ) -> Result<()> {
+    // Get token from VaultAuth for storage operations
+    let vault_addr = client.vault_addr().to_string();
+    let auth = crate::vault::auth::VaultAuth::new(vault_addr);
+    let token = auth.get_token().await?;
     // Normalize PEM data to ensure consistent formatting
     let normalized_pem = normalize_pem(&request.pem_data);
 
@@ -47,7 +50,7 @@ pub async fn export_certificate(
         }
         ExportFormat::Chain => {
             // Get full certificate chain (already normalized)
-            let ca_chain = get_ca_chain_safe(client, token, &request.mount).await;
+            let ca_chain = get_ca_chain_safe(client, &request.mount).await;
             let full_chain = format!("{normalized_pem}{ca_chain}");
 
             if let Some(ref dir) = request.output_dir {
@@ -66,7 +69,7 @@ pub async fn export_certificate(
             let storage = LocalStorage::new(client.vault_addr().to_string());
 
             // First, try to find certificate metadata to get CN if identifier is serial
-            match storage.list_certificates(token).await {
+            match storage.list_certificates(&token).await {
                 Ok(certs) => {
                     // Find matching certificate by CN or serial (storage has colons, user input doesn't)
                     let identifier_with_colons = crate::cert::format_serial_with_colons(&request.identifier);
@@ -78,7 +81,7 @@ pub async fn export_certificate(
                     if let Some(cert) = matching_cert {
                         // Get the certificate data with private key
                         match storage
-                            .get_certificate(token, &cert.pki_mount, &cert.meta.cn)
+                            .get_certificate(&token, &cert.pki_mount, &cert.meta.cn)
                             .await
                         {
                             Ok((_, private_key, _, _)) => {
@@ -117,7 +120,7 @@ pub async fn export_certificate(
             let storage = LocalStorage::new(client.vault_addr().to_string());
 
             // Try to get private key from local storage
-            match storage.list_certificates(token).await {
+            match storage.list_certificates(&token).await {
                 Ok(certs) => {
                     // Find matching certificate by CN or serial (storage has colons, user input doesn't)
                     let identifier_with_colons = crate::cert::format_serial_with_colons(&request.identifier);
@@ -128,7 +131,7 @@ pub async fn export_certificate(
 
                     if let Some(cert) = matching_cert {
                         match storage
-                            .get_certificate(token, &cert.pki_mount, &cert.meta.cn)
+                            .get_certificate(&token, &cert.pki_mount, &cert.meta.cn)
                             .await
                         {
                             Ok((certificate_pem, private_key, ca_chain_pem, _)) => {
@@ -187,10 +190,10 @@ pub async fn export_certificate(
             let storage = LocalStorage::new(client.vault_addr().to_string());
 
             // Get CA chain
-            let ca_chain = get_ca_chain_safe(client, token, &request.mount).await;
+            let ca_chain = get_ca_chain_safe(client, &request.mount).await;
 
             // Try to get private key from local storage
-            if let Ok(certs) = storage.list_certificates(token).await {
+            if let Ok(certs) = storage.list_certificates(&token).await {
                 // Find matching certificate by CN or serial (storage has colons, user input doesn't)
                 let identifier_with_colons = crate::cert::format_serial_with_colons(&request.identifier);
 
@@ -200,7 +203,7 @@ pub async fn export_certificate(
 
                 if let Some(cert) = matching_cert {
                     if let Ok((certificate_pem, private_key, ca_chain_pem, _)) = storage
-                        .get_certificate(token, &cert.pki_mount, &cert.meta.cn)
+                        .get_certificate(&token, &cert.pki_mount, &cert.meta.cn)
                         .await
                     {
                         // Use cert and CA from local storage to ensure they match the private key
@@ -270,8 +273,8 @@ fn normalize_pem(pem_data: &str) -> String {
 }
 
 /// Get CA chain with graceful error handling
-async fn get_ca_chain_safe(client: &VaultClient, token: &str, mount: &str) -> String {
-    match client.get_ca_chain(token, mount).await {
+async fn get_ca_chain_safe(client: &VaultClient, mount: &str) -> String {
+    match client.get_ca_chain(mount).await {
         Ok(chain) => normalize_pem(&chain),
         Err(e) => {
             tracing::warn!(
