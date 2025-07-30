@@ -19,6 +19,15 @@ pub struct SignCertificateRequest<'a> {
     pub ttl: Option<&'a str>,
 }
 
+pub struct IssueCertificateRequest<'a> {
+    pub pki_mount: &'a str,
+    pub role: &'a str,
+    pub common_name: &'a str,
+    pub alt_names: Option<Vec<String>>,
+    pub ip_sans: Option<Vec<String>>,
+    pub ttl: Option<&'a str>,
+}
+
 pub struct VaultClient {
     client: Client,
     vault_addr: String,
@@ -187,25 +196,25 @@ impl VaultClient {
     pub async fn issue_certificate(
         &self,
         token: &str,
-        pki_mount: &str,
-        role: &str,
-        common_name: &str,
-        alt_names: Option<Vec<String>>,
-        ttl: Option<&str>,
+        request: IssueCertificateRequest<'_>,
     ) -> Result<Value> {
         let mut payload = json!({
-            "common_name": common_name,
+            "common_name": request.common_name,
         });
 
-        if let Some(sans) = alt_names {
+        if let Some(sans) = request.alt_names {
             payload["alt_names"] = json!(sans.join(","));
         }
 
-        if let Some(ttl_val) = ttl {
+        if let Some(ips) = request.ip_sans {
+            payload["ip_sans"] = json!(ips.join(","));
+        }
+
+        if let Some(ttl_val) = request.ttl {
             payload["ttl"] = json!(ttl_val);
         }
 
-        let path = format!("{pki_mount}/issue/{role}");
+        let path = format!("{}/issue/{}", request.pki_mount, request.role);
         self.post(token, &path, payload).await
     }
 

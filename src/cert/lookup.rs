@@ -95,7 +95,7 @@ pub async fn find_certificate_by_identifier(
         for mount in &pki_mounts {
             tracing::debug!("Searching for CN '{}' in mount '{}'", identifier, mount);
             match cert_service
-                .list_certificates_with_metadata(token, mount)
+                .list_certificates_with_metadata(token, Some(mount))
                 .await
             {
                 Ok(certificates) => {

@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod client;
 pub mod pki;
+pub mod wrapper;
 
 use reqwest::Client;
 use serde_json::Value;

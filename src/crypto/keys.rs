@@ -1,4 +1,5 @@
 use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::PROGRAM_NAME;
 use aes_gcm::{Aes256Gcm, Key, KeyInit};
 use rand::RngCore;
 use reqwest::Client;
@@ -127,7 +128,7 @@ impl KeyManager {
         }
 
         Err(VaultCliError::Storage(
-            "No KV mount found in Vault.\n\nTo enable encrypted local storage, create a KV mount:\n  vault secrets enable -path=secret kv-v2\n\nAlternatively, use --no-store with certificate creation to skip local storage.\nUse 'vault-rs auth list-secrets' to see available secret engines.".to_string()
+            format!("No KV mount found in Vault.\n\nTo enable encrypted local storage, create a KV mount:\n  {PROGRAM_NAME} secrets enable -path=secret kv-v2\n\nAlternatively, use --no-store with certificate creation to skip local storage.\nUse '{PROGRAM_NAME} auth list-secrets' to see available secret engines.")
         ))
     }
 

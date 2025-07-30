@@ -1,15 +1,19 @@
 pub mod cache;
+pub mod create;
 pub mod export;
 pub mod lookup;
 pub mod metadata;
 pub mod parser;
+pub mod revoke;
 pub mod service;
 pub mod sign;
 
 pub use cache::CertificateCache;
+pub use create::{create_certificate, CreateCertificateRequest};
 pub use export::export_certificate;
 pub use lookup::{find_certificate_by_identifier, format_serial_with_colons};
 pub use metadata::{CertificateColumn, CertificateMetadata};
 pub use parser::CertificateParser;
+pub use revoke::{revoke_certificate, RevokeRequest};
 pub use service::CertificateService;
 pub use sign::{sign_certificate_from_csr, CsrSignRequest};

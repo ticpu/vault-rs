@@ -39,6 +39,8 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
         Commands::CompletionHelper { ref command } => {
             handle_completion_helper_command(command, &output).await
         }
+        Commands::Secrets { ref args } => handle_vault_command("secrets", args).await,
+        Commands::Operator { ref args } => handle_vault_command("operator", args).await,
     }
 }
 
@@ -184,45 +186,86 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         CertCommands::List { pki_mount, columns } => {
             use crate::cert::{CertificateColumn, CertificateService};
 
-            // Parse columns
-            let columns: Result<Vec<CertificateColumn>> = columns
-                .split(',')
-                .map(|col| {
-                    col.trim()
-                        .parse::<CertificateColumn>()
-                        .map_err(VaultCliError::InvalidInput)
-                })
-                .collect();
-            let columns = columns?;
+            // Set default columns based on whether listing all mounts or specific mount
+            let default_columns = if pki_mount.is_some() {
+                vec!["cn", "not_after", "extended_key_usage", "sans"]
+            } else {
+                vec!["pki_mount", "cn", "not_after", "extended_key_usage", "sans"]
+            };
+
+            // Parse columns with support for + prefix (append to defaults)
+            let columns = if let Some(columns_str) = columns {
+                if columns_str.starts_with('+') {
+                    // Append mode: start with defaults and add specified columns
+                    let mut result_columns = default_columns;
+                    let additional_cols: Vec<&str> = columns_str[1..] // Remove the + prefix
+                        .split(',')
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    result_columns.extend(additional_cols);
+
+                    let parsed: Result<Vec<CertificateColumn>> = result_columns
+                        .into_iter()
+                        .map(|col| {
+                            col.parse::<CertificateColumn>()
+                                .map_err(VaultCliError::InvalidInput)
+                        })
+                        .collect();
+                    parsed?
+                } else {
+                    // Regular mode: use specified columns only
+                    let parsed: Result<Vec<CertificateColumn>> = columns_str
+                        .split(',')
+                        .map(|col| {
+                            col.trim()
+                                .parse::<CertificateColumn>()
+                                .map_err(VaultCliError::InvalidInput)
+                        })
+                        .collect();
+                    parsed?
+                }
+            } else {
+                // No columns specified: use defaults
+                let parsed: Result<Vec<CertificateColumn>> = default_columns
+                    .into_iter()
+                    .map(|col| {
+                        col.parse::<CertificateColumn>()
+                            .map_err(VaultCliError::InvalidInput)
+                    })
+                    .collect();
+                parsed?
+            };
 
             // Create certificate service and get metadata
             let cert_service = CertificateService::new(vault_addr.clone())?;
 
-            match cert_service
-                .list_certificates_with_metadata(&token, &pki_mount)
+            let certificates = match cert_service
+                .list_certificates_with_metadata(&token, pki_mount.as_deref())
                 .await
             {
-                Ok(certificates) => {
-                    if certificates.is_empty() {
-                        // No certificates found - still output nothing for UNIX compatibility
-                        return Ok(());
-                    }
-
-                    // UNIX-friendly output: one line per certificate with specified columns
-                    for cert in certificates {
-                        let values: Vec<String> = columns
-                            .iter()
-                            .map(|col| cert.get_column_value(col))
-                            .collect();
-                        println!("{}", values.join("\t"));
-                    }
-                }
-                Err(VaultCliError::Auth(_)) => {
-                    eprintln!("Error: Access denied - your token may not have permission to list certificates in PKI mount '{pki_mount}'");
+                Ok(certs) => certs,
+                Err(VaultCliError::Auth(_)) if pki_mount.is_some() => {
+                    let mount = pki_mount.as_ref().unwrap();
+                    eprintln!("Error: Access denied - your token may not have permission to list certificates in PKI mount '{mount}'");
                     eprintln!("Try checking available PKI mounts with: vault-rs cert list-mounts");
                     std::process::exit(1);
                 }
                 Err(e) => return Err(e),
+            };
+
+            if certificates.is_empty() {
+                // No certificates found - still output nothing for UNIX compatibility
+                return Ok(());
+            }
+
+            // UNIX-friendly output: one line per certificate with specified columns
+            for cert in certificates {
+                let values: Vec<String> = columns
+                    .iter()
+                    .map(|col| cert.get_column_value(col))
+                    .collect();
+                println!("{}", values.join("\t"));
             }
             Ok(())
         }
@@ -270,143 +313,21 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             no_store,
             export_plain,
         } => {
-            // Use PKI mount directly - no system-specific suffixes
-            let full_pki = pki.clone();
+            use crate::cert::{create_certificate, CreateCertificateRequest};
 
-            // Auto-detect crypto type if not specified
-            let detected_crypto = if let Some(crypto_type) = crypto {
-                crypto_type.as_str().to_string()
-            } else {
-                tracing::info!("Auto-detecting crypto type for PKI mount: {full_pki}");
-                let detected = client.detect_crypto_type(&token, &full_pki).await?;
-                tracing::info!("Detected crypto type: {detected}");
-                detected
+            let request = CreateCertificateRequest {
+                pki: pki.clone(),
+                cn: cn.clone(),
+                role: role.clone(),
+                crypto,
+                alt_names,
+                ip_sans,
+                ttl,
+                no_store,
+                export_plain,
             };
 
-            eprintln!("Creating certificate for CN: {cn}");
-            eprintln!("PKI: {full_pki} ({detected_crypto})");
-            eprintln!("Role: {role}");
-
-            if let Some(ref alt_names) = alt_names {
-                eprintln!("Alt Names: {alt_names}");
-            }
-            if let Some(ref ip_sans) = ip_sans {
-                eprintln!("IP SANs: {ip_sans}");
-            }
-            if let Some(ref ttl) = ttl {
-                eprintln!("TTL: {ttl}");
-            }
-
-            // Validate role exists (optional check with helpful error)
-            if let Ok(available_roles) = client.list_roles(&token, &full_pki).await {
-                if !available_roles.is_empty() && !available_roles.contains(&role) {
-                    eprintln!(
-                        "Warning: Role '{role}' not found in available roles for PKI '{full_pki}'"
-                    );
-                    eprintln!("Available roles: {}", available_roles.join(", "));
-                    eprintln!("Continuing anyway - Vault will return an error if role is invalid.");
-                }
-            }
-
-            // Issue certificate from Vault
-            let alt_names_vec = alt_names.as_ref().map(|names| {
-                names
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect::<Vec<_>>()
-            });
-
-            let cert_data = client
-                .issue_certificate(
-                    &token,
-                    &full_pki,
-                    &role,
-                    &cn,
-                    alt_names_vec.clone(),
-                    ttl.as_deref(),
-                )
-                .await?;
-
-            // Extract certificate components
-            let certificate = cert_data["data"]["certificate"].as_str().ok_or_else(|| {
-                VaultCliError::CertNotFound("Certificate data not found".to_string())
-            })?;
-            let private_key = cert_data["data"]["private_key"]
-                .as_str()
-                .ok_or_else(|| VaultCliError::CertNotFound("Private key not found".to_string()))?;
-            let issuing_ca = cert_data["data"]["issuing_ca"]
-                .as_str()
-                .ok_or_else(|| VaultCliError::CertNotFound("Issuing CA not found".to_string()))?;
-            let serial = cert_data["data"]["serial_number"].as_str().ok_or_else(|| {
-                VaultCliError::CertNotFound("Serial number not found".to_string())
-            })?;
-
-            eprintln!("✓ Certificate issued with serial: {serial}");
-
-            // Store locally unless --no-store
-            if !no_store {
-                use crate::storage::local::{CertificateData, LocalStorage};
-                use crate::storage::metadata::{CertStatus, StorageCertificateMetadata};
-                use chrono::Utc;
-
-                let storage = LocalStorage::new(vault_addr.clone());
-                let metadata = StorageCertificateMetadata {
-                    serial: serial.to_string(),
-                    cn: cn.clone(),
-                    role: role.clone(),
-                    crypto: detected_crypto.clone(),
-                    created: Utc::now(),
-                    expires: Utc::now() + chrono::Duration::days(365), // Will be updated with actual expiry
-                    status: CertStatus::Active,
-                    sans: alt_names_vec.unwrap_or_default(),
-                };
-
-                // Get CA chain for storage
-                let ca_chain = client.get_ca_chain(&token, &full_pki).await?;
-
-                let cert_data = CertificateData {
-                    pki_mount: &full_pki,
-                    cn: &cn,
-                    certificate_pem: certificate,
-                    private_key_pem: private_key,
-                    ca_chain_pem: &ca_chain,
-                    metadata,
-                };
-
-                storage.store_certificate(&token, cert_data).await?;
-
-                eprintln!("✓ Certificate stored encrypted locally");
-            }
-
-            // Export plain files if requested
-            if let Some(export_dir) = export_plain {
-                use std::fs;
-                use std::path::Path;
-
-                let export_path = Path::new(&export_dir);
-                fs::create_dir_all(export_path)?;
-
-                // Get CA chain for export
-                let ca_chain = client.get_ca_chain(&token, &full_pki).await?;
-
-                // Write certificate files
-                fs::write(export_path.join(format!("{cn}.crt")), certificate)?;
-                fs::write(export_path.join(format!("{cn}.key")), private_key)?;
-                fs::write(
-                    export_path.join(format!("{cn}.pem")),
-                    format!("{private_key}{certificate}"),
-                )?;
-                fs::write(export_path.join(format!("{pki}.crt")), issuing_ca)?;
-                fs::write(export_path.join(format!("{pki}_chain.crt")), &ca_chain)?;
-
-                // Create P12 file using OpenSSL (like vlt.sh)
-                let p12_file = export_path.join(format!("{cn}.p12"));
-                let _ =
-                    crate::utils::create_p12_file(&p12_file, private_key, certificate, issuing_ca);
-
-                eprintln!("✓ Plain files exported to: {export_dir}");
-            }
-
+            create_certificate(&client, &token, request).await?;
             Ok(())
         }
         CertCommands::Sign {
@@ -444,8 +365,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             format,
             output,
             decrypt: _,
+            no_passphrase,
         } => {
-            // Use shared lookup function to find certificate
             use crate::cert::{export_certificate, find_certificate_by_identifier};
             match find_certificate_by_identifier(&client, &token, &identifier, pki_mount.as_deref())
                 .await
@@ -459,6 +380,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         &identifier,
                         &format,
                         output.as_deref(),
+                        no_passphrase,
                     )
                     .await?;
                 }
@@ -533,6 +455,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         &serial,
                         &format,
                         Some(&output),
+                        false, // Extract command defaults to no passphrase
                     )
                     .await?;
                 }
@@ -548,10 +471,24 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             // TODO: Implement find serial
             Ok(())
         }
+        CertCommands::Revoke {
+            identifier,
+            pki_mount,
+        } => {
+            use crate::cert::{revoke_certificate, RevokeRequest};
+
+            let request = RevokeRequest {
+                identifier: identifier.clone(),
+                pki_mount: pki_mount.clone(),
+            };
+
+            revoke_certificate(&client, &token, request).await?;
+            Ok(())
+        }
     }
 }
 
-async fn handle_storage_command(command: StorageCommands, _output: &OutputFormat) -> Result<()> {
+async fn handle_storage_command(command: StorageCommands, output: &OutputFormat) -> Result<()> {
     let vault_addr = get_vault_addr().await?;
     let auth = VaultAuth::new(vault_addr.clone());
     let token = auth.get_token().await?;
@@ -592,29 +529,27 @@ async fn handle_storage_command(command: StorageCommands, _output: &OutputFormat
                 })
                 .collect();
 
-            if filtered_certs.is_empty() {
-                println!("No stored certificates found");
-            } else {
-                println!("Stored Certificates:");
-                println!(
-                    "{:<20} {:<15} {:<30} {:<20}",
-                    "CN", "PKI Mount", "Serial", "Expires"
-                );
-                println!("{}", "-".repeat(85));
-
-                for cert_storage in filtered_certs {
+            // Use OutputFormat for structured data output
+            let table_data: Vec<Vec<String>> = filtered_certs
+                .into_iter()
+                .map(|cert_storage| {
                     let cert = cert_storage.meta;
-                    let status = if cert.is_expired() { " (EXPIRED)" } else { "" };
-                    println!(
-                        "{:<20} {:<15} {:<30} {:<20}{}",
+                    let status = if cert.is_expired() {
+                        "EXPIRED"
+                    } else {
+                        "ACTIVE"
+                    };
+                    vec![
                         cert.cn,
                         cert_storage.pki_mount,
                         cert.serial,
-                        cert.expires.format("%Y-%m-%d %H:%M"),
-                        status
-                    );
-                }
-            }
+                        cert.expires.format("%Y-%m-%d %H:%M").to_string(),
+                        status.to_string(),
+                    ]
+                })
+                .collect();
+
+            output.print_table(&table_data);
             Ok(())
         }
         StorageCommands::Show { cn, pki_mount } => {
@@ -640,6 +575,48 @@ async fn handle_storage_command(command: StorageCommands, _output: &OutputFormat
         StorageCommands::Restore { backup_file } => {
             println!("Restore from: {backup_file}");
             // TODO: Implement restore
+            Ok(())
+        }
+        StorageCommands::Decrypt { file_path } => {
+            use std::path::Path;
+
+            let path = Path::new(&file_path);
+            if !path.exists() {
+                eprintln!("File not found: {file_path}");
+                return Ok(());
+            }
+
+            // Extract PKI mount and CN from path structure: .../secrets/{pki_mount}/{cn}/file.enc
+            let path_components: Vec<&str> = path
+                .components()
+                .filter_map(|c| c.as_os_str().to_str())
+                .collect();
+
+            let (pki_mount, cn) = if let Some(secrets_idx) =
+                path_components.iter().position(|&x| x == "secrets")
+            {
+                if secrets_idx + 2 < path_components.len() {
+                    (
+                        path_components[secrets_idx + 1],
+                        path_components[secrets_idx + 2],
+                    )
+                } else {
+                    return Err(crate::utils::errors::VaultCliError::InvalidInput(
+                        "Invalid path structure. Expected: .../secrets/{pki_mount}/{cn}/file.enc"
+                            .to_string(),
+                    ));
+                }
+            } else {
+                return Err(crate::utils::errors::VaultCliError::InvalidInput(
+                    "Path must contain 'secrets' directory. Expected: .../secrets/{pki_mount}/{cn}/file.enc".to_string()
+                ));
+            };
+
+            let context = format!("cert-{pki_mount}-{cn}");
+            let decrypted_data = storage.decrypt_file(&token, &context, path).await?;
+
+            let content = String::from_utf8_lossy(&decrypted_data);
+            println!("{content}");
             Ok(())
         }
     }
@@ -799,6 +776,11 @@ async fn handle_completion_helper_command(
     }
 
     Ok(())
+}
+
+async fn handle_vault_command(subcommand: &str, args: &[String]) -> Result<()> {
+    let vault_addr = get_vault_addr().await?;
+    crate::vault::wrapper::exec_vault_command(vault_addr, subcommand, args).await
 }
 
 async fn get_vault_addr() -> Result<String> {

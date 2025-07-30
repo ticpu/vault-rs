@@ -37,6 +37,7 @@ sha2 = "0.10"
 # System integration
 dirs = "6"
 rpassword = "7"
+which = "6"
 
 # Error handling
 thiserror = "2"

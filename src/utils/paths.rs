@@ -1,10 +1,10 @@
 use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::PROGRAM_NAME;
 use dirs;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub struct VaultCliPaths;
-const PROGRAM_NAME: &str = "vault-rs";
 
 impl VaultCliPaths {
     /// Get the base data directory: ~/.local/share/vault-rs/
@@ -44,8 +44,13 @@ impl VaultCliPaths {
         Ok(Self::data_dir()?.join("cache"))
     }
 
-    /// Get the path for a specific certificate's storage directory
-    pub fn cert_storage_dir(pki_mount: &str, cn: &str) -> Result<PathBuf> {
+    /// Get the path for a specific certificate's storage directory (with serial)
+    pub fn cert_storage_dir(pki_mount: &str, cn: &str, serial: &str) -> Result<PathBuf> {
+        Ok(Self::secrets_dir()?.join(pki_mount).join(cn).join(serial))
+    }
+
+    /// Get the path for a certificate CN directory (without serial, for listing)
+    pub fn cert_cn_dir(pki_mount: &str, cn: &str) -> Result<PathBuf> {
         Ok(Self::secrets_dir()?.join(pki_mount).join(cn))
     }
 

@@ -16,14 +16,46 @@ pub struct CertificateStorage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageCertificateMetadata {
+    #[serde(default = "default_serial")]
     pub serial: String,
+    #[serde(default = "default_cn")]
     pub cn: String,
+    #[serde(default = "default_role")]
     pub role: String,
+    #[serde(default = "default_crypto")]
     pub crypto: String,
+    #[serde(default = "default_created")]
     pub created: DateTime<Utc>,
+    #[serde(default = "default_expires")]
     pub expires: DateTime<Utc>,
+    #[serde(default)]
     pub status: CertStatus,
+    #[serde(default)]
     pub sans: Vec<String>,
+}
+
+fn default_serial() -> String {
+    "unknown".to_string()
+}
+
+fn default_cn() -> String {
+    "unknown".to_string()
+}
+
+fn default_role() -> String {
+    "unknown".to_string()
+}
+
+fn default_crypto() -> String {
+    "unknown".to_string()
+}
+
+fn default_created() -> DateTime<Utc> {
+    Utc::now()
+}
+
+fn default_expires() -> DateTime<Utc> {
+    Utc::now() + chrono::Duration::days(365)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +71,12 @@ pub enum CertStatus {
     Expired,
     Revoked,
     Unknown,
+}
+
+impl Default for CertStatus {
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 impl StorageCertificateMetadata {

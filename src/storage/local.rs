@@ -33,7 +33,11 @@ impl LocalStorage {
         vault_token: &str,
         cert_data: CertificateData<'_>,
     ) -> Result<()> {
-        let cert_dir = VaultCliPaths::cert_storage_dir(cert_data.pki_mount, cert_data.cn)?;
+        let cert_dir = VaultCliPaths::cert_storage_dir(
+            cert_data.pki_mount,
+            cert_data.cn,
+            &cert_data.metadata.serial,
+        )?;
         VaultCliPaths::ensure_dir_exists(&cert_dir)?;
 
         // Create unique context for this certificate
@@ -150,27 +154,115 @@ impl LocalStorage {
         Ok(())
     }
 
-    /// Retrieve certificate data from local storage
+    /// Retrieve certificate data from local storage (finds latest by expiration)
     pub async fn get_certificate(
         &self,
         vault_token: &str,
         pki_mount: &str,
         cn: &str,
     ) -> Result<(String, String, String, StorageCertificateMetadata)> {
-        let cert_dir = VaultCliPaths::cert_storage_dir(pki_mount, cn)?;
-        if !cert_dir.exists() {
+        let cn_dir = VaultCliPaths::cert_cn_dir(pki_mount, cn)?;
+        if !cn_dir.exists() {
             return Err(VaultCliError::CertNotFound(format!(
                 "Certificate not found: {pki_mount}/{cn}"
             )));
         }
 
+        // Check if this is old format (files directly in CN directory)
+        let old_cert_file = cn_dir.join("certificate.pem.enc");
+        let old_metadata_file = cn_dir.join("metadata.yaml.enc");
+
+        if old_cert_file.exists() && old_metadata_file.exists() {
+            // Handle old storage format
+            let context = format!("cert-{pki_mount}-{cn}");
+
+            let certificate_pem = String::from_utf8(
+                self.encryption_manager
+                    .decrypt_from_file(vault_token, &context, &old_cert_file)
+                    .await?,
+            )?;
+            let private_key_pem = String::from_utf8(
+                self.encryption_manager
+                    .decrypt_from_file(vault_token, &context, &cn_dir.join("private_key.pem.enc"))
+                    .await?,
+            )?;
+            let ca_chain_pem = String::from_utf8(
+                self.encryption_manager
+                    .decrypt_from_file(vault_token, &context, &cn_dir.join("ca_chain.pem.enc"))
+                    .await?,
+            )?;
+            let metadata: StorageCertificateMetadata = self
+                .encryption_manager
+                .decrypt_yaml_from_file(vault_token, &context, &old_metadata_file)
+                .await?;
+
+            return Ok((certificate_pem, private_key_pem, ca_chain_pem, metadata));
+        }
+
+        // Handle new storage format (serial-based directories)
+        let mut cert_dirs = Vec::new();
+        let entries = fs::read_dir(&cn_dir)?;
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                let serial = entry.file_name().to_string_lossy().to_string();
+                cert_dirs.push(serial);
+            }
+        }
+
+        if cert_dirs.is_empty() {
+            return Err(VaultCliError::CertNotFound(format!(
+                "No certificate serials found for: {pki_mount}/{cn}"
+            )));
+        }
+
+        // Load metadata for all certificates to find the latest by expiration
+        let mut cert_metadata = Vec::new();
+        for serial in &cert_dirs {
+            let cert_dir = VaultCliPaths::cert_storage_dir(pki_mount, cn, serial)?;
+            let context = format!("cert-{pki_mount}-{cn}");
+            let metadata_file = cert_dir.join("metadata.yaml.enc");
+
+            match self
+                .encryption_manager
+                .decrypt_yaml_from_file(vault_token, &context, &metadata_file)
+                .await
+            {
+                Ok(metadata) => cert_metadata.push((serial.clone(), metadata)),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to read metadata for {}/{}/{}: {}",
+                        pki_mount,
+                        cn,
+                        serial,
+                        e
+                    );
+                    continue;
+                }
+            }
+        }
+
+        if cert_metadata.is_empty() {
+            return Err(VaultCliError::CertNotFound(format!(
+                "No valid certificate metadata found for: {pki_mount}/{cn}"
+            )));
+        }
+
+        // Sort by expiration date (latest first) and take the newest
+        cert_metadata.sort_by(
+            |a: &(String, StorageCertificateMetadata), b: &(String, StorageCertificateMetadata)| {
+                b.1.expires.cmp(&a.1.expires)
+            },
+        );
+        let (latest_serial, latest_metadata) = &cert_metadata[0];
+
+        let cert_dir = VaultCliPaths::cert_storage_dir(pki_mount, cn, latest_serial)?;
         let context = format!("cert-{pki_mount}-{cn}");
 
-        // Read encrypted files
+        // Read encrypted files for the latest certificate
         let cert_file = cert_dir.join("certificate.pem.enc");
         let key_file = cert_dir.join("private_key.pem.enc");
         let ca_file = cert_dir.join("ca_chain.pem.enc");
-        let metadata_file = cert_dir.join("metadata.json.enc");
 
         let certificate_pem = String::from_utf8(
             self.encryption_manager
@@ -187,12 +279,13 @@ impl LocalStorage {
                 .decrypt_from_file(vault_token, &context, &ca_file)
                 .await?,
         )?;
-        let metadata: StorageCertificateMetadata = self
-            .encryption_manager
-            .decrypt_yaml_from_file(vault_token, &context, &metadata_file)
-            .await?;
 
-        Ok((certificate_pem, private_key_pem, ca_chain_pem, metadata))
+        Ok((
+            certificate_pem,
+            private_key_pem,
+            ca_chain_pem,
+            latest_metadata.clone(),
+        ))
     }
 
     /// List all locally stored certificates
@@ -208,23 +301,51 @@ impl LocalStorage {
         pki_mount: &str,
         cn: &str,
     ) -> Result<()> {
-        let cert_dir = VaultCliPaths::cert_storage_dir(pki_mount, cn)?;
+        let cn_dir = VaultCliPaths::cert_cn_dir(pki_mount, cn)?;
+
+        if cn_dir.exists() {
+            fs::remove_dir_all(&cn_dir)?;
+            tracing::info!("Removed certificate CN directory: {}", cn_dir.display());
+        }
+
+        // Update master index - find and remove all certificates for this CN and PKI mount
+        let mut index = self.get_master_index(vault_token).await?;
+        let serials_to_remove: Vec<String> = index
+            .certificates
+            .iter()
+            .filter(|cert| cert.meta.cn == cn && cert.pki_mount == pki_mount)
+            .map(|cert| cert.meta.serial.clone())
+            .collect();
+
+        for serial in serials_to_remove {
+            index.remove_certificate(&serial);
+        }
+
+        if !index.certificates.is_empty() {
+            self.store_master_index(vault_token, &index).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Remove specific certificate by serial from local storage
+    pub async fn remove_certificate_by_serial(
+        &self,
+        vault_token: &str,
+        pki_mount: &str,
+        cn: &str,
+        serial: &str,
+    ) -> Result<()> {
+        let cert_dir = VaultCliPaths::cert_storage_dir(pki_mount, cn, serial)?;
 
         if cert_dir.exists() {
             fs::remove_dir_all(&cert_dir)?;
             tracing::info!("Removed certificate directory: {}", cert_dir.display());
         }
 
-        // Update master index - find and remove by CN and PKI mount
+        // Update master index
         let mut index = self.get_master_index(vault_token).await?;
-        let serial_to_remove = index
-            .certificates
-            .iter()
-            .find(|cert| cert.meta.cn == cn && cert.pki_mount == pki_mount)
-            .map(|cert| cert.meta.serial.clone());
-
-        if let Some(serial) = serial_to_remove {
-            index.remove_certificate(&serial);
+        if index.remove_certificate(serial) {
             self.store_master_index(vault_token, &index).await?;
         }
 
@@ -257,7 +378,11 @@ impl LocalStorage {
                     fs::write(output_path.join(format!("{cn}.key")), &key_pem)?;
                     fs::write(output_path.join(format!("{cn}_chain.pem")), &ca_pem)?;
 
-                    let cert_dir = VaultCliPaths::cert_storage_dir(pki_mount, cn)?;
+                    // Find the latest certificate serial for this CN
+                    let (_, _, _, metadata) =
+                        self.get_certificate(vault_token, pki_mount, cn).await?;
+                    let cert_dir =
+                        VaultCliPaths::cert_storage_dir(pki_mount, cn, &metadata.serial)?;
                     let p12_file = cert_dir.join("p12.enc");
                     let context = format!("cert-{pki_mount}-{cn}");
                     let p12_data = self
@@ -287,7 +412,11 @@ impl LocalStorage {
                     fs::write(output_path.join(format!("{cn}_chain.pem")), &ca_pem)?;
                 }
                 "p12" => {
-                    let cert_dir = VaultCliPaths::cert_storage_dir(pki_mount, cn)?;
+                    // Find the latest certificate serial for this CN
+                    let (_, _, _, metadata) =
+                        self.get_certificate(vault_token, pki_mount, cn).await?;
+                    let cert_dir =
+                        VaultCliPaths::cert_storage_dir(pki_mount, cn, &metadata.serial)?;
                     let p12_file = cert_dir.join("p12.enc");
                     let context = format!("cert-{pki_mount}-{cn}");
                     let p12_data = self
@@ -381,6 +510,18 @@ impl LocalStorage {
     }
 
     /// Find certificate by serial number
+    /// Decrypt a file for debugging purposes
+    pub async fn decrypt_file(
+        &self,
+        vault_token: &str,
+        context: &str,
+        file_path: &std::path::Path,
+    ) -> Result<Vec<u8>> {
+        self.encryption_manager
+            .decrypt_from_file(vault_token, context, file_path)
+            .await
+    }
+
     pub async fn find_by_serial(
         &self,
         vault_token: &str,

@@ -64,6 +64,18 @@ pub enum Commands {
         #[command(subcommand)]
         command: CompletionHelperCommands,
     },
+    /// Vault secrets engine operations (wrapper for vault secrets with preset VAULT_ADDR/VAULT_TOKEN)
+    Secrets {
+        /// Pass-through arguments to vault secrets
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Vault operator operations (wrapper for vault operator with preset VAULT_ADDR/VAULT_TOKEN)
+    Operator {
+        /// Pass-through arguments to vault operator  
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -90,14 +102,14 @@ pub enum AuthCommands {
 
 #[derive(Subcommand)]
 pub enum CertCommands {
-    /// List certificates in PKI mount
+    /// List certificates in PKI mount (or all mounts if not specified)
     List {
-        /// PKI mount path
-        #[arg(value_hint = clap::ValueHint::Other)]
-        pki_mount: String,
-        /// Columns to display (comma-separated): cn,serial,not_before,not_after,sans,key_usage,extended_key_usage,is_ca
-        #[arg(long, default_value = "cn,not_after,extended_key_usage,sans")]
-        columns: String,
+        /// PKI mount path (lists all mounts if not provided)
+        #[arg(long, short = 'm', value_hint = clap::ValueHint::Other)]
+        pki_mount: Option<String>,
+        /// Columns to display (comma-separated): cn,serial,not_before,not_after,sans,key_usage,extended_key_usage,issuer,pki_mount. Use +column to append to defaults.
+        #[arg(long)]
+        columns: Option<String>,
     },
     /// List all PKI mounts
     ListMounts,
@@ -183,6 +195,9 @@ pub enum CertCommands {
         /// Export decrypted files
         #[arg(long)]
         decrypt: bool,
+        /// Skip passphrase prompt for P12 export (creates unprotected P12)
+        #[arg(long)]
+        no_passphrase: bool,
     },
     /// Extract and store from Vault JSON response
     Extract {
@@ -218,6 +233,14 @@ pub enum CertCommands {
     FindSerial {
         /// Certificate serial number
         serial: String,
+    },
+    /// Revoke certificate in Vault
+    Revoke {
+        /// Certificate identifier (Common Name or serial number)
+        identifier: String,
+        /// PKI mount (for CN lookups, optional)
+        #[arg(long)]
+        pki_mount: Option<String>,
     },
 }
 
@@ -266,6 +289,11 @@ pub enum StorageCommands {
     Restore {
         /// Backup file to restore
         backup_file: String,
+    },
+    /// Decrypt storage file for debugging
+    Decrypt {
+        /// Path to encrypted file
+        file_path: String,
     },
 }
 

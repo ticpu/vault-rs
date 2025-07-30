@@ -16,8 +16,39 @@ impl CertificateService {
         })
     }
 
-    /// List certificates with metadata, using cache when possible
+    /// List certificates with metadata from all PKI mounts or specific mount
     pub async fn list_certificates_with_metadata(
+        &self,
+        token: &str,
+        pki_mount: Option<&str>,
+    ) -> Result<Vec<CertificateMetadata>> {
+        if let Some(mount) = pki_mount {
+            self.list_certificates_single_mount(token, mount).await
+        } else {
+            self.list_certificates_all_mounts(token).await
+        }
+    }
+
+    /// List certificates with metadata from all PKI mounts
+    async fn list_certificates_all_mounts(&self, token: &str) -> Result<Vec<CertificateMetadata>> {
+        let pki_mounts = self.client.list_pki_mounts(token).await?;
+        let mut all_certificates = Vec::new();
+
+        for mount in pki_mounts {
+            if let Ok(certs) = self.list_certificates_single_mount(token, &mount).await {
+                all_certificates.extend(certs);
+            }
+            // Silently skip mounts that fail (might not have permissions)
+        }
+
+        // Sort by not_after date (newest first)
+        all_certificates.sort_by(|a, b| b.not_after.cmp(&a.not_after));
+
+        Ok(all_certificates)
+    }
+
+    /// List certificates with metadata from a single PKI mount, using cache when possible
+    async fn list_certificates_single_mount(
         &self,
         token: &str,
         pki_mount: &str,

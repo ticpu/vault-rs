@@ -26,8 +26,8 @@ pub enum CertificateColumn {
     Sans,
     KeyUsage,
     ExtendedKeyUsage,
-    IsCa,
     Issuer,
+    PkiMount,
 }
 
 impl FromStr for CertificateColumn {
@@ -42,8 +42,8 @@ impl FromStr for CertificateColumn {
             "sans" => Ok(Self::Sans),
             "key_usage" => Ok(Self::KeyUsage),
             "extended_key_usage" | "ext_key_usage" => Ok(Self::ExtendedKeyUsage),
-            "is_ca" => Ok(Self::IsCa),
             "issuer" => Ok(Self::Issuer),
+            "pki_mount" | "mount" => Ok(Self::PkiMount),
             _ => Err(format!("Invalid column: {s}")),
         }
     }
@@ -59,8 +59,8 @@ impl CertificateColumn {
             Self::Sans => "SANs",
             Self::KeyUsage => "Key Usage",
             Self::ExtendedKeyUsage => "Ext Key Usage",
-            Self::IsCa => "CA",
             Self::Issuer => "Issuer",
+            Self::PkiMount => "PKI Mount",
         }
     }
 
@@ -73,8 +73,8 @@ impl CertificateColumn {
             Self::Sans => 40,
             Self::KeyUsage => 20,
             Self::ExtendedKeyUsage => 25,
-            Self::IsCa => 3,
             Self::Issuer => 30,
+            Self::PkiMount => 15,
         }
     }
 }
@@ -135,8 +135,8 @@ impl CertificateMetadata {
 
                 format!("{ca_prefix}{usage}")
             }
-            CertificateColumn::IsCa => if self.is_ca { "Yes" } else { "No" }.to_string(),
             CertificateColumn::Issuer => self.issuer.clone(),
+            CertificateColumn::PkiMount => self.pki_mount.clone(),
         }
     }
 

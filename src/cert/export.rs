@@ -13,6 +13,7 @@ pub async fn export_certificate(
     identifier: &str,
     format: &ExportFormat,
     output_dir: Option<&str>,
+    no_passphrase: bool,
 ) -> Result<()> {
     // Normalize PEM data to ensure consistent formatting
     let normalized_pem = normalize_pem(pem_data);
@@ -63,10 +64,12 @@ pub async fn export_certificate(
             // First, try to find certificate metadata to get CN if identifier is serial
             match storage.list_certificates(token).await {
                 Ok(certs) => {
-                    // Find matching certificate by CN or serial
-                    let matching_cert = certs
-                        .iter()
-                        .find(|cert| cert.meta.cn == identifier || cert.meta.serial == identifier);
+                    // Find matching certificate by CN or serial (storage has colons, user input doesn't)
+                    let identifier_with_colons = crate::cert::format_serial_with_colons(identifier);
+
+                    let matching_cert = certs.iter().find(|cert| {
+                        cert.meta.cn == identifier || cert.meta.serial == identifier_with_colons
+                    });
 
                     if let Some(cert) = matching_cert {
                         // Get the certificate data with private key
@@ -109,23 +112,23 @@ pub async fn export_certificate(
             use crate::storage::local::LocalStorage;
             let storage = LocalStorage::new(client.vault_addr().to_string());
 
-            // Get CA chain
-            let ca_chain = get_ca_chain_safe(client, token, mount).await;
-
             // Try to get private key from local storage
             match storage.list_certificates(token).await {
                 Ok(certs) => {
-                    let matching_cert = certs
-                        .iter()
-                        .find(|cert| cert.meta.cn == identifier || cert.meta.serial == identifier);
+                    // Find matching certificate by CN or serial (storage has colons, user input doesn't)
+                    let identifier_with_colons = crate::cert::format_serial_with_colons(identifier);
+
+                    let matching_cert = certs.iter().find(|cert| {
+                        cert.meta.cn == identifier || cert.meta.serial == identifier_with_colons
+                    });
 
                     if let Some(cert) = matching_cert {
                         match storage
                             .get_certificate(token, &cert.pki_mount, &cert.meta.cn)
                             .await
                         {
-                            Ok((_, private_key, _, _)) => {
-                                // Create P12 file using OpenSSL
+                            Ok((certificate_pem, private_key, ca_chain_pem, _)) => {
+                                // Create P12 file using matching cert and key from local storage
                                 let dir = output_dir.unwrap_or(".");
                                 let p12_filename = format!("{}.p12", sanitize_filename(identifier));
                                 let p12_path = Path::new(dir).join(&p12_filename);
@@ -133,11 +136,14 @@ pub async fn export_certificate(
                                 fs::create_dir_all(dir)?;
 
                                 let normalized_key = normalize_pem(&private_key);
+                                let normalized_cert = normalize_pem(&certificate_pem);
+                                let normalized_ca = normalize_pem(&ca_chain_pem);
                                 match crate::utils::create_p12_file(
                                     &p12_path,
                                     &normalized_key,
-                                    &normalized_pem,
-                                    &ca_chain,
+                                    &normalized_cert,
+                                    &normalized_ca,
+                                    no_passphrase,
                                 ) {
                                     Ok(()) => {
                                         eprintln!(
@@ -180,44 +186,42 @@ pub async fn export_certificate(
             let ca_chain = get_ca_chain_safe(client, token, mount).await;
 
             // Try to get private key from local storage
-            let private_key = match storage.list_certificates(token).await {
-                Ok(certs) => {
-                    let matching_cert = certs
-                        .iter()
-                        .find(|cert| cert.meta.cn == identifier || cert.meta.serial == identifier);
+            if let Ok(certs) = storage.list_certificates(token).await {
+                // Find matching certificate by CN or serial (storage has colons, user input doesn't)
+                let identifier_with_colons = crate::cert::format_serial_with_colons(identifier);
 
-                    if let Some(cert) = matching_cert {
-                        match storage
-                            .get_certificate(token, &cert.pki_mount, &cert.meta.cn)
-                            .await
-                        {
-                            Ok((_, private_key, _, _)) => Some(private_key),
-                            Err(_) => {
-                                tracing::info!("Private key for '{}' not found in local storage, exporting certificate and chain only", identifier);
-                                None
-                            }
+                let matching_cert = certs.iter().find(|cert| {
+                    cert.meta.cn == identifier || cert.meta.serial == identifier_with_colons
+                });
+
+                if let Some(cert) = matching_cert {
+                    if let Ok((certificate_pem, private_key, ca_chain_pem, _)) = storage
+                        .get_certificate(token, &cert.pki_mount, &cert.meta.cn)
+                        .await
+                    {
+                        // Use cert and CA from local storage to ensure they match the private key
+                        let normalized_key = normalize_pem(&private_key);
+                        let normalized_cert = normalize_pem(&certificate_pem);
+                        let normalized_ca = normalize_pem(&ca_chain_pem);
+                        let full_pem = format!("{normalized_key}{normalized_cert}{normalized_ca}");
+
+                        if let Some(dir) = output_dir {
+                            write_to_file(
+                                dir,
+                                &format!("{}.pem", sanitize_filename(identifier)),
+                                &full_pem,
+                            )?;
+                        } else {
+                            println!("{full_pem}");
                         }
-                    } else {
-                        tracing::info!("Certificate '{}' not found in local storage, exporting certificate and chain only", identifier);
-                        None
+                        return Ok(());
                     }
                 }
-                Err(_) => {
-                    tracing::info!(
-                        "Unable to access local storage, exporting certificate and chain only"
-                    );
-                    None
-                }
-            };
+            }
 
-            // Combine in standard order: private key + certificate + CA chain
-            let full_pem = match private_key {
-                Some(key) => {
-                    let normalized_key = normalize_pem(&key);
-                    format!("{normalized_key}{normalized_pem}{ca_chain}")
-                }
-                None => format!("{normalized_pem}{ca_chain}"),
-            };
+            // Fallback: export certificate and chain only (no private key)
+            tracing::info!("Private key for '{identifier}' not found in local storage, exporting certificate and chain only");
+            let full_pem = format!("{normalized_pem}{ca_chain}");
 
             if let Some(dir) = output_dir {
                 write_to_file(

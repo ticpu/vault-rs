@@ -15,17 +15,19 @@
 
 ### Output Handling Guidelines (src/utils/output.rs)
 
-**Use OutputFormat methods for structured data:**
+**MANDATORY: Use OutputFormat methods for ALL structured data:**
 - `output.print_table()` - Multi-column tabular data with --raw support
 - `output.print_list()` - Single-column lists, one item per line  
 - `output.print_key_value()` - Key-value pairs (2-column data)
 
-**Direct output only for simple cases:**
-- `println!()` - Single values or when OutputFormat isn't available
+**NEVER use direct println!() for structured data** - Always use OutputFormat methods.
+
+**Direct output only for these specific cases:**
+- `println!()` - Single values only when OutputFormat isn't available
 - `eprintln!()` - User-facing status messages and errors to stderr
 - `tracing::info!()` - Debug/internal logging (controlled by -v flags)
 
-**Never bypass OutputFormat for structured data** - it handles --raw vs formatted modes.
+**Critical:** OutputFormat automatically handles --raw vs formatted modes. Using direct println!() breaks UNIX pipeline compatibility and user formatting preferences.
 
 ## Certificate Management Features
 
@@ -44,6 +46,8 @@
 - Use system certificate stores (rustls-tls-native-roots)
 - Store tokens securely in `XDG_RUNTIME_DIR` with mode 600
 - **Never create certificates with wrong crypto type** - fail fast instead
+- **NEVER use /tmp for temporary files** - always use `VaultCliPaths::runtime_dir()` for volatile storage
+- Temporary files must have secure permissions (0o600) and be cleaned up immediately after use
 
 ## Rust Coding Guidelines
 
@@ -53,6 +57,10 @@
   - This prevents clippy warnings and is more readable
   - Only use positional arguments (`{}`) when you need complex formatting or multiple uses of the same variable
 
-- Keep commands.rs lightweight, prefer creating new functions in new files and call them from there
+- *Keep commands.rs lightweight*, prefer creating new functions in new files and call them from there
 
 - If a function call takes more than ~7 arguments, use a data structure
+
+## Implementation Guidelines
+
+- When possible, use `PROGRAM_NAME` instead of `"vault-rs"` (import `crate::utils::PROGRAM_NAME` first)
