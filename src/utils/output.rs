@@ -1,9 +1,34 @@
+use crate::cert::CertificateColumn;
 use std::fmt::Display;
+
+/// Trait for types that can provide column values
+pub trait GetColumnValue {
+    fn get_column_value(&self, column: &CertificateColumn) -> String;
+}
 
 /// Output format configuration
 #[derive(Clone, Debug)]
 pub struct OutputFormat {
     pub raw: bool,
+}
+
+/// Build table data from certificates and columns
+pub fn build_table_data<T>(
+    certificates: &[T],
+    parsed_columns: &[CertificateColumn],
+) -> Vec<Vec<String>>
+where
+    T: GetColumnValue,
+{
+    certificates
+        .iter()
+        .map(|cert| {
+            parsed_columns
+                .iter()
+                .map(|col| cert.get_column_value(col))
+                .collect()
+        })
+        .collect()
 }
 
 impl OutputFormat {

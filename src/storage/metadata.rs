@@ -1,3 +1,4 @@
+use crate::utils::output::GetColumnValue;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,9 +15,9 @@ pub struct CertificateStorage {
     pub meta: StorageCertificateMetadata,
 }
 
-impl CertificateStorage {
+impl GetColumnValue for CertificateStorage {
     /// Get column value for storage certificates using the same system as CertificateMetadata
-    pub fn get_column_value(&self, column: &crate::cert::CertificateColumn) -> String {
+    fn get_column_value(&self, column: &crate::cert::CertificateColumn) -> String {
         use crate::cert::CertificateColumn;
         match column {
             CertificateColumn::PkiMount => self.pki_mount.clone(),
@@ -99,9 +100,11 @@ impl StorageCertificateMetadata {
         let threshold = Utc::now() + chrono::Duration::days(days as i64);
         self.expires < threshold
     }
+}
 
+impl GetColumnValue for StorageCertificateMetadata {
     /// Get column value using the same system as CertificateMetadata
-    pub fn get_column_value(&self, column: &crate::cert::CertificateColumn) -> String {
+    fn get_column_value(&self, column: &crate::cert::CertificateColumn) -> String {
         use crate::cert::CertificateColumn;
         match column {
             CertificateColumn::Cn => self.cn.clone(),

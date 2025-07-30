@@ -33,7 +33,7 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Auth { command } => handle_auth_command(command, &output).await,
         Commands::Cert { command } => handle_cert_command(command, &output).await,
-        Commands::Storage { command } => handle_storage_command(command).await,
+        Commands::Storage { command } => handle_storage_command(command, &output).await,
         Commands::Cache { command } => handle_cache_command(command, &output).await,
         Commands::Completion { ref command } => handle_completion_command(command, &cli),
         Commands::CompletionHelper { ref command } => {
@@ -183,6 +183,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 &cert_service,
                 pki_mount.as_deref(),
                 columns,
+                output,
             )
             .await
         }
@@ -401,7 +402,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
     }
 }
 
-async fn handle_storage_command(command: StorageCommands) -> Result<()> {
+async fn handle_storage_command(command: StorageCommands, output: &OutputFormat) -> Result<()> {
     let storage = LocalStorage::new().await;
 
     match command {
@@ -418,6 +419,7 @@ async fn handle_storage_command(command: StorageCommands) -> Result<()> {
                 expired,
                 expires_soon,
                 columns,
+                output,
             )
             .await
         }

@@ -1,8 +1,6 @@
-use crate::storage::local::{CertificateData, LocalStorage};
-use crate::storage::metadata::{CertStatus, StorageCertificateMetadata};
 use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::{parse_comma_separated, resolve_crypto_type, validate_role_exists};
 use crate::vault::client::VaultClient;
-use chrono::Utc;
 use std::fs;
 use std::path::Path;
 
@@ -27,14 +25,12 @@ pub async fn sign_certificate_from_csr(
     let full_pki = request.pki.clone();
 
     // Auto-detect crypto type if not specified
-    let detected_crypto = if let Some(crypto_type) = request.crypto {
-        crypto_type.as_str().to_string()
-    } else {
-        tracing::info!("Auto-detecting crypto type for PKI mount: {full_pki}");
-        let detected = client.detect_crypto_type(&full_pki).await?;
-        tracing::info!("Detected crypto type: {detected}");
-        detected
-    };
+    let detected_crypto = resolve_crypto_type(
+        client,
+        &full_pki,
+        request.crypto.as_ref().map(|c| c.as_str()),
+    )
+    .await?;
 
     eprintln!("Signing certificate for CN: {}", request.cn);
     eprintln!("PKI: {full_pki} ({detected_crypto})");
@@ -68,30 +64,11 @@ pub async fn sign_certificate_from_csr(
     }
 
     // Validate role exists (optional check with helpful error)
-    if let Ok(available_roles) = client.list_roles(&full_pki).await {
-        if !available_roles.is_empty() && !available_roles.contains(&request.role) {
-            eprintln!(
-                "Warning: Role '{}' not found in available roles for PKI '{full_pki}'",
-                request.role
-            );
-            eprintln!("Available roles: {}", available_roles.join(", "));
-            eprintln!("Continuing anyway - Vault will return an error if role is invalid.");
-        }
-    }
+    validate_role_exists(client, &full_pki, &request.role).await?;
 
     // Parse alt_names and ip_sans
-    let alt_names_vec = request.alt_names.as_ref().map(|names| {
-        names
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect::<Vec<_>>()
-    });
-
-    let ip_sans_vec = request.ip_sans.as_ref().map(|ips| {
-        ips.split(',')
-            .map(|s| s.trim().to_string())
-            .collect::<Vec<_>>()
-    });
+    let alt_names_vec = parse_comma_separated(request.alt_names.as_deref());
+    let ip_sans_vec = parse_comma_separated(request.ip_sans.as_deref());
 
     // Sign certificate using CSR
     let sign_request = crate::vault::client::SignCertificateRequest {
@@ -120,32 +97,23 @@ pub async fn sign_certificate_from_csr(
     eprintln!("✓ Certificate signed with serial: {serial}");
 
     // Store locally unless --no-store
+    use crate::utils::cert_utils::CertificateStorageHelper;
+    let ca_chain = client.get_ca_chain(&full_pki).await?;
+
+    let storage_helper = CertificateStorageHelper {
+        serial: serial.to_string(),
+        cn: request.cn.clone(),
+        role: request.role.clone(),
+        crypto: detected_crypto.clone(),
+        sans: alt_names_vec.unwrap_or_default(),
+        no_store: request.no_store,
+    };
+
+    // CSR signing doesn't provide private key
+    storage_helper
+        .store_certificate(&full_pki, certificate, None, &ca_chain)
+        .await?;
     if !request.no_store {
-        let storage = LocalStorage::new().await;
-        let metadata = StorageCertificateMetadata {
-            serial: serial.to_string(),
-            cn: request.cn.clone(),
-            role: request.role.clone(),
-            crypto: detected_crypto.clone(),
-            created: Utc::now(),
-            expires: Utc::now() + chrono::Duration::days(365), // Will be updated with actual expiry
-            status: CertStatus::Active,
-            sans: alt_names_vec.unwrap_or_default(),
-        };
-
-        // Get CA chain for storage
-        let ca_chain = client.get_ca_chain(&full_pki).await?;
-
-        // Note: For CSR signing, we don't have the private key, so we store empty string
-        let cert_data = CertificateData {
-            pki_mount: &full_pki,
-            cn: &request.cn,
-            certificate_pem: certificate,
-            private_key_pem: "", // CSR signing doesn't provide private key
-            ca_chain_pem: &ca_chain,
-            metadata,
-        };
-        storage.store_certificate(cert_data).await?;
         eprintln!("✓ Certificate stored encrypted locally (without private key)");
     }
 

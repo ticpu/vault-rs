@@ -1,3 +1,4 @@
+use crate::utils::output::GetColumnValue;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
@@ -79,8 +80,8 @@ impl CertificateColumn {
     }
 }
 
-impl CertificateMetadata {
-    pub fn get_column_value(&self, column: &CertificateColumn) -> String {
+impl GetColumnValue for CertificateMetadata {
+    fn get_column_value(&self, column: &CertificateColumn) -> String {
         match column {
             CertificateColumn::Cn => self.cn.clone(),
             CertificateColumn::Serial => self.serial.clone(),
@@ -139,7 +140,9 @@ impl CertificateMetadata {
             CertificateColumn::PkiMount => self.pki_mount.clone(),
         }
     }
+}
 
+impl CertificateMetadata {
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.not_after
     }

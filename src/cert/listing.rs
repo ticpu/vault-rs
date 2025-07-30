@@ -1,6 +1,8 @@
 use crate::cert::{CertificateColumn, CertificateService};
 use crate::storage::local::LocalStorage;
+use crate::utils::build_table_data;
 use crate::utils::errors::Result;
+use crate::utils::output::OutputFormat;
 use std::str::FromStr;
 
 /// Unified certificate listing service that handles both CertCommands::List and StorageCommands::List
@@ -12,6 +14,7 @@ impl CertificateListingService {
         cert_service: &CertificateService,
         pki_mount: Option<&str>,
         columns: Option<String>,
+        output: &OutputFormat,
     ) -> Result<()> {
         let certificates = cert_service
             .list_certificates_with_metadata(pki_mount)
@@ -22,15 +25,9 @@ impl CertificateListingService {
         }
 
         let parsed_columns = Self::parse_columns(columns, pki_mount.is_some())?;
+        let table_data = build_table_data(&certificates, &parsed_columns);
 
-        // UNIX-friendly output: one line per certificate with specified columns
-        for cert in certificates {
-            let values: Vec<String> = parsed_columns
-                .iter()
-                .map(|col| cert.get_column_value(col))
-                .collect();
-            println!("{}", values.join("\t"));
-        }
+        output.print_table(&table_data);
         Ok(())
     }
 
@@ -41,6 +38,7 @@ impl CertificateListingService {
         expired: bool,
         expires_soon: Option<String>,
         columns: Option<String>,
+        output: &OutputFormat,
     ) -> Result<()> {
         let certificates = storage.list_certificates().await?;
 
@@ -73,15 +71,9 @@ impl CertificateListingService {
         }
 
         let parsed_columns = Self::parse_columns(columns, pki.is_some())?;
+        let table_data = build_table_data(&filtered_certs, &parsed_columns);
 
-        // UNIX-friendly output: one line per certificate with specified columns
-        for cert in filtered_certs {
-            let values: Vec<String> = parsed_columns
-                .iter()
-                .map(|col| cert.get_column_value(col))
-                .collect();
-            println!("{}", values.join("\t"));
-        }
+        output.print_table(&table_data);
         Ok(())
     }
 

@@ -1,5 +1,6 @@
 use crate::cli::args::ExportFormat;
 use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::{write_output_or_print, write_to_file};
 use crate::vault::client::VaultClient;
 use std::fs;
 use std::path::Path;
@@ -214,15 +215,11 @@ pub async fn export_certificate(
                         let normalized_ca = normalize_pem(&ca_chain_pem);
                         let full_pem = format!("{normalized_key}{normalized_cert}{normalized_ca}");
 
-                        if let Some(ref dir) = request.output_dir {
-                            write_to_file(
-                                dir,
-                                &format!("{}.pem", sanitize_filename(&request.identifier)),
-                                &full_pem,
-                            )?;
-                        } else {
-                            println!("{full_pem}");
-                        }
+                        write_output_or_print(
+                            request.output_dir.as_deref(),
+                            &format!("{}.pem", sanitize_filename(&request.identifier)),
+                            &full_pem,
+                        )?;
                         return Ok(());
                     }
                 }
@@ -232,30 +229,14 @@ pub async fn export_certificate(
             tracing::info!("Private key for '{}' not found in local storage, exporting certificate and chain only", request.identifier);
             let full_pem = format!("{normalized_pem}{ca_chain}");
 
-            if let Some(ref dir) = request.output_dir {
-                write_to_file(
-                    dir,
-                    &format!("{}.pem", sanitize_filename(&request.identifier)),
-                    &full_pem,
-                )?;
-            } else {
-                println!("{full_pem}");
-            }
+            write_output_or_print(
+                request.output_dir.as_deref(),
+                &format!("{}.pem", sanitize_filename(&request.identifier)),
+                &full_pem,
+            )?;
         }
     }
 
-    Ok(())
-}
-
-/// Write data to file, creating directories as needed
-fn write_to_file(dir: &str, filename: &str, data: &str) -> Result<()> {
-    let path = Path::new(dir);
-    fs::create_dir_all(path)?;
-
-    let file_path = path.join(filename);
-    fs::write(&file_path, data)?;
-
-    eprintln!("Certificate exported to: {}", file_path.display());
     Ok(())
 }
 
