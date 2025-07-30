@@ -367,22 +367,20 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             decrypt: _,
             no_passphrase,
         } => {
-            use crate::cert::{export_certificate, find_certificate_by_identifier};
+            use crate::cert::{export_certificate, find_certificate_by_identifier, ExportCertificateRequest};
             match find_certificate_by_identifier(&client, &token, &identifier, pki_mount.as_deref())
                 .await
             {
                 Ok((pem, _serial, mount)) => {
-                    export_certificate(
-                        &client,
-                        &token,
-                        &pem,
-                        &mount,
-                        &identifier,
-                        &format,
-                        output.as_deref(),
+                    let request = ExportCertificateRequest {
+                        pem_data: pem,
+                        mount,
+                        identifier: identifier.clone(),
+                        format,
+                        output_dir: output,
                         no_passphrase,
-                    )
-                    .await?;
+                    };
+                    export_certificate(&client, &token, request).await?;
                 }
                 Err(e) => {
                     eprintln!("Error: {e}");
@@ -444,20 +442,18 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             output,
         } => {
             // Use shared lookup function (serial is treated as identifier)
-            use crate::cert::{export_certificate, find_certificate_by_identifier};
+            use crate::cert::{export_certificate, find_certificate_by_identifier, ExportCertificateRequest};
             match find_certificate_by_identifier(&client, &token, &serial, None).await {
                 Ok((pem, _found_serial, mount)) => {
-                    export_certificate(
-                        &client,
-                        &token,
-                        &pem,
-                        &mount,
-                        &serial,
-                        &format,
-                        Some(&output),
-                        false, // Extract command defaults to no passphrase
-                    )
-                    .await?;
+                    let request = ExportCertificateRequest {
+                        pem_data: pem,
+                        mount,
+                        identifier: serial.clone(),
+                        format,
+                        output_dir: Some(output),
+                        no_passphrase: false, // Extract command defaults to no passphrase
+                    };
+                    export_certificate(&client, &token, request).await?;
                 }
                 Err(e) => {
                     eprintln!("Error: {e}");

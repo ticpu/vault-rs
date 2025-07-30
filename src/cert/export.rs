@@ -4,27 +4,31 @@ use crate::vault::client::VaultClient;
 use std::fs;
 use std::path::Path;
 
+pub struct ExportCertificateRequest {
+    pub pem_data: String,
+    pub mount: String,
+    pub identifier: String,
+    pub format: ExportFormat,
+    pub output_dir: Option<String>,
+    pub no_passphrase: bool,
+}
+
 /// Export certificate in various formats
 pub async fn export_certificate(
     client: &VaultClient,
     token: &str,
-    pem_data: &str,
-    mount: &str,
-    identifier: &str,
-    format: &ExportFormat,
-    output_dir: Option<&str>,
-    no_passphrase: bool,
+    request: ExportCertificateRequest,
 ) -> Result<()> {
     // Normalize PEM data to ensure consistent formatting
-    let normalized_pem = normalize_pem(pem_data);
+    let normalized_pem = normalize_pem(&request.pem_data);
 
-    match format {
+    match request.format {
         ExportFormat::Pem => {
             // Default PEM format - output to stdout (pipe-friendly) or file
-            if let Some(dir) = output_dir {
+            if let Some(ref dir) = request.output_dir {
                 write_to_file(
                     dir,
-                    &format!("{}.pem", sanitize_filename(identifier)),
+                    &format!("{}.pem", sanitize_filename(&request.identifier)),
                     &normalized_pem,
                 )?;
             } else {
@@ -34,22 +38,22 @@ pub async fn export_certificate(
         }
         ExportFormat::Crt => {
             // Certificate only to .crt file
-            let dir = output_dir.unwrap_or(".");
+            let dir = request.output_dir.as_deref().unwrap_or(".");
             write_to_file(
                 dir,
-                &format!("{}.crt", sanitize_filename(identifier)),
+                &format!("{}.crt", sanitize_filename(&request.identifier)),
                 &normalized_pem,
             )?;
         }
         ExportFormat::Chain => {
             // Get full certificate chain (already normalized)
-            let ca_chain = get_ca_chain_safe(client, token, mount).await;
+            let ca_chain = get_ca_chain_safe(client, token, &request.mount).await;
             let full_chain = format!("{normalized_pem}{ca_chain}");
 
-            if let Some(dir) = output_dir {
+            if let Some(ref dir) = request.output_dir {
                 write_to_file(
                     dir,
-                    &format!("{}_chain.pem", sanitize_filename(identifier)),
+                    &format!("{}_chain.pem", sanitize_filename(&request.identifier)),
                     &full_chain,
                 )?;
             } else {
@@ -65,10 +69,10 @@ pub async fn export_certificate(
             match storage.list_certificates(token).await {
                 Ok(certs) => {
                     // Find matching certificate by CN or serial (storage has colons, user input doesn't)
-                    let identifier_with_colons = crate::cert::format_serial_with_colons(identifier);
+                    let identifier_with_colons = crate::cert::format_serial_with_colons(&request.identifier);
 
                     let matching_cert = certs.iter().find(|cert| {
-                        cert.meta.cn == identifier || cert.meta.serial == identifier_with_colons
+                        cert.meta.cn == request.identifier || cert.meta.serial == identifier_with_colons
                     });
 
                     if let Some(cert) = matching_cert {
@@ -78,10 +82,10 @@ pub async fn export_certificate(
                             .await
                         {
                             Ok((_, private_key, _, _)) => {
-                                if let Some(dir) = output_dir {
+                                if let Some(ref dir) = request.output_dir {
                                     write_to_file(
                                         dir,
-                                        &format!("{}.key", sanitize_filename(identifier)),
+                                        &format!("{}.key", sanitize_filename(&request.identifier)),
                                         &private_key,
                                     )?;
                                 } else {
@@ -96,7 +100,7 @@ pub async fn export_certificate(
                         }
                     } else {
                         return Err(VaultCliError::InvalidInput(
-                            format!("Private key for '{identifier}' not found in local storage. Keys are only available for certificates created with vault-rs.")
+                            format!("Private key for '{}' not found in local storage. Keys are only available for certificates created with vault-rs.", request.identifier)
                         ));
                     }
                 }
@@ -116,10 +120,10 @@ pub async fn export_certificate(
             match storage.list_certificates(token).await {
                 Ok(certs) => {
                     // Find matching certificate by CN or serial (storage has colons, user input doesn't)
-                    let identifier_with_colons = crate::cert::format_serial_with_colons(identifier);
+                    let identifier_with_colons = crate::cert::format_serial_with_colons(&request.identifier);
 
                     let matching_cert = certs.iter().find(|cert| {
-                        cert.meta.cn == identifier || cert.meta.serial == identifier_with_colons
+                        cert.meta.cn == request.identifier || cert.meta.serial == identifier_with_colons
                     });
 
                     if let Some(cert) = matching_cert {
@@ -129,8 +133,8 @@ pub async fn export_certificate(
                         {
                             Ok((certificate_pem, private_key, ca_chain_pem, _)) => {
                                 // Create P12 file using matching cert and key from local storage
-                                let dir = output_dir.unwrap_or(".");
-                                let p12_filename = format!("{}.p12", sanitize_filename(identifier));
+                                let dir = request.output_dir.as_deref().unwrap_or(".");
+                                let p12_filename = format!("{}.p12", sanitize_filename(&request.identifier));
                                 let p12_path = Path::new(dir).join(&p12_filename);
 
                                 fs::create_dir_all(dir)?;
@@ -143,7 +147,7 @@ pub async fn export_certificate(
                                     &normalized_key,
                                     &normalized_cert,
                                     &normalized_ca,
-                                    no_passphrase,
+                                    request.no_passphrase,
                                 ) {
                                     Ok(()) => {
                                         eprintln!(
@@ -160,13 +164,13 @@ pub async fn export_certificate(
                             }
                             Err(_) => {
                                 return Err(VaultCliError::InvalidInput(
-                                    format!("P12 export requires private key. Certificate '{identifier}' not found in local storage.")
+                                    format!("P12 export requires private key. Certificate '{}' not found in local storage.", request.identifier)
                                 ));
                             }
                         }
                     } else {
                         return Err(VaultCliError::InvalidInput(
-                            format!("P12 export requires private key. Certificate '{identifier}' not found in local storage.")
+                            format!("P12 export requires private key. Certificate '{}' not found in local storage.", request.identifier)
                         ));
                     }
                 }
@@ -183,15 +187,15 @@ pub async fn export_certificate(
             let storage = LocalStorage::new(client.vault_addr().to_string());
 
             // Get CA chain
-            let ca_chain = get_ca_chain_safe(client, token, mount).await;
+            let ca_chain = get_ca_chain_safe(client, token, &request.mount).await;
 
             // Try to get private key from local storage
             if let Ok(certs) = storage.list_certificates(token).await {
                 // Find matching certificate by CN or serial (storage has colons, user input doesn't)
-                let identifier_with_colons = crate::cert::format_serial_with_colons(identifier);
+                let identifier_with_colons = crate::cert::format_serial_with_colons(&request.identifier);
 
                 let matching_cert = certs.iter().find(|cert| {
-                    cert.meta.cn == identifier || cert.meta.serial == identifier_with_colons
+                    cert.meta.cn == request.identifier || cert.meta.serial == identifier_with_colons
                 });
 
                 if let Some(cert) = matching_cert {
@@ -205,10 +209,10 @@ pub async fn export_certificate(
                         let normalized_ca = normalize_pem(&ca_chain_pem);
                         let full_pem = format!("{normalized_key}{normalized_cert}{normalized_ca}");
 
-                        if let Some(dir) = output_dir {
+                        if let Some(ref dir) = request.output_dir {
                             write_to_file(
                                 dir,
-                                &format!("{}.pem", sanitize_filename(identifier)),
+                                &format!("{}.pem", sanitize_filename(&request.identifier)),
                                 &full_pem,
                             )?;
                         } else {
@@ -220,13 +224,13 @@ pub async fn export_certificate(
             }
 
             // Fallback: export certificate and chain only (no private key)
-            tracing::info!("Private key for '{identifier}' not found in local storage, exporting certificate and chain only");
+            tracing::info!("Private key for '{}' not found in local storage, exporting certificate and chain only", request.identifier);
             let full_pem = format!("{normalized_pem}{ca_chain}");
 
-            if let Some(dir) = output_dir {
+            if let Some(ref dir) = request.output_dir {
                 write_to_file(
                     dir,
-                    &format!("{}.pem", sanitize_filename(identifier)),
+                    &format!("{}.pem", sanitize_filename(&request.identifier)),
                     &full_pem,
                 )?;
             } else {

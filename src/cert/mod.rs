@@ -10,7 +10,7 @@ pub mod sign;
 
 pub use cache::CertificateCache;
 pub use create::{create_certificate, CreateCertificateRequest};
-pub use export::export_certificate;
+pub use export::{export_certificate, ExportCertificateRequest};
 pub use lookup::{find_certificate_by_identifier, format_serial_with_colons};
 pub use metadata::{CertificateColumn, CertificateMetadata};
 pub use parser::CertificateParser;
