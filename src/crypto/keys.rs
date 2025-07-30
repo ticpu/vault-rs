@@ -1,6 +1,6 @@
 use crate::utils::errors::{Result, VaultCliError};
 use aes_gcm::{Aes256Gcm, Key, KeyInit};
-use rand::{rngs::OsRng, RngCore};
+use rand::RngCore;
 use reqwest::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -45,7 +45,7 @@ impl KeyManager {
     /// Generate a new 256-bit master key
     fn generate_master_key(&self) -> [u8; 32] {
         let mut key = [0u8; 32];
-        OsRng.fill_bytes(&mut key);
+        rand::rng().fill_bytes(&mut key);
         key
     }
 
@@ -240,7 +240,7 @@ impl KeyManager {
     /// Generate a random nonce for AES-GCM
     pub fn generate_nonce(&self) -> [u8; 12] {
         let mut nonce = [0u8; 12];
-        OsRng.fill_bytes(&mut nonce);
+        rand::rng().fill_bytes(&mut nonce);
         nonce
     }
 }

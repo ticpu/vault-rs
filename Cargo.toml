@@ -31,7 +31,7 @@ clap_complete = "4.4"
 
 # Cryptography
 aes-gcm = "0.10"
-rand = "0.8"
+rand = "0.9"
 sha2 = "0.10"
 
 # System integration
