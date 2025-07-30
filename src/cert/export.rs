@@ -132,47 +132,22 @@ pub async fn export_certificate(
 
                                 fs::create_dir_all(dir)?;
 
-                                let openssl_result = std::process::Command::new("openssl")
-                                    .args([
-                                        "pkcs12",
-                                        "-export",
-                                        "-out",
-                                        p12_path.to_str().unwrap(),
-                                        "-passout",
-                                        "pass:",
-                                    ])
-                                    .stdin(std::process::Stdio::piped())
-                                    .stdout(std::process::Stdio::null())
-                                    .stderr(std::process::Stdio::piped())
-                                    .spawn();
-
-                                match openssl_result {
-                                    Ok(mut child) => {
-                                        if let Some(stdin) = child.stdin.as_mut() {
-                                            use std::io::Write;
-                                            let normalized_key = normalize_pem(&private_key);
-                                            let combined = format!(
-                                                "{normalized_key}{normalized_pem}{ca_chain}"
-                                            );
-                                            let _ = stdin.write_all(combined.as_bytes());
-                                        }
-
-                                        let output = child.wait_with_output()?;
-                                        if output.status.success() {
-                                            eprintln!(
-                                                "P12 certificate exported to: {}",
-                                                p12_path.display()
-                                            );
-                                        } else {
-                                            let stderr = String::from_utf8_lossy(&output.stderr);
-                                            return Err(VaultCliError::InvalidInput(format!(
-                                                "OpenSSL failed to create P12: {stderr}"
-                                            )));
-                                        }
+                                let normalized_key = normalize_pem(&private_key);
+                                match crate::utils::create_p12_file(
+                                    &p12_path,
+                                    &normalized_key,
+                                    &normalized_pem,
+                                    &ca_chain,
+                                ) {
+                                    Ok(()) => {
+                                        eprintln!(
+                                            "P12 certificate exported to: {}",
+                                            p12_path.display()
+                                        );
                                     }
                                     Err(e) => {
                                         return Err(VaultCliError::InvalidInput(format!(
-                                            "Failed to run OpenSSL for P12 creation: {e}"
+                                            "Failed to create P12: {e}"
                                         )));
                                     }
                                 }

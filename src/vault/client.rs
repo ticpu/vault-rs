@@ -26,11 +26,7 @@ pub struct VaultClient {
 
 impl VaultClient {
     pub fn new(vault_addr: String) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .use_rustls_tls() // Use rustls with system certificate store
-            .build()
-            .expect("Failed to create HTTP client");
+        let client = super::create_http_client().expect("Failed to create HTTP client");
 
         Self { client, vault_addr }
     }
@@ -135,21 +131,7 @@ impl VaultClient {
         tracing::debug!("Response status: {}", response.status());
         let response = self.handle_response(response).await?;
 
-        if let Some(data) = response.get("data") {
-            if let Some(keys) = data.get("keys") {
-                if let Some(cert_list) = keys.as_array() {
-                    let mut certificates = Vec::new();
-                    for cert in cert_list {
-                        if let Some(cert_serial) = cert.as_str() {
-                            certificates.push(cert_serial.to_string());
-                        }
-                    }
-                    return Ok(certificates);
-                }
-            }
-        }
-
-        Ok(Vec::new())
+        Ok(super::extract_keys_array(&response))
     }
 
     /// Get certificate details by serial number
@@ -259,21 +241,7 @@ impl VaultClient {
 
         let response = self.handle_response(response).await?;
 
-        if let Some(data) = response.get("data") {
-            if let Some(keys) = data.get("keys") {
-                if let Some(role_list) = keys.as_array() {
-                    let mut roles = Vec::new();
-                    for role in role_list {
-                        if let Some(role_name) = role.as_str() {
-                            roles.push(role_name.to_string());
-                        }
-                    }
-                    return Ok(roles);
-                }
-            }
-        }
-
-        Ok(Vec::new())
+        Ok(super::extract_keys_array(&response))
     }
 
     /// Get PKI mount issuer configuration to determine crypto type

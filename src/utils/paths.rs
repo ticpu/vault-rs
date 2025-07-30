@@ -1,7 +1,7 @@
 use crate::utils::errors::{Result, VaultCliError};
 use dirs;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct VaultCliPaths;
 const PROGRAM_NAME: &str = "vault-rs";
@@ -108,4 +108,16 @@ impl VaultCliPaths {
         Self::ensure_dir_exists(&Self::cert_cache()?)?;
         Ok(())
     }
+}
+
+/// Set restrictive permissions (600) on a file for secure storage
+pub fn set_secure_file_permissions<P: AsRef<Path>>(path: P) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&path)?.permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(&path, perms)?;
+    }
+    Ok(())
 }

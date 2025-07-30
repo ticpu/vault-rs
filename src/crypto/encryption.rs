@@ -88,13 +88,7 @@ impl EncryptionManager {
         fs::write(&file_path, encrypted_data)?;
 
         // Set restrictive permissions on encrypted file
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&file_path)?.permissions();
-            perms.set_mode(0o600);
-            fs::set_permissions(&file_path, perms)?;
-        }
+        crate::utils::set_secure_file_permissions(&file_path)?;
 
         Ok(())
     }
@@ -185,13 +179,7 @@ impl EncryptionManager {
         fs::write(&file_path, encrypted_data)?;
 
         // Set restrictive permissions on encrypted file
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&file_path)?.permissions();
-            perms.set_mode(0o600);
-            fs::set_permissions(&file_path, perms)?;
-        }
+        crate::utils::set_secure_file_permissions(&file_path)?;
 
         Ok(())
     }

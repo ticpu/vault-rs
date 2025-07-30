@@ -13,11 +13,7 @@ pub struct VaultAuth {
 
 impl VaultAuth {
     pub fn new(vault_addr: String) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .use_rustls_tls() // Use rustls with system certificate store
-            .build()
-            .expect("Failed to create HTTP client");
+        let client = super::create_http_client().expect("Failed to create HTTP client");
 
         Self { client, vault_addr }
     }

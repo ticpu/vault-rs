@@ -267,14 +267,8 @@ impl LocalStorage {
                     fs::write(output_path.join(format!("{cn}.p12")), p12_data)?;
 
                     // Set restrictive permissions on private key
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let key_file = output_path.join(format!("{cn}.key"));
-                        let mut perms = fs::metadata(&key_file)?.permissions();
-                        perms.set_mode(0o600);
-                        fs::set_permissions(&key_file, perms)?;
-                    }
+                    let key_file = output_path.join(format!("{cn}.key"));
+                    crate::utils::set_secure_file_permissions(&key_file)?;
                 }
                 "pem" => {
                     let full_pem = format!("{key_pem}{cert_pem}");
@@ -286,14 +280,8 @@ impl LocalStorage {
                 "key" => {
                     fs::write(output_path.join(format!("{cn}.key")), &key_pem)?;
                     // Set restrictive permissions on private key
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let key_file = output_path.join(format!("{cn}.key"));
-                        let mut perms = fs::metadata(&key_file)?.permissions();
-                        perms.set_mode(0o600);
-                        fs::set_permissions(&key_file, perms)?;
-                    }
+                    let key_file = output_path.join(format!("{cn}.key"));
+                    crate::utils::set_secure_file_permissions(&key_file)?;
                 }
                 "chain" => {
                     fs::write(output_path.join(format!("{cn}_chain.pem")), &ca_pem)?;

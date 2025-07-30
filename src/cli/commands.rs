@@ -401,29 +401,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
 
                 // Create P12 file using OpenSSL (like vlt.sh)
                 let p12_file = export_path.join(format!("{cn}.p12"));
-                let openssl_result = std::process::Command::new("openssl")
-                    .args([
-                        "pkcs12",
-                        "-export",
-                        "-out",
-                        p12_file.to_str().unwrap(),
-                        "-passout",
-                        "pass:",
-                    ])
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn();
-
-                if let Ok(mut child) = openssl_result {
-                    if let Some(stdin) = child.stdin.as_mut() {
-                        use std::io::Write;
-                        let _ = stdin.write_all(
-                            format!("{private_key}{certificate}{issuing_ca}").as_bytes(),
-                        );
-                    }
-                    let _ = child.wait();
-                }
+                let _ =
+                    crate::utils::create_p12_file(&p12_file, private_key, certificate, issuing_ca);
 
                 eprintln!("✓ Plain files exported to: {export_dir}");
             }
