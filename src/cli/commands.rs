@@ -99,8 +99,7 @@ async fn handle_auth_command(command: AuthCommands, output: &OutputFormat) -> Re
                             // Check specific capabilities
                             println!("\nChecking permissions:");
                             // Test sys/mounts access
-                            let test_client =
-                                VaultClient::with_token(vault_addr.clone(), token.clone());
+                            let test_client = VaultClient::new().await;
                             match test_client.get("sys/mounts").await {
                                 Ok(_) => println!("✓ Can list secret engines"),
                                 Err(_) => println!("✗ Cannot list secret engines (sys/mounts)"),
@@ -120,8 +119,7 @@ async fn handle_auth_command(command: AuthCommands, output: &OutputFormat) -> Re
             Ok(())
         }
         AuthCommands::ListSecrets => {
-            let token = auth.get_token().await?;
-            let client = VaultClient::with_token(vault_addr.clone(), token);
+            let client = VaultClient::new().await;
 
             match client.get("sys/mounts").await {
                 Ok(mounts) => {
@@ -175,16 +173,12 @@ async fn handle_auth_command(command: AuthCommands, output: &OutputFormat) -> Re
 }
 
 async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Result<()> {
-    let vault_addr = get_vault_addr().await?;
-    let auth = VaultAuth::new(vault_addr.clone());
-    let token = auth.get_token().await?;
-    tracing::debug!("Using token: {}***", &token[..8]);
-    let client = VaultClient::with_token(vault_addr.clone(), token.clone());
+    let client = VaultClient::new().await;
 
     match command {
         CertCommands::List { pki_mount, columns } => {
             use crate::cert::{CertificateListingService, CertificateService};
-            let cert_service = CertificateService::with_token(vault_addr, token)?;
+            let cert_service = CertificateService::new().await?;
             CertificateListingService::list_vault_certificates(
                 &cert_service,
                 pki_mount.as_deref(),
@@ -608,16 +602,7 @@ async fn handle_completion_helper_command(
     command: &CompletionHelperCommands,
     output: &OutputFormat,
 ) -> Result<()> {
-    let vault_addr = get_vault_addr().await?;
-    let auth = VaultAuth::new(vault_addr.clone());
-
-    // Silently fail if no token - completion should not show errors
-    let token = match auth.get_token().await {
-        Ok(token) => token,
-        Err(_) => return Ok(()),
-    };
-
-    let client = VaultClient::with_token(vault_addr.clone(), token);
+    let client = VaultClient::new().await;
 
     match command {
         CompletionHelperCommands::PkiMounts => {

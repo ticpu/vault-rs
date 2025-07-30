@@ -57,7 +57,11 @@
   - This prevents clippy warnings and is more readable
   - Only use positional arguments (`{}`) when you need complex formatting or multiple uses of the same variable
 
-- *Keep commands.rs lightweight*, prefer creating new functions in new files and call them from there
+- **Keep commands.rs lightweight** - NEVER add complex logic to commands.rs. It should only:
+  - Parse command arguments
+  - Call functions from other modules
+  - Handle basic error responses
+  - All business logic must be in separate modules (cert/, vault/, storage/, etc.)
 
 - If a function call takes more than ~7 arguments, use a data structure
 

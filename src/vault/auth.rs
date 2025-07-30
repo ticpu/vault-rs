@@ -35,7 +35,7 @@ impl VaultAuth {
         }
 
         // Check stored token file
-        tracing::debug!("Checking stored token file");
+        tracing::trace!("Checking stored token file");
         self.read_stored_token().await
     }
 

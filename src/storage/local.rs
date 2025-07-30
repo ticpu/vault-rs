@@ -27,6 +27,12 @@ impl LocalStorage {
         }
     }
 
+    pub fn with_client(client: crate::vault::client::VaultClient) -> Self {
+        Self {
+            encryption_manager: EncryptionManager::with_client(client),
+        }
+    }
+
     /// Store certificate data encrypted locally
     pub async fn store_certificate(&self, cert_data: CertificateData<'_>) -> Result<()> {
         let cert_dir = VaultCliPaths::cert_storage_dir(

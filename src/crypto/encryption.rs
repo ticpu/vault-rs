@@ -18,6 +18,12 @@ impl EncryptionManager {
         }
     }
 
+    pub fn with_client(client: crate::vault::client::VaultClient) -> Self {
+        Self {
+            key_manager: KeyManager::with_client(client),
+        }
+    }
+
     /// Encrypt data using context-specific derived key
     pub async fn encrypt_data(&self, data: &[u8], context: &str) -> Result<Vec<u8>> {
         let master_key = self.key_manager.get_master_key().await?;

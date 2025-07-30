@@ -19,6 +19,10 @@ impl KeyManager {
         Self { client }
     }
 
+    pub fn with_client(client: VaultClient) -> Self {
+        Self { client }
+    }
+
     /// Get or create the master encryption key from Vault
     pub async fn get_master_key(&self) -> Result<[u8; 32]> {
         // Try to retrieve existing key first
@@ -52,26 +56,24 @@ impl KeyManager {
     async fn find_kv_mount(&self) -> Result<Option<(String, String)>> {
         let mounts = self.client.list_mounts().await?;
 
-        if let Some(data) = mounts.get("data").and_then(|d| d.as_object()) {
-            // Look for KV mounts
-            for (mount_path, mount_info) in data {
-                if let Some(mount_type) = mount_info.get("type").and_then(|t| t.as_str()) {
-                    if mount_type == "kv" {
-                        let clean_mount = mount_path.trim_end_matches('/');
-                        let version = mount_info
-                            .get("options")
-                            .and_then(|opts| opts.get("version"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("1");
+        // Look for KV mounts
+        for (mount_path, mount_info) in &mounts {
+            if let Some(mount_type) = mount_info.get("type").and_then(|t| t.as_str()) {
+                if mount_type == "kv" {
+                    let clean_mount = mount_path.trim_end_matches('/');
+                    let version = mount_info
+                        .get("options")
+                        .and_then(|opts| opts.get("version"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("1");
 
-                        let path = if version == "2" {
-                            format!("{clean_mount}/data/{KV_PATH}")
-                        } else {
-                            format!("{clean_mount}/{KV_PATH}")
-                        };
+                    let path = if version == "2" {
+                        format!("{clean_mount}/data/{KV_PATH}")
+                    } else {
+                        format!("{clean_mount}/{KV_PATH}")
+                    };
 
-                        return Ok(Some((clean_mount.to_string(), path)));
-                    }
+                    return Ok(Some((clean_mount.to_string(), path)));
                 }
             }
         }
@@ -84,21 +86,19 @@ impl KeyManager {
         // First check if default "secret" mount exists
         let mounts = self.client.list_mounts().await?;
 
-        if let Some(data) = mounts.get("data").and_then(|d| d.as_object()) {
-            if let Some(secret_mount) = data.get(&format!("{DEFAULT_KV_MOUNT}/")) {
-                if let Some(version) = secret_mount
-                    .get("options")
-                    .and_then(|opts| opts.get("version"))
-                    .and_then(|v| v.as_str())
-                {
-                    if version == "2" {
-                        // KV v2 path
-                        return Ok(format!("{DEFAULT_KV_MOUNT}/data/{KV_PATH}"));
-                    }
+        if let Some(secret_mount) = mounts.get(&format!("{DEFAULT_KV_MOUNT}/")) {
+            if let Some(version) = secret_mount
+                .get("options")
+                .and_then(|opts| opts.get("version"))
+                .and_then(|v| v.as_str())
+            {
+                if version == "2" {
+                    // KV v2 path
+                    return Ok(format!("{DEFAULT_KV_MOUNT}/data/{KV_PATH}"));
                 }
-                // KV v1 path
-                return Ok(format!("{DEFAULT_KV_MOUNT}/{KV_PATH}"));
             }
+            // KV v1 path
+            return Ok(format!("{DEFAULT_KV_MOUNT}/{KV_PATH}"));
         }
 
         // If no "secret" mount, look for any KV mount

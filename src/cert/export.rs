@@ -62,7 +62,7 @@ pub async fn export_certificate(
         ExportFormat::Key => {
             // Key export requires local storage lookup
             use crate::storage::local::LocalStorage;
-            let storage = LocalStorage::new().await;
+            let storage = LocalStorage::with_client(client.clone());
 
             // First, try to find certificate metadata to get CN if identifier is serial
             match storage.list_certificates().await {
@@ -105,17 +105,17 @@ pub async fn export_certificate(
                         ));
                     }
                 }
-                Err(_) => {
-                    return Err(VaultCliError::InvalidInput(
-                        "Unable to access local storage for key export".to_string(),
-                    ));
+                Err(e) => {
+                    return Err(VaultCliError::InvalidInput(format!(
+                        "Unable to access local storage for key export: {e}"
+                    )));
                 }
             }
         }
         ExportFormat::P12 => {
             // P12 export requires both certificate and private key
             use crate::storage::local::LocalStorage;
-            let storage = LocalStorage::new().await;
+            let storage = LocalStorage::with_client(client.clone());
 
             // Try to get private key from local storage
             match storage.list_certificates().await {
@@ -188,7 +188,7 @@ pub async fn export_certificate(
         ExportFormat::All => {
             // All format: private key + certificate + CA chain in PEM format
             use crate::storage::local::LocalStorage;
-            let storage = LocalStorage::new().await;
+            let storage = LocalStorage::with_client(client.clone());
 
             // Get CA chain
             let ca_chain = get_ca_chain_safe(client, &request.mount).await;

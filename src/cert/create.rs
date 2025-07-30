@@ -62,6 +62,9 @@ pub async fn create_certificate(
         }
     }
 
+    // Get CA chain first - if this fails, no certificate will be created
+    let ca_chain = client.get_ca_chain(&full_pki).await?;
+
     // Issue certificate from Vault
     let alt_names_vec = request.alt_names.as_ref().map(|names| {
         names
@@ -119,9 +122,6 @@ pub async fn create_certificate(
             sans: alt_names_vec.unwrap_or_default(),
         };
 
-        // Get CA chain for storage
-        let ca_chain = client.get_ca_chain(&full_pki).await?;
-
         let cert_data = CertificateData {
             pki_mount: &full_pki,
             cn: &request.cn,
@@ -138,9 +138,6 @@ pub async fn create_certificate(
     if let Some(export_dir) = request.export_plain {
         let export_path = Path::new(&export_dir);
         fs::create_dir_all(export_path)?;
-
-        // Get CA chain for export
-        let ca_chain = client.get_ca_chain(&full_pki).await?;
 
         // Write certificate files
         fs::write(export_path.join(format!("{}.crt", request.cn)), certificate)?;

@@ -29,50 +29,26 @@ pub struct IssueCertificateRequest<'a> {
     pub ttl: Option<&'a str>,
 }
 
+#[derive(Clone)]
 pub struct VaultClient {
     client: Client,
     vault_addr: String,
-    token: Option<String>,
+    token: String,
 }
 
 impl VaultClient {
     pub async fn new() -> Self {
         let client = super::create_http_client().expect("Failed to create HTTP client");
         let vault_addr = get_vault_addr().await.expect("Failed to get vault address");
+        let auth = crate::vault::auth::VaultAuth::new(vault_addr.clone());
+        let token = auth.get_token().await.expect("Failed to get a valid token");
+        tracing::debug!("Using {vault_addr} with token: {}***", &token[..8]);
 
         Self {
             client,
             vault_addr,
-            token: None,
+            token,
         }
-    }
-
-    /// Create a VaultClient with an authenticated token
-    pub fn with_token(vault_addr: String, token: String) -> Self {
-        let client = super::create_http_client().expect("Failed to create HTTP client");
-
-        Self {
-            client,
-            vault_addr,
-            token: Some(token),
-        }
-    }
-
-    /// Set or update the authentication token
-    pub fn set_token(&mut self, token: String) {
-        self.token = Some(token);
-    }
-
-    /// Get the current token if available
-    fn get_token(&self) -> Result<&str> {
-        self.token.as_deref().ok_or_else(|| {
-            VaultCliError::Auth("No token available. Please authenticate first.".to_string())
-        })
-    }
-
-    /// Get vault address
-    pub fn vault_addr(&self) -> &str {
-        &self.vault_addr
     }
 
     /// Health check
@@ -91,12 +67,11 @@ impl VaultClient {
 
     /// Generic GET request to Vault API
     pub async fn get(&self, path: &str) -> Result<Value> {
-        let token = self.get_token()?;
         let url = format!("{}/v1/{}", self.vault_addr, path);
         let response = self
             .client
             .get(&url)
-            .header("X-Vault-Token", token)
+            .header("X-Vault-Token", &self.token)
             .send()
             .await?;
 
@@ -105,12 +80,11 @@ impl VaultClient {
 
     /// Generic POST request to Vault API
     pub async fn post(&self, path: &str, data: Value) -> Result<Value> {
-        let token = self.get_token()?;
         let url = format!("{}/v1/{}", self.vault_addr, path);
         let response = self
             .client
             .post(&url)
-            .header("X-Vault-Token", token)
+            .header("X-Vault-Token", &self.token)
             .header("Content-Type", "application/json")
             .json(&data)
             .send()
@@ -158,15 +132,13 @@ impl VaultClient {
 
     /// List certificates for a PKI mount
     pub async fn list_certificates(&self, pki_mount: &str) -> Result<Vec<String>> {
-        let token = self.get_token()?;
         let url = format!("{}/v1/{}/certs", self.vault_addr, pki_mount);
         tracing::debug!("Making LIST request to: {}", url);
-        tracing::debug!("Token: {}***", &token[..8]);
 
         let response = self
             .client
             .request(reqwest::Method::from_bytes(b"LIST").unwrap(), &url)
-            .header("X-Vault-Token", token)
+            .header("X-Vault-Token", &self.token)
             .send()
             .await?;
 
@@ -236,12 +208,11 @@ impl VaultClient {
 
     /// Get CA chain for a PKI mount (returns raw PEM data)
     pub async fn get_ca_chain(&self, pki_mount: &str) -> Result<String> {
-        let token = self.get_token()?;
         let url = format!("{}/v1/{}/ca_chain", self.vault_addr, pki_mount);
         let response = self
             .client
             .get(&url)
-            .header("X-Vault-Token", token)
+            .header("X-Vault-Token", &self.token)
             .send()
             .await?;
 
@@ -257,12 +228,11 @@ impl VaultClient {
 
     /// List roles for a PKI mount
     pub async fn list_roles(&self, pki_mount: &str) -> Result<Vec<String>> {
-        let token = self.get_token()?;
         let url = format!("{}/v1/{}/roles", self.vault_addr, pki_mount);
         let response = self
             .client
             .request(reqwest::Method::from_bytes(b"LIST").unwrap(), &url)
-            .header("X-Vault-Token", token)
+            .header("X-Vault-Token", &self.token)
             .send()
             .await?;
 

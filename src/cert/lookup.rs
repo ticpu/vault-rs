@@ -20,10 +20,6 @@ pub async fn find_certificate_by_identifier(
     identifier: &str,
     pki_mount_filter: Option<&str>,
 ) -> Result<(String, String, String)> {
-    // Get token from VaultAuth for service operations
-    let vault_addr = client.vault_addr().to_string();
-    let auth = crate::vault::auth::VaultAuth::new(vault_addr);
-    let token = auth.get_token().await?;
     // Check if identifier looks like a serial number (hex string, typically 30+ chars)
     let is_serial = identifier.len() >= 16 && identifier.chars().all(|c| c.is_ascii_hexdigit());
 
@@ -82,8 +78,7 @@ pub async fn find_certificate_by_identifier(
     } else {
         // Search by CN - find latest certificate with matching CN
         tracing::debug!("Searching for certificate by CN: '{}'", identifier);
-        let cert_service =
-            CertificateService::with_token(client.vault_addr().to_string(), token.clone())?;
+        let cert_service = CertificateService::new().await?;
 
         let pki_mounts = if let Some(mount) = pki_mount_filter {
             vec![mount.to_string()]

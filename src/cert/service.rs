@@ -16,14 +16,6 @@ impl CertificateService {
         })
     }
 
-    /// Create a new service with an authenticated client
-    pub fn with_token(vault_addr: String, token: String) -> Result<Self> {
-        Ok(Self {
-            client: VaultClient::with_token(vault_addr, token),
-            cache: CertificateCache::new()?,
-        })
-    }
-
     /// List certificates with metadata from all PKI mounts or specific mount
     pub async fn list_certificates_with_metadata(
         &self,
