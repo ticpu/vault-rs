@@ -98,8 +98,9 @@ async fn handle_auth_command(command: AuthCommands, output: &OutputFormat) -> Re
 
                             // Check specific capabilities
                             println!("\nChecking permissions:");
-                            // Test sys/mounts access  
-                            let test_client = VaultClient::with_token(vault_addr.clone(), token.clone());
+                            // Test sys/mounts access
+                            let test_client =
+                                VaultClient::with_token(vault_addr.clone(), token.clone());
                             match test_client.get("sys/mounts").await {
                                 Ok(_) => println!("✓ Can list secret engines"),
                                 Err(_) => println!("✗ Cannot list secret engines (sys/mounts)"),
@@ -183,90 +184,14 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
 
     match command {
         CertCommands::List { pki_mount, columns } => {
-            use crate::cert::{CertificateColumn, CertificateService};
-
-            // Set default columns based on whether listing all mounts or specific mount
-            let default_columns = if pki_mount.is_some() {
-                vec!["cn", "not_after", "extended_key_usage", "sans"]
-            } else {
-                vec!["pki_mount", "cn", "not_after", "extended_key_usage", "sans"]
-            };
-
-            // Parse columns with support for + prefix (append to defaults)
-            let columns = if let Some(columns_str) = columns {
-                if let Some(stripped) = columns_str.strip_prefix('+') {
-                    // Append mode: start with defaults and add specified columns
-                    let mut result_columns = default_columns;
-                    let additional_cols: Vec<&str> = stripped
-                        .split(',')
-                        .map(|s| s.trim())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    result_columns.extend(additional_cols);
-
-                    let parsed: Result<Vec<CertificateColumn>> = result_columns
-                        .into_iter()
-                        .map(|col| {
-                            col.parse::<CertificateColumn>()
-                                .map_err(VaultCliError::InvalidInput)
-                        })
-                        .collect();
-                    parsed?
-                } else {
-                    // Regular mode: use specified columns only
-                    let parsed: Result<Vec<CertificateColumn>> = columns_str
-                        .split(',')
-                        .map(|col| {
-                            col.trim()
-                                .parse::<CertificateColumn>()
-                                .map_err(VaultCliError::InvalidInput)
-                        })
-                        .collect();
-                    parsed?
-                }
-            } else {
-                // No columns specified: use defaults
-                let parsed: Result<Vec<CertificateColumn>> = default_columns
-                    .into_iter()
-                    .map(|col| {
-                        col.parse::<CertificateColumn>()
-                            .map_err(VaultCliError::InvalidInput)
-                    })
-                    .collect();
-                parsed?
-            };
-
-            // Create certificate service and get metadata
-            let cert_service = CertificateService::with_token(vault_addr.clone(), token.clone())?;
-
-            let certificates = match cert_service
-                .list_certificates_with_metadata(pki_mount.as_deref())
-                .await
-            {
-                Ok(certs) => certs,
-                Err(VaultCliError::Auth(_)) if pki_mount.is_some() => {
-                    let mount = pki_mount.as_ref().unwrap();
-                    eprintln!("Error: Access denied - your token may not have permission to list certificates in PKI mount '{mount}'");
-                    eprintln!("Try checking available PKI mounts with: vault-rs cert list-mounts");
-                    std::process::exit(1);
-                }
-                Err(e) => return Err(e),
-            };
-
-            if certificates.is_empty() {
-                // No certificates found - still output nothing for UNIX compatibility
-                return Ok(());
-            }
-
-            // UNIX-friendly output: one line per certificate with specified columns
-            for cert in certificates {
-                let values: Vec<String> = columns
-                    .iter()
-                    .map(|col| cert.get_column_value(col))
-                    .collect();
-                println!("{}", values.join("\t"));
-            }
-            Ok(())
+            use crate::cert::{CertificateListingService, CertificateService};
+            let cert_service = CertificateService::with_token(vault_addr, token)?;
+            CertificateListingService::list_vault_certificates(
+                &cert_service,
+                pki_mount.as_deref(),
+                columns,
+            )
+            .await
         }
         CertCommands::ListMounts => {
             // List all PKI mounts with crypto types - UNIX friendly output
@@ -366,10 +291,10 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             decrypt: _,
             no_passphrase,
         } => {
-            use crate::cert::{export_certificate, find_certificate_by_identifier, ExportCertificateRequest};
-            match find_certificate_by_identifier(&client, &identifier, pki_mount.as_deref())
-                .await
-            {
+            use crate::cert::{
+                export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
+            };
+            match find_certificate_by_identifier(&client, &identifier, pki_mount.as_deref()).await {
                 Ok((pem, _serial, mount)) => {
                     let request = ExportCertificateRequest {
                         pem_data: pem,
@@ -403,9 +328,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             // Use shared lookup function to find certificate
             use crate::cert::find_certificate_by_identifier;
-            match find_certificate_by_identifier(&client, &identifier, pki_mount.as_deref())
-                .await
-            {
+            match find_certificate_by_identifier(&client, &identifier, pki_mount.as_deref()).await {
                 Ok((pem, _serial, mount)) => {
                     // Parse certificate to extract details for UNIX-friendly output
                     use crate::cert::CertificateParser;
@@ -441,7 +364,9 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             output,
         } => {
             // Use shared lookup function (serial is treated as identifier)
-            use crate::cert::{export_certificate, find_certificate_by_identifier, ExportCertificateRequest};
+            use crate::cert::{
+                export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
+            };
             match find_certificate_by_identifier(&client, &serial, None).await {
                 Ok((pem, _found_serial, mount)) => {
                     let request = ExportCertificateRequest {
@@ -494,58 +419,17 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
             pki,
             expired,
             expires_soon,
+            columns,
         } => {
-            let certificates = storage.list_certificates(&token).await?;
-
-            let filtered_certs: Vec<_> = certificates
-                .into_iter()
-                .filter(|cert| {
-                    // Filter by PKI mount if specified
-                    if let Some(ref pki_filter) = pki {
-                        if cert.pki_mount != *pki_filter {
-                            return false;
-                        }
-                    }
-
-                    // Filter by expiration status
-                    if expired && !cert.meta.is_expired() {
-                        return false;
-                    }
-
-                    // Filter by expires soon
-                    if let Some(days) = &expires_soon {
-                        let days_u32 = days.parse::<u32>().unwrap_or(30);
-                        if !cert.meta.expires_soon(days_u32) {
-                            return false;
-                        }
-                    }
-
-                    true
-                })
-                .collect();
-
-            // Use OutputFormat for structured data output
-            let table_data: Vec<Vec<String>> = filtered_certs
-                .into_iter()
-                .map(|cert_storage| {
-                    let cert = cert_storage.meta;
-                    let status = if cert.is_expired() {
-                        "EXPIRED"
-                    } else {
-                        "ACTIVE"
-                    };
-                    vec![
-                        cert.cn,
-                        cert_storage.pki_mount,
-                        cert.serial,
-                        cert.expires.format("%Y-%m-%d %H:%M").to_string(),
-                        status.to_string(),
-                    ]
-                })
-                .collect();
-
-            output.print_table(&table_data);
-            Ok(())
+            use crate::cert::CertificateListingService;
+            CertificateListingService::list_storage_certificates(
+                &storage,
+                pki,
+                expired,
+                expires_soon,
+                columns,
+            )
+            .await
         }
         StorageCommands::Show { cn, pki_mount } => {
             println!("Show stored certificate - CN: {cn}, PKI: {pki_mount:?}");
@@ -755,7 +639,7 @@ async fn handle_completion_helper_command(
         Ok(token) => token,
         Err(_) => return Ok(()),
     };
-    
+
     let client = VaultClient::with_token(vault_addr.clone(), token);
 
     match command {

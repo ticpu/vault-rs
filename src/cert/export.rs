@@ -72,10 +72,12 @@ pub async fn export_certificate(
             match storage.list_certificates(&token).await {
                 Ok(certs) => {
                     // Find matching certificate by CN or serial (storage has colons, user input doesn't)
-                    let identifier_with_colons = crate::cert::format_serial_with_colons(&request.identifier);
+                    let identifier_with_colons =
+                        crate::cert::format_serial_with_colons(&request.identifier);
 
                     let matching_cert = certs.iter().find(|cert| {
-                        cert.meta.cn == request.identifier || cert.meta.serial == identifier_with_colons
+                        cert.meta.cn == request.identifier
+                            || cert.meta.serial == identifier_with_colons
                     });
 
                     if let Some(cert) = matching_cert {
@@ -123,10 +125,12 @@ pub async fn export_certificate(
             match storage.list_certificates(&token).await {
                 Ok(certs) => {
                     // Find matching certificate by CN or serial (storage has colons, user input doesn't)
-                    let identifier_with_colons = crate::cert::format_serial_with_colons(&request.identifier);
+                    let identifier_with_colons =
+                        crate::cert::format_serial_with_colons(&request.identifier);
 
                     let matching_cert = certs.iter().find(|cert| {
-                        cert.meta.cn == request.identifier || cert.meta.serial == identifier_with_colons
+                        cert.meta.cn == request.identifier
+                            || cert.meta.serial == identifier_with_colons
                     });
 
                     if let Some(cert) = matching_cert {
@@ -137,7 +141,8 @@ pub async fn export_certificate(
                             Ok((certificate_pem, private_key, ca_chain_pem, _)) => {
                                 // Create P12 file using matching cert and key from local storage
                                 let dir = request.output_dir.as_deref().unwrap_or(".");
-                                let p12_filename = format!("{}.p12", sanitize_filename(&request.identifier));
+                                let p12_filename =
+                                    format!("{}.p12", sanitize_filename(&request.identifier));
                                 let p12_path = Path::new(dir).join(&p12_filename);
 
                                 fs::create_dir_all(dir)?;
@@ -195,7 +200,8 @@ pub async fn export_certificate(
             // Try to get private key from local storage
             if let Ok(certs) = storage.list_certificates(&token).await {
                 // Find matching certificate by CN or serial (storage has colons, user input doesn't)
-                let identifier_with_colons = crate::cert::format_serial_with_colons(&request.identifier);
+                let identifier_with_colons =
+                    crate::cert::format_serial_with_colons(&request.identifier);
 
                 let matching_cert = certs.iter().find(|cert| {
                     cert.meta.cn == request.identifier || cert.meta.serial == identifier_with_colons

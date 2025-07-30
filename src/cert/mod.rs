@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod create;
 pub mod export;
+pub mod listing;
 pub mod lookup;
 pub mod metadata;
 pub mod parser;
@@ -11,6 +12,7 @@ pub mod sign;
 pub use cache::CertificateCache;
 pub use create::{create_certificate, CreateCertificateRequest};
 pub use export::{export_certificate, ExportCertificateRequest};
+pub use listing::CertificateListingService;
 pub use lookup::{find_certificate_by_identifier, format_serial_with_colons};
 pub use metadata::{CertificateColumn, CertificateMetadata};
 pub use parser::CertificateParser;

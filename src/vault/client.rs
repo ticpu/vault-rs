@@ -38,14 +38,22 @@ impl VaultClient {
     pub fn new(vault_addr: String) -> Self {
         let client = super::create_http_client().expect("Failed to create HTTP client");
 
-        Self { client, vault_addr, token: None }
+        Self {
+            client,
+            vault_addr,
+            token: None,
+        }
     }
 
     /// Create a VaultClient with an authenticated token
     pub fn with_token(vault_addr: String, token: String) -> Self {
         let client = super::create_http_client().expect("Failed to create HTTP client");
 
-        Self { client, vault_addr, token: Some(token) }
+        Self {
+            client,
+            vault_addr,
+            token: Some(token),
+        }
     }
 
     /// Set or update the authentication token
@@ -167,21 +175,13 @@ impl VaultClient {
     }
 
     /// Get certificate details by serial number
-    pub async fn get_certificate_info(
-        &self,
-        pki_mount: &str,
-        serial: &str,
-    ) -> Result<Value> {
+    pub async fn get_certificate_info(&self, pki_mount: &str, serial: &str) -> Result<Value> {
         let path = format!("{pki_mount}/cert/{serial}");
         self.get(&path).await
     }
 
     /// Get certificate PEM data
-    pub async fn get_certificate_pem(
-        &self,
-        pki_mount: &str,
-        serial: &str,
-    ) -> Result<String> {
+    pub async fn get_certificate_pem(&self, pki_mount: &str, serial: &str) -> Result<String> {
         // Try both formats: raw hex and colon-separated hex
         use crate::cert::format_serial_with_colons;
         let serial_formats = if serial.contains(':') {
@@ -191,10 +191,7 @@ impl VaultClient {
         };
 
         for serial_format in serial_formats {
-            match self
-                .get_certificate_info(pki_mount, &serial_format)
-                .await
-            {
+            match self.get_certificate_info(pki_mount, &serial_format).await {
                 Ok(cert_info) => {
                     if let Some(data) = cert_info.get("data") {
                         if let Some(certificate) = data.get("certificate") {
@@ -214,10 +211,7 @@ impl VaultClient {
     }
 
     /// Issue a new certificate
-    pub async fn issue_certificate(
-        &self,
-        request: IssueCertificateRequest<'_>,
-    ) -> Result<Value> {
+    pub async fn issue_certificate(&self, request: IssueCertificateRequest<'_>) -> Result<Value> {
         let mut payload = json!({
             "common_name": request.common_name,
         });
@@ -349,10 +343,7 @@ impl VaultClient {
     }
 
     /// Sign a certificate from CSR
-    pub async fn sign_certificate(
-        &self,
-        request: SignCertificateRequest<'_>,
-    ) -> Result<Value> {
+    pub async fn sign_certificate(&self, request: SignCertificateRequest<'_>) -> Result<Value> {
         let mut payload = json!({
             "common_name": request.common_name,
             "csr": request.csr_content,
@@ -375,11 +366,7 @@ impl VaultClient {
     }
 
     /// Revoke certificate by serial number
-    pub async fn revoke_certificate(
-        &self,
-        pki_mount: &str,
-        serial: &str,
-    ) -> Result<Value> {
+    pub async fn revoke_certificate(&self, pki_mount: &str, serial: &str) -> Result<Value> {
         let payload = json!({
             "serial_number": serial
         });

@@ -257,6 +257,9 @@ pub enum StorageCommands {
         /// Show certificates expiring soon
         #[arg(long)]
         expires_soon: Option<String>,
+        /// Columns to display (comma-separated): cn,serial,not_before,not_after,sans,key_usage,extended_key_usage,issuer,pki_mount. Use +column to append to defaults.
+        #[arg(long)]
+        columns: Option<String>,
     },
     /// Show detailed info for stored certificate
     Show {

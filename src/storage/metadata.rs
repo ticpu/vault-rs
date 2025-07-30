@@ -14,6 +14,17 @@ pub struct CertificateStorage {
     pub meta: StorageCertificateMetadata,
 }
 
+impl CertificateStorage {
+    /// Get column value for storage certificates using the same system as CertificateMetadata
+    pub fn get_column_value(&self, column: &crate::cert::CertificateColumn) -> String {
+        use crate::cert::CertificateColumn;
+        match column {
+            CertificateColumn::PkiMount => self.pki_mount.clone(),
+            _ => self.meta.get_column_value(column),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageCertificateMetadata {
     #[serde(default = "default_serial")]
@@ -87,6 +98,37 @@ impl StorageCertificateMetadata {
     pub fn expires_soon(&self, days: u32) -> bool {
         let threshold = Utc::now() + chrono::Duration::days(days as i64);
         self.expires < threshold
+    }
+
+    /// Get column value using the same system as CertificateMetadata
+    pub fn get_column_value(&self, column: &crate::cert::CertificateColumn) -> String {
+        use crate::cert::CertificateColumn;
+        match column {
+            CertificateColumn::Cn => self.cn.clone(),
+            CertificateColumn::Serial => self.serial.clone(),
+            CertificateColumn::NotBefore => self.created.format("%Y-%m-%d %H:%M").to_string(),
+            CertificateColumn::NotAfter => self.expires.format("%Y-%m-%d %H:%M").to_string(),
+            CertificateColumn::Sans => self.sans.join(","),
+            CertificateColumn::KeyUsage => "".to_string(), // Not available in storage metadata
+            CertificateColumn::ExtendedKeyUsage => {
+                let status = if self.is_expired() {
+                    "EXPIRED"
+                } else {
+                    "ACTIVE"
+                };
+                format!(
+                    "{}{}",
+                    self.role,
+                    if status == "EXPIRED" {
+                        " (EXPIRED)"
+                    } else {
+                        ""
+                    }
+                )
+            }
+            CertificateColumn::Issuer => "".to_string(), // Not available in storage metadata
+            CertificateColumn::PkiMount => "".to_string(), // This comes from the parent struct
+        }
     }
 }
 

@@ -85,10 +85,7 @@ impl CertificateService {
             let mut fetched_metadata = Vec::new();
 
             for serial in to_fetch {
-                match self
-                    .fetch_certificate_metadata(pki_mount, &serial)
-                    .await
-                {
+                match self.fetch_certificate_metadata(pki_mount, &serial).await {
                     Ok(metadata) => {
                         // Update cache
                         if let Err(e) =
@@ -124,10 +121,7 @@ impl CertificateService {
     ) -> Result<CertificateMetadata> {
         tracing::debug!("Fetching certificate PEM for serial: {}", serial);
 
-        let pem_data = self
-            .client
-            .get_certificate_pem(pki_mount, serial)
-            .await?;
+        let pem_data = self.client.get_certificate_pem(pki_mount, serial).await?;
         let metadata = CertificateParser::parse_pem(&pem_data, pki_mount)?;
 
         tracing::debug!(
@@ -147,10 +141,7 @@ impl CertificateService {
 
         for serial in serials {
             if self.cache.needs_refresh(pki_mount, &serial)? {
-                match self
-                    .fetch_certificate_metadata(pki_mount, &serial)
-                    .await
-                {
+                match self.fetch_certificate_metadata(pki_mount, &serial).await {
                     Ok(metadata) => {
                         self.cache.update_entry(pki_mount, &serial, metadata)?;
                         synced_count += 1;

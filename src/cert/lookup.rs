@@ -48,10 +48,7 @@ pub async fn find_certificate_by_identifier(
 
             for serial_format in serial_formats {
                 tracing::trace!("Trying to find serial {} in mount {}", serial_format, mount);
-                match client
-                    .get_certificate_pem(mount, &serial_format)
-                    .await
-                {
+                match client.get_certificate_pem(mount, &serial_format).await {
                     Ok(pem) => {
                         tracing::debug!(
                             "Found certificate with serial {} in mount {}",
@@ -85,7 +82,8 @@ pub async fn find_certificate_by_identifier(
     } else {
         // Search by CN - find latest certificate with matching CN
         tracing::debug!("Searching for certificate by CN: '{}'", identifier);
-        let cert_service = CertificateService::with_token(client.vault_addr().to_string(), token.clone())?;
+        let cert_service =
+            CertificateService::with_token(client.vault_addr().to_string(), token.clone())?;
 
         let pki_mounts = if let Some(mount) = pki_mount_filter {
             vec![mount.to_string()]
