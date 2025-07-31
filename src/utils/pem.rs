@@ -35,11 +35,22 @@ impl PemCertificate {
 
     /// Generate OpenSSL text output for this certificate
     pub fn generate_text(&self) -> Result<String> {
+        let line_8 = 483;
+        let line_length = 64;
+
+        if self.pem_data.len() >= line_8 + line_length {
+            tracing::debug!(
+                "Invoking openssl for PEM {}",
+                self.pem_data[line_8..line_8 + line_length].to_string()
+            );
+        } else {
+            tracing::debug!("PEM data is too short");
+        }
+
         let mut child = Command::new("openssl")
-            .args(["x509", "-text", "-noout"])
+            .args(["x509", "-text"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
                 VaultCliError::InvalidInput(format!("Failed to execute openssl command: {e}"))
@@ -72,7 +83,7 @@ impl PemCertificate {
     pub fn output(&self, include_text: bool) -> String {
         if include_text {
             match self.generate_text() {
-                Ok(text) => format!("{text}{}", self.pem_data),
+                Ok(text) => text,
                 Err(e) => {
                     tracing::warn!("Failed to generate OpenSSL text output: {e}, using PEM only");
                     self.pem_data.clone()
@@ -132,9 +143,9 @@ impl PemCertificateChain {
     pub fn output(&self, include_text: bool) -> String {
         let mut result = String::new();
 
-        for (index, cert) in self.certificates.iter().enumerate() {
+        for cert in self.certificates.iter() {
             // Only include text for the first certificate (the leaf certificate)
-            let cert_text = include_text && index == 0;
+            let cert_text = include_text;
             result.push_str(&cert.output(cert_text));
         }
 
