@@ -53,7 +53,11 @@ _vault_rs_override() {{
         *"cert list"*|*"cert list-roles"*|*"cert create"*|*"cert sign"*)
             # Check if we're completing a PKI mount argument
             case "$prev" in
-                "list"|"list-roles"|"create"|"sign")
+                "list-roles"|"create"|"sign")
+                    _vault_rs_complete_pki_mounts
+                    return 0
+                    ;;
+                "--pki-mount"|"-m")
                     _vault_rs_complete_pki_mounts
                     return 0
                     ;;
