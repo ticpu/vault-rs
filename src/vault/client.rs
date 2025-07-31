@@ -1,4 +1,3 @@
-use crate::cert::SerialNumber;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::get_vault_addr;
 use crate::vault::mounts::MountsResponse;
@@ -94,6 +93,19 @@ impl VaultClient {
         self.handle_response(response).await
     }
 
+    /// Generic LIST request to Vault API
+    pub async fn list(&self, path: &str) -> Result<Value> {
+        let url = format!("{}/v1/{}", self.vault_addr, path);
+        let response = self
+            .client
+            .request(reqwest::Method::from_bytes(b"LIST").unwrap(), &url)
+            .header("X-Vault-Token", &self.token)
+            .send()
+            .await?;
+
+        self.handle_response(response).await
+    }
+
     /// List all secret engines (mounts)
     pub async fn list_mounts(&self) -> Result<MountsResponse> {
         let response = self.get("sys/mounts").await?;
@@ -106,55 +118,6 @@ impl VaultClient {
     pub async fn list_pki_mounts(&self) -> Result<Vec<String>> {
         let mounts = self.list_mounts().await?;
         Ok(mounts.pki_mounts())
-    }
-
-    /// List certificates for a PKI mount
-    pub async fn list_certificates(&self, pki_mount: &str) -> Result<Vec<SerialNumber>> {
-        let url = format!("{}/v1/{}/certs", self.vault_addr, pki_mount);
-        tracing::debug!("Making LIST request to: {}", url);
-
-        let response = self
-            .client
-            .request(reqwest::Method::from_bytes(b"LIST").unwrap(), &url)
-            .header("X-Vault-Token", &self.token)
-            .send()
-            .await?;
-
-        tracing::debug!("Response status: {}", response.status());
-        let response = self.handle_response(response).await?;
-
-        Ok(super::extract_keys_array(&response)
-            .iter()
-            .map(|s| SerialNumber::new(s))
-            .collect())
-    }
-
-    /// Get certificate details by serial number
-    pub async fn get_certificate_info(&self, pki_mount: &str, serial: &str) -> Result<Value> {
-        let path = format!("{pki_mount}/cert/{serial}");
-        self.get(&path).await
-    }
-
-    /// Get certificate PEM data
-    pub async fn get_certificate_pem(
-        &self,
-        pki_mount: &str,
-        serial: &SerialNumber,
-    ) -> Result<String> {
-        let cert_info = self
-            .get_certificate_info(pki_mount, &serial.as_colon_hex())
-            .await?;
-        if let Some(data) = cert_info.get("data") {
-            if let Some(certificate) = data.get("certificate") {
-                if let Some(cert_pem) = certificate.as_str() {
-                    return Ok(cert_pem.to_string());
-                }
-            }
-        }
-
-        Err(VaultCliError::CertNotFound(format!(
-            "Certificate PEM not found for serial: {serial}"
-        )))
     }
 
     /// Issue a new certificate
@@ -307,20 +270,6 @@ impl VaultClient {
         }
 
         let path = format!("{}/sign/{}", request.pki_mount, request.role);
-        self.post(&path, payload).await
-    }
-
-    /// Revoke certificate by serial number
-    pub async fn revoke_certificate(
-        &self,
-        pki_mount: &str,
-        serial: &SerialNumber,
-    ) -> Result<Value> {
-        let payload = json!({
-            "serial_number": serial
-        });
-
-        let path = format!("{pki_mount}/revoke");
         self.post(&path, payload).await
     }
 

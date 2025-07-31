@@ -35,9 +35,13 @@ pub async fn find_certificate_by_identifier(
 
             tracing::trace!("Trying to find serial {serial} in mount {mount}");
             match client.get_certificate_pem(mount, &serial).await {
-                Ok(pem) => {
+                Ok(cert_data) => {
                     tracing::debug!("Found certificate with serial {serial} in mount {mount}");
-                    return Ok((pem, SerialNumber::new(identifier), mount.clone()));
+                    return Ok((
+                        cert_data.certificate,
+                        SerialNumber::new(identifier),
+                        mount.clone(),
+                    ));
                 }
                 Err(e) => {
                     tracing::trace!("Failed to find serial {serial} in mount {mount}: {e}");
@@ -109,7 +113,7 @@ pub async fn find_certificate_by_identifier(
         let (latest_cert, mount) = &matching_certs[0];
 
         // Fetch the PEM data for the latest certificate
-        let pem = client
+        let cert_data = client
             .get_certificate_pem(mount, &latest_cert.serial)
             .await?;
 
@@ -120,6 +124,10 @@ pub async fn find_certificate_by_identifier(
             mount
         );
 
-        Ok((pem, latest_cert.serial.clone(), mount.clone()))
+        Ok((
+            cert_data.certificate,
+            latest_cert.serial.clone(),
+            mount.clone(),
+        ))
     }
 }

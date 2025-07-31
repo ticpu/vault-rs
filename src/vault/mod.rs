@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod certificates;
 pub mod client;
 pub mod mounts;
 pub mod pki;

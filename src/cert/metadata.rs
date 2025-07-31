@@ -17,6 +17,7 @@ pub struct CertificateMetadata {
     pub issuer: String,
     pub pki_mount: String,
     pub cached_at: DateTime<Utc>,
+    pub revocation_time: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +31,7 @@ pub enum CertificateColumn {
     ExtendedKeyUsage,
     Issuer,
     PkiMount,
+    Revoked,
 }
 
 impl FromStr for CertificateColumn {
@@ -46,6 +48,7 @@ impl FromStr for CertificateColumn {
             "extended_key_usage" | "ext_key_usage" => Ok(Self::ExtendedKeyUsage),
             "issuer" => Ok(Self::Issuer),
             "pki_mount" | "mount" => Ok(Self::PkiMount),
+            "revoked" | "r" => Ok(Self::Revoked),
             _ => Err(format!("Invalid column: {s}")),
         }
     }
@@ -63,6 +66,7 @@ impl CertificateColumn {
             Self::ExtendedKeyUsage => "Ext Key Usage",
             Self::Issuer => "Issuer",
             Self::PkiMount => "PKI Mount",
+            Self::Revoked => "R",
         }
     }
 
@@ -77,6 +81,7 @@ impl CertificateColumn {
             Self::ExtendedKeyUsage => 25,
             Self::Issuer => 30,
             Self::PkiMount => 15,
+            Self::Revoked => 1,
         }
     }
 }
@@ -139,6 +144,13 @@ impl GetColumnValue for CertificateMetadata {
             }
             CertificateColumn::Issuer => self.issuer.clone(),
             CertificateColumn::PkiMount => self.pki_mount.clone(),
+            CertificateColumn::Revoked => {
+                if self.revocation_time.is_some() {
+                    "✗".to_string()
+                } else {
+                    " ".to_string()
+                }
+            }
         }
     }
 }

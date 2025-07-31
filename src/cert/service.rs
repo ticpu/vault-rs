@@ -113,8 +113,13 @@ impl CertificateService {
     ) -> Result<CertificateMetadata> {
         tracing::debug!("Fetching certificate PEM for serial: {}", serial);
 
-        let pem_data = self.client.get_certificate_pem(pki_mount, serial).await?;
-        let metadata = CertificateParser::parse_pem(&pem_data, pki_mount)?;
+        let cert_data = self.client.get_certificate_pem(pki_mount, serial).await?;
+        let mut metadata = CertificateParser::parse_pem(&cert_data.certificate, pki_mount)?;
+
+        // Set revocation time from Vault response
+        metadata.revocation_time = cert_data
+            .revocation_time
+            .map(|t| chrono::DateTime::from_timestamp(t, 0).unwrap_or_else(chrono::Utc::now));
 
         tracing::debug!(
             "Parsed metadata for CN: {} (serial: {})",

@@ -212,6 +212,7 @@ impl CertificateParser {
             issuer,
             pki_mount: pki_mount.to_string(),
             cached_at: Utc::now(),
+            revocation_time: None, // Will be set by the service from Vault API response
         })
     }
 }
