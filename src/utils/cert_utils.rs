@@ -181,7 +181,7 @@ impl CertificateStorageHelper {
 
         let storage = LocalStorage::new().await;
         let metadata = StorageCertificateMetadata {
-            serial: self.serial.clone(),
+            serial: self.serial.replace(':', "").to_lowercase(),
             cn: self.cn.clone(),
             role: self.role.clone(),
             crypto: self.crypto.clone(),

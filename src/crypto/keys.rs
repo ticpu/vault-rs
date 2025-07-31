@@ -1,6 +1,6 @@
-use crate::client::VaultClient;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::PROGRAM_NAME;
+use crate::vault::client::VaultClient;
 use aes_gcm::{Aes256Gcm, Key, KeyInit};
 use rand::RngCore;
 use serde_json::json;
@@ -57,24 +57,18 @@ impl KeyManager {
         let mounts = self.client.list_mounts().await?;
 
         // Look for KV mounts
-        for (mount_path, mount_info) in &mounts {
-            if let Some(mount_type) = mount_info.get("type").and_then(|t| t.as_str()) {
-                if mount_type == "kv" {
-                    let clean_mount = mount_path.trim_end_matches('/');
-                    let version = mount_info
-                        .get("options")
-                        .and_then(|opts| opts.get("version"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("1");
+        for (mount_path, mount_info) in &mounts.data {
+            if mount_info.is_kv() {
+                let clean_mount = mount_path.trim_end_matches('/');
+                let version = mount_info.get_version().unwrap_or("1");
 
-                    let path = if version == "2" {
-                        format!("{clean_mount}/data/{KV_PATH}")
-                    } else {
-                        format!("{clean_mount}/{KV_PATH}")
-                    };
+                let path = if version == "2" {
+                    format!("{clean_mount}/data/{KV_PATH}")
+                } else {
+                    format!("{clean_mount}/{KV_PATH}")
+                };
 
-                    return Ok(Some((clean_mount.to_string(), path)));
-                }
+                return Ok(Some((clean_mount.to_string(), path)));
             }
         }
 
@@ -86,19 +80,16 @@ impl KeyManager {
         // First check if default "secret" mount exists
         let mounts = self.client.list_mounts().await?;
 
-        if let Some(secret_mount) = mounts.get(&format!("{DEFAULT_KV_MOUNT}/")) {
-            if let Some(version) = secret_mount
-                .get("options")
-                .and_then(|opts| opts.get("version"))
-                .and_then(|v| v.as_str())
-            {
+        if let Some(secret_mount) = mounts.data.get(&format!("{DEFAULT_KV_MOUNT}/")) {
+            if secret_mount.is_kv() {
+                let version = secret_mount.get_version().unwrap_or("1");
                 if version == "2" {
                     // KV v2 path
                     return Ok(format!("{DEFAULT_KV_MOUNT}/data/{KV_PATH}"));
                 }
+                // KV v1 path
+                return Ok(format!("{DEFAULT_KV_MOUNT}/{KV_PATH}"));
             }
-            // KV v1 path
-            return Ok(format!("{DEFAULT_KV_MOUNT}/{KV_PATH}"));
         }
 
         // If no "secret" mount, look for any KV mount

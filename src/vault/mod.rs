@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod client;
+pub mod mounts;
 pub mod pki;
 pub mod wrapper;
 

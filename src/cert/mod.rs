@@ -7,6 +7,7 @@ pub mod metadata;
 pub mod parser;
 pub mod revoke;
 pub mod service;
+pub mod show;
 pub mod sign;
 
 pub use cache::CertificateCache;
@@ -18,4 +19,5 @@ pub use metadata::{CertificateColumn, CertificateMetadata};
 pub use parser::CertificateParser;
 pub use revoke::{revoke_certificate, RevokeRequest};
 pub use service::CertificateService;
+pub use show::show_certificate;
 pub use sign::{sign_certificate_from_csr, CsrSignRequest};

@@ -1,6 +1,6 @@
 use crate::cert::{CertificateColumn, CertificateService};
 use crate::storage::local::LocalStorage;
-use crate::utils::build_table_data;
+use crate::utils::build_table_data_with_headers;
 use crate::utils::errors::Result;
 use crate::utils::output::OutputFormat;
 use std::str::FromStr;
@@ -25,9 +25,9 @@ impl CertificateListingService {
         }
 
         let parsed_columns = Self::parse_columns(columns, pki_mount.is_some())?;
-        let table_data = build_table_data(&certificates, &parsed_columns);
+        let (headers, table_data) = build_table_data_with_headers(&certificates, &parsed_columns);
 
-        output.print_table(&table_data);
+        output.print_table_with_headers(&headers, &table_data);
         Ok(())
     }
 
@@ -71,9 +71,9 @@ impl CertificateListingService {
         }
 
         let parsed_columns = Self::parse_columns(columns, pki.is_some())?;
-        let table_data = build_table_data(&filtered_certs, &parsed_columns);
+        let (headers, table_data) = build_table_data_with_headers(&filtered_certs, &parsed_columns);
 
-        output.print_table(&table_data);
+        output.print_table_with_headers(&headers, &table_data);
         Ok(())
     }
 
@@ -84,9 +84,9 @@ impl CertificateListingService {
     ) -> Result<Vec<CertificateColumn>> {
         // Set default columns based on whether listing all mounts or specific mount
         let default_columns = if single_mount {
-            vec!["cn", "not_after", "extended_key_usage", "sans"]
+            vec!["cn", "not_after", "extended_key_usage"]
         } else {
-            vec!["pki_mount", "cn", "not_after", "extended_key_usage", "sans"]
+            vec!["pki_mount", "cn", "not_after", "extended_key_usage"]
         };
 
         // Parse columns with support for + prefix (append to defaults)

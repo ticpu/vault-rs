@@ -3,6 +3,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+fn normalize_serial(serial: &str) -> String {
+    serial.replace(':', "").to_lowercase()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertificateStorage {
     pub pki_mount: String,
@@ -108,7 +112,7 @@ impl GetColumnValue for StorageCertificateMetadata {
         use crate::cert::CertificateColumn;
         match column {
             CertificateColumn::Cn => self.cn.clone(),
-            CertificateColumn::Serial => self.serial.clone(),
+            CertificateColumn::Serial => normalize_serial(&self.serial),
             CertificateColumn::NotBefore => self.created.format("%Y-%m-%d %H:%M").to_string(),
             CertificateColumn::NotAfter => self.expires.format("%Y-%m-%d %H:%M").to_string(),
             CertificateColumn::Sans => self.sans.join(","),

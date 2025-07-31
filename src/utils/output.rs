@@ -1,5 +1,15 @@
 use crate::cert::CertificateColumn;
 use std::fmt::Display;
+use std::io::{self, Write};
+
+/// Handle broken pipe errors gracefully (e.g., when piping to head)
+fn print_line(line: &str) {
+    if let Err(e) = writeln!(io::stdout(), "{line}") {
+        if e.kind() == io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+    }
+}
 
 /// Trait for types that can provide column values
 pub trait GetColumnValue {
@@ -31,6 +41,24 @@ where
         .collect()
 }
 
+/// Build table data with headers from certificates and columns
+pub fn build_table_data_with_headers<T>(
+    certificates: &[T],
+    parsed_columns: &[CertificateColumn],
+) -> (Vec<String>, Vec<Vec<String>>)
+where
+    T: GetColumnValue,
+{
+    let headers = parsed_columns
+        .iter()
+        .map(|col| col.header().to_string())
+        .collect();
+
+    let data = build_table_data(certificates, parsed_columns);
+
+    (headers, data)
+}
+
 impl OutputFormat {
     pub fn new(raw: bool) -> Self {
         Self { raw }
@@ -53,11 +81,41 @@ impl OutputFormat {
                     .map(|cell| cell.as_ref())
                     .collect::<Vec<_>>()
                     .join("\t");
-                println!("{line}");
+                print_line(&line);
             }
         } else {
             // Formatted output: column-aligned like `column -t`
             self.print_formatted_table(data);
+        }
+    }
+
+    /// Print tabular data with headers - either raw (tab-separated) or formatted (column-aligned)
+    pub fn print_table_with_headers<T>(&self, headers: &[String], data: &[Vec<T>])
+    where
+        T: Display + AsRef<str>,
+    {
+        if self.raw {
+            // Raw output: tab-separated values (no headers in raw mode)
+            for row in data {
+                let line = row
+                    .iter()
+                    .map(|cell| cell.as_ref())
+                    .collect::<Vec<_>>()
+                    .join("\t");
+                print_line(&line);
+            }
+        } else {
+            // Formatted output: include headers
+            if !headers.is_empty() {
+                let mut all_data = vec![headers.iter().map(|h| h.as_str()).collect()];
+                all_data.extend(
+                    data.iter()
+                        .map(|row| row.iter().map(|cell| cell.as_ref()).collect()),
+                );
+                self.print_formatted_table(&all_data);
+            } else if !data.is_empty() {
+                self.print_formatted_table(data);
+            }
         }
     }
 
@@ -67,7 +125,7 @@ impl OutputFormat {
         T: Display,
     {
         for item in items {
-            println!("{item}");
+            print_line(&item.to_string());
         }
     }
 
@@ -119,7 +177,7 @@ impl OutputFormat {
                 })
                 .collect();
 
-            println!("{}", formatted_cells.join("  "));
+            print_line(&formatted_cells.join("  "));
         }
     }
 }

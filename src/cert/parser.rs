@@ -5,9 +5,29 @@ use chrono::{DateTime, Utc};
 use x509_parser::der_parser::oid;
 use x509_parser::prelude::*;
 
+// X.509 Extension OIDs
+const SUBJECT_ALT_NAME_OID: oid::Oid = oid!(2.5.29 .17);
+const KEY_USAGE_OID: oid::Oid = oid!(2.5.29 .15);
+const EXTENDED_KEY_USAGE_OID: oid::Oid = oid!(2.5.29 .37);
+const BASIC_CONSTRAINTS_OID: oid::Oid = oid!(2.5.29 .19);
+
+// Extended Key Usage OIDs
+const EKU_SERVER_AUTH: &str = "1.3.6.1.5.5.7.3.1";
+const EKU_CLIENT_AUTH: &str = "1.3.6.1.5.5.7.3.2";
+const EKU_CODE_SIGNING: &str = "1.3.6.1.5.5.7.3.3";
+const EKU_EMAIL_PROTECTION: &str = "1.3.6.1.5.5.7.3.4";
+const EKU_TIME_STAMPING: &str = "1.3.6.1.5.5.7.3.8";
+const EKU_OCSP_SIGNING: &str = "1.3.6.1.5.5.7.3.9";
+
 pub struct CertificateParser;
 
 impl CertificateParser {
+    /// Normalize serial number format to ensure consistency across cert list and storage list
+    /// Converts colon-separated hex to continuous lowercase hex
+    pub fn normalize_serial_format(serial: &str) -> String {
+        // Remove colons and convert to lowercase for consistent formatting
+        serial.replace(':', "").to_lowercase()
+    }
     /// Parse certificate PEM data into metadata
     pub fn parse_pem(pem_data: &str, pki_mount: &str) -> Result<CertificateMetadata> {
         // Extract the base64 content from PEM
@@ -53,8 +73,8 @@ impl CertificateParser {
 
     /// Extract metadata from X509 certificate
     fn extract_metadata(cert: &X509Certificate, pki_mount: &str) -> Result<CertificateMetadata> {
-        // Extract serial number
-        let serial = hex::encode(cert.serial.to_bytes_be());
+        // Extract serial number - normalize to continuous hex format
+        let serial = Self::normalize_serial_format(&hex::encode(cert.serial.to_bytes_be()));
 
         // Extract subject CN
         let cn = cert
@@ -82,9 +102,8 @@ impl CertificateParser {
 
         // Extract SANs
         let mut sans = Vec::new();
-        let san_oid = oid!(2.5.29 .17);
         for ext in cert.extensions() {
-            if ext.oid == san_oid {
+            if ext.oid == SUBJECT_ALT_NAME_OID {
                 if let Ok((_rem, san)) = SubjectAlternativeName::from_der(ext.value) {
                     for name in &san.general_names {
                         match name {
@@ -114,9 +133,8 @@ impl CertificateParser {
 
         // Extract key usage
         let mut key_usage = Vec::new();
-        let key_usage_oid = oid!(2.5.29 .15);
         for ext in cert.extensions() {
-            if ext.oid == key_usage_oid {
+            if ext.oid == KEY_USAGE_OID {
                 if let Ok((_rem, ku)) = KeyUsage::from_der(ext.value) {
                     if ku.digital_signature() {
                         key_usage.push("DigitalSignature".to_string());
@@ -152,31 +170,22 @@ impl CertificateParser {
 
         // Extract extended key usage
         let mut extended_key_usage = Vec::new();
-        let ext_key_usage_oid = oid!(2.5.29 .37);
         for ext in cert.extensions() {
-            if ext.oid == ext_key_usage_oid {
+            if ext.oid == EXTENDED_KEY_USAGE_OID {
                 if let Ok((_rem, eku)) = ExtendedKeyUsage::from_der(ext.value) {
                     for oid in &eku.other {
                         // Convert common EKU OIDs to readable names
                         match oid.to_string().as_str() {
-                            "1.3.6.1.5.5.7.3.1" => {
-                                extended_key_usage.push("ServerAuth".to_string())
-                            }
-                            "1.3.6.1.5.5.7.3.2" => {
-                                extended_key_usage.push("ClientAuth".to_string())
-                            }
-                            "1.3.6.1.5.5.7.3.3" => {
-                                extended_key_usage.push("CodeSigning".to_string())
-                            }
-                            "1.3.6.1.5.5.7.3.4" => {
+                            EKU_SERVER_AUTH => extended_key_usage.push("ServerAuth".to_string()),
+                            EKU_CLIENT_AUTH => extended_key_usage.push("ClientAuth".to_string()),
+                            EKU_CODE_SIGNING => extended_key_usage.push("CodeSigning".to_string()),
+                            EKU_EMAIL_PROTECTION => {
                                 extended_key_usage.push("EmailProtection".to_string())
                             }
-                            "1.3.6.1.5.5.7.3.8" => {
+                            EKU_TIME_STAMPING => {
                                 extended_key_usage.push("TimeStamping".to_string())
                             }
-                            "1.3.6.1.5.5.7.3.9" => {
-                                extended_key_usage.push("OCSPSigning".to_string())
-                            }
+                            EKU_OCSP_SIGNING => extended_key_usage.push("OCSPSigning".to_string()),
                             _ => extended_key_usage.push(oid.to_string()),
                         }
                     }
@@ -187,9 +196,8 @@ impl CertificateParser {
 
         // Check if this is a CA certificate
         let mut is_ca = false;
-        let basic_constraints_oid = oid!(2.5.29 .19);
         for ext in cert.extensions() {
-            if ext.oid == basic_constraints_oid {
+            if ext.oid == BASIC_CONSTRAINTS_OID {
                 if let Ok((_rem, bc)) = BasicConstraints::from_der(ext.value) {
                     is_ca = bc.ca;
                 }

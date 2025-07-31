@@ -1,8 +1,8 @@
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::get_vault_addr;
+use crate::vault::mounts::MountsResponse;
 use reqwest::{Client, Response};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
 const OID_RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
 const OID_EC_PUBLIC_KEY: &str = "1.2.840.10045.2.1";
@@ -94,40 +94,17 @@ impl VaultClient {
     }
 
     /// List all secret engines (mounts)
-    pub async fn list_mounts(&self) -> Result<HashMap<String, Value>> {
+    pub async fn list_mounts(&self) -> Result<MountsResponse> {
         let response = self.get("sys/mounts").await?;
 
-        if let Some(data) = response.get("data") {
-            if let Some(mounts) = data.as_object() {
-                let mut result = HashMap::new();
-                for (key, value) in mounts {
-                    result.insert(key.clone(), value.clone());
-                }
-                return Ok(result);
-            }
-        }
-
-        Err(VaultCliError::Storage(
-            "Failed to parse mounts response".to_string(),
-        ))
+        serde_json::from_value(response)
+            .map_err(|e| VaultCliError::Storage(format!("Failed to parse mounts response: {e}")))
     }
 
     /// List PKI mounts only
     pub async fn list_pki_mounts(&self) -> Result<Vec<String>> {
         let mounts = self.list_mounts().await?;
-        let mut pki_mounts = Vec::new();
-
-        for (mount_path, mount_info) in mounts {
-            if let Some(mount_type) = mount_info.get("type") {
-                if mount_type == "pki" {
-                    // Remove trailing slash from mount path
-                    let clean_path = mount_path.trim_end_matches('/');
-                    pki_mounts.push(clean_path.to_string());
-                }
-            }
-        }
-
-        Ok(pki_mounts)
+        Ok(mounts.pki_mounts())
     }
 
     /// List certificates for a PKI mount

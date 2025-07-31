@@ -1,3 +1,5 @@
+pub mod auth;
+pub mod cache;
 pub mod cert;
 pub mod cli;
 pub mod crypto;
@@ -13,4 +15,4 @@ pub use cli::{args, commands};
 pub use crypto::encryption;
 pub use storage::local;
 pub use utils::{errors, paths};
-pub use vault::{auth, client};
+pub use vault::client;
