@@ -1,4 +1,5 @@
 use crate::cert::metadata::CertificateMetadata;
+use crate::cert::SerialNumber;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::paths::VaultCliPaths;
 use serde::{Deserialize, Serialize};
@@ -30,7 +31,7 @@ impl CertificateCache {
     }
 
     /// Load cached certificates for a PKI mount
-    pub fn load_cache(&self, pki_mount: &str) -> Result<HashMap<String, CacheEntry>> {
+    pub fn load_cache(&self, pki_mount: &str) -> Result<HashMap<SerialNumber, CacheEntry>> {
         let cache_file = self.cache_file_path(pki_mount);
 
         if !cache_file.exists() {
@@ -39,12 +40,22 @@ impl CertificateCache {
 
         let content = fs::read_to_string(&cache_file)?;
         match serde_json::from_str::<HashMap<String, CacheEntry>>(&content) {
-            Ok(cache) => Ok(cache),
+            Ok(string_cache) => {
+                // Convert keys from String to SerialNumber, failing if any parse error
+                let mut cache = HashMap::with_capacity(string_cache.len());
+                for (k, v) in string_cache {
+                    let serial =
+                        SerialNumber::parse(&k).map_err(|e| VaultCliError::SerialNumberParse {
+                            key: k.clone(),
+                            source: e,
+                        })?;
+                    cache.insert(serial, v);
+                }
+                Ok(cache)
+            }
             Err(e) => {
                 tracing::warn!(
-                    "Cache parsing error for '{}': {}. Clearing corrupted cache.",
-                    pki_mount,
-                    e
+                    "Cache parsing error for '{pki_mount}': {e}. Clearing corrupted cache."
                 );
                 // Auto-clear corrupted cache file
                 if let Err(remove_err) = fs::remove_file(&cache_file) {
@@ -57,7 +68,11 @@ impl CertificateCache {
     }
 
     /// Save cache for a PKI mount
-    pub fn save_cache(&self, pki_mount: &str, cache: &HashMap<String, CacheEntry>) -> Result<()> {
+    pub fn save_cache(
+        &self,
+        pki_mount: &str,
+        cache: &HashMap<SerialNumber, CacheEntry>,
+    ) -> Result<()> {
         let cache_file = self.cache_file_path(pki_mount);
 
         let content = serde_json::to_string_pretty(cache)
@@ -77,13 +92,13 @@ impl CertificateCache {
     pub fn update_entry(
         &self,
         pki_mount: &str,
-        serial: &str,
+        serial: &SerialNumber,
         metadata: CertificateMetadata,
     ) -> Result<()> {
         let mut cache = self.load_cache(pki_mount)?;
 
         cache.insert(
-            serial.to_string(),
+            serial.clone(),
             CacheEntry {
                 metadata,
                 last_verified: chrono::Utc::now(),
@@ -97,7 +112,7 @@ impl CertificateCache {
     pub fn get_metadata(
         &self,
         pki_mount: &str,
-        serial: &str,
+        serial: &SerialNumber,
     ) -> Result<Option<CertificateMetadata>> {
         let cache = self.load_cache(pki_mount)?;
 
@@ -112,7 +127,7 @@ impl CertificateCache {
     }
 
     /// Remove certificate from cache
-    pub fn remove_entry(&self, pki_mount: &str, serial: &str) -> Result<()> {
+    pub fn remove_entry(&self, pki_mount: &str, serial: &SerialNumber) -> Result<()> {
         let mut cache = self.load_cache(pki_mount)?;
         cache.remove(serial);
         self.save_cache(pki_mount, &cache)
@@ -174,7 +189,7 @@ impl CertificateCache {
     }
 
     /// Check if cache entry needs refresh (certificates are immutable, so only check if missing)
-    pub fn needs_refresh(&self, pki_mount: &str, serial: &str) -> Result<bool> {
+    pub fn needs_refresh(&self, pki_mount: &str, serial: &SerialNumber) -> Result<bool> {
         let cache = self.load_cache(pki_mount)?;
         Ok(!cache.contains_key(serial))
     }

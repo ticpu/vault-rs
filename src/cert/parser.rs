@@ -1,4 +1,5 @@
 use crate::cert::metadata::CertificateMetadata;
+use crate::cert::SerialNumber;
 use crate::utils::errors::{Result, VaultCliError};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
@@ -22,12 +23,6 @@ const EKU_OCSP_SIGNING: &str = "1.3.6.1.5.5.7.3.9";
 pub struct CertificateParser;
 
 impl CertificateParser {
-    /// Normalize serial number format to ensure consistency across cert list and storage list
-    /// Converts colon-separated hex to continuous lowercase hex
-    pub fn normalize_serial_format(serial: &str) -> String {
-        // Remove colons and convert to lowercase for consistent formatting
-        serial.replace(':', "").to_lowercase()
-    }
     /// Parse certificate PEM data into metadata
     pub fn parse_pem(pem_data: &str, pki_mount: &str) -> Result<CertificateMetadata> {
         // Extract the base64 content from PEM
@@ -74,7 +69,7 @@ impl CertificateParser {
     /// Extract metadata from X509 certificate
     fn extract_metadata(cert: &X509Certificate, pki_mount: &str) -> Result<CertificateMetadata> {
         // Extract serial number - normalize to continuous hex format
-        let serial = Self::normalize_serial_format(&hex::encode(cert.serial.to_bytes_be()));
+        let serial = SerialNumber::new(&hex::encode(cert.serial.to_bytes_be()));
 
         // Extract subject CN
         let cn = cert

@@ -18,7 +18,7 @@ pub async fn show_certificate(
     // Use OutputFormat to handle raw vs formatted output properly
     let cert_data = vec![vec![
         metadata.cn,
-        metadata.serial,
+        metadata.serial.to_string(),
         metadata.not_before.format("%Y-%m-%d %H:%M").to_string(),
         metadata.not_after.format("%Y-%m-%d %H:%M").to_string(),
         metadata.sans.join(","),

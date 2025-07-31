@@ -1,4 +1,4 @@
-use crate::cert::format_serial_with_colons;
+use crate::cert::SerialNumber;
 use crate::cli::args::ExportFormat;
 use crate::storage::local::LocalStorage;
 use crate::storage::CertificateStorage;
@@ -25,14 +25,22 @@ async fn find_certificate_in_storage(
     identifier: &str,
 ) -> Result<Option<CertificateStorage>> {
     let certs = storage.list_certificates().await?;
-    let identifier_with_colons = format_serial_with_colons(identifier);
+    if let Ok(serial) = SerialNumber::parse(identifier) {
+        let serial_colon = serial.as_colon_hex();
 
-    let matching_cert = certs
+        if let Some(cert) = certs
+            .iter()
+            .find(|cert| cert.meta.serial == serial_colon)
+            .cloned()
+        {
+            return Ok(Some(cert));
+        }
+    }
+    // Fallback: by Common Name
+    Ok(certs
         .iter()
-        .find(|cert| cert.meta.cn == identifier || cert.meta.serial == identifier_with_colons)
-        .cloned();
-
-    Ok(matching_cert)
+        .find(|cert| cert.meta.cn == identifier)
+        .cloned())
 }
 
 /// Get certificate data from local storage by certificate record

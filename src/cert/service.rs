@@ -1,4 +1,4 @@
-use crate::cert::{CertificateCache, CertificateMetadata, CertificateParser};
+use crate::cert::{CertificateCache, CertificateMetadata, CertificateParser, SerialNumber};
 use crate::utils::errors::Result;
 use crate::vault::client::VaultClient;
 use std::collections::HashMap;
@@ -76,7 +76,7 @@ impl CertificateService {
             tracing::info!("Fetching {} certificates from Vault", to_fetch.len());
             let mut fetched_metadata = Vec::new();
 
-            for serial in to_fetch {
+            for serial in to_fetch.into_iter() {
                 match self.fetch_certificate_metadata(pki_mount, &serial).await {
                     Ok(metadata) => {
                         // Update cache
@@ -109,7 +109,7 @@ impl CertificateService {
     async fn fetch_certificate_metadata(
         &self,
         pki_mount: &str,
-        serial: &str,
+        serial: &SerialNumber,
     ) -> Result<CertificateMetadata> {
         tracing::debug!("Fetching certificate PEM for serial: {}", serial);
 
@@ -131,7 +131,7 @@ impl CertificateService {
         let serials = self.client.list_certificates(pki_mount).await?;
         let mut synced_count = 0;
 
-        for serial in serials {
+        for serial in serials.into_iter() {
             if self.cache.needs_refresh(pki_mount, &serial)? {
                 match self.fetch_certificate_metadata(pki_mount, &serial).await {
                     Ok(metadata) => {

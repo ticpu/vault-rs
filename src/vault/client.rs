@@ -1,3 +1,4 @@
+use crate::cert::SerialNumber;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::get_vault_addr;
 use crate::vault::mounts::MountsResponse;
@@ -108,7 +109,7 @@ impl VaultClient {
     }
 
     /// List certificates for a PKI mount
-    pub async fn list_certificates(&self, pki_mount: &str) -> Result<Vec<String>> {
+    pub async fn list_certificates(&self, pki_mount: &str) -> Result<Vec<SerialNumber>> {
         let url = format!("{}/v1/{}/certs", self.vault_addr, pki_mount);
         tracing::debug!("Making LIST request to: {}", url);
 
@@ -122,7 +123,10 @@ impl VaultClient {
         tracing::debug!("Response status: {}", response.status());
         let response = self.handle_response(response).await?;
 
-        Ok(super::extract_keys_array(&response))
+        Ok(super::extract_keys_array(&response)
+            .iter()
+            .map(|s| SerialNumber::new(s))
+            .collect())
     }
 
     /// Get certificate details by serial number
@@ -132,27 +136,19 @@ impl VaultClient {
     }
 
     /// Get certificate PEM data
-    pub async fn get_certificate_pem(&self, pki_mount: &str, serial: &str) -> Result<String> {
-        // Try both formats: raw hex and colon-separated hex
-        use crate::cert::format_serial_with_colons;
-        let serial_formats = if serial.contains(':') {
-            vec![serial.to_string()]
-        } else {
-            vec![serial.to_string(), format_serial_with_colons(serial)]
-        };
-
-        for serial_format in serial_formats {
-            match self.get_certificate_info(pki_mount, &serial_format).await {
-                Ok(cert_info) => {
-                    if let Some(data) = cert_info.get("data") {
-                        if let Some(certificate) = data.get("certificate") {
-                            if let Some(cert_pem) = certificate.as_str() {
-                                return Ok(cert_pem.to_string());
-                            }
-                        }
-                    }
+    pub async fn get_certificate_pem(
+        &self,
+        pki_mount: &str,
+        serial: &SerialNumber,
+    ) -> Result<String> {
+        let cert_info = self
+            .get_certificate_info(pki_mount, &serial.as_colon_hex())
+            .await?;
+        if let Some(data) = cert_info.get("data") {
+            if let Some(certificate) = data.get("certificate") {
+                if let Some(cert_pem) = certificate.as_str() {
+                    return Ok(cert_pem.to_string());
                 }
-                Err(_) => continue, // Try next format
             }
         }
 
@@ -315,7 +311,11 @@ impl VaultClient {
     }
 
     /// Revoke certificate by serial number
-    pub async fn revoke_certificate(&self, pki_mount: &str, serial: &str) -> Result<Value> {
+    pub async fn revoke_certificate(
+        &self,
+        pki_mount: &str,
+        serial: &SerialNumber,
+    ) -> Result<Value> {
         let payload = json!({
             "serial_number": serial
         });

@@ -1,3 +1,4 @@
+use crate::cert::SerialNumber;
 use crate::utils::output::GetColumnValue;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -5,7 +6,7 @@ use std::{fmt, str::FromStr};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertificateMetadata {
-    pub serial: String,
+    pub serial: SerialNumber,
     pub cn: String,
     pub not_before: DateTime<Utc>,
     pub not_after: DateTime<Utc>,
@@ -84,7 +85,7 @@ impl GetColumnValue for CertificateMetadata {
     fn get_column_value(&self, column: &CertificateColumn) -> String {
         match column {
             CertificateColumn::Cn => self.cn.clone(),
-            CertificateColumn::Serial => self.serial.clone(),
+            CertificateColumn::Serial => self.serial.to_string(),
             CertificateColumn::NotBefore => self.not_before.format("%Y-%m-%d %H:%M").to_string(),
             CertificateColumn::NotAfter => self.not_after.format("%Y-%m-%d %H:%M").to_string(),
             CertificateColumn::Sans => self.sans.join(","),

@@ -1,4 +1,4 @@
-use crate::cert::CertificateService;
+use crate::cert::{CertificateService, SerialNumber};
 use crate::utils::errors::{Result, VaultCliError};
 use crate::vault::client::VaultClient;
 
@@ -19,49 +19,29 @@ pub async fn find_certificate_by_identifier(
     client: &VaultClient,
     identifier: &str,
     pki_mount_filter: Option<&str>,
-) -> Result<(String, String, String)> {
+) -> Result<(String, SerialNumber, String)> {
     // Check if identifier looks like a serial number (hex string, typically 30+ chars)
-    let is_serial = identifier.len() >= 16 && identifier.chars().all(|c| c.is_ascii_hexdigit());
+    let serial = SerialNumber::parse(identifier);
+    let pki_mounts = if let Some(mount) = pki_mount_filter {
+        vec![mount.to_string()]
+    } else {
+        client.list_pki_mounts().await?
+    };
 
-    if is_serial {
+    if let Ok(serial) = serial {
         // Try to find certificate by serial across all PKI mounts
-        let pki_mounts = if let Some(mount) = pki_mount_filter {
-            vec![mount.to_string()]
-        } else {
-            client.list_pki_mounts().await?
-        };
-
         for mount in &pki_mounts {
             // Try both formats: raw hex and colon-separated hex
-            let serial_formats = if identifier.contains(':') {
-                vec![identifier.to_string()]
-            } else {
-                vec![
-                    identifier.to_string(),
-                    format_serial_with_colons(identifier),
-                ]
-            };
 
-            for serial_format in serial_formats {
-                tracing::trace!("Trying to find serial {} in mount {}", serial_format, mount);
-                match client.get_certificate_pem(mount, &serial_format).await {
-                    Ok(pem) => {
-                        tracing::debug!(
-                            "Found certificate with serial {} in mount {}",
-                            serial_format,
-                            mount
-                        );
-                        return Ok((pem, identifier.to_string(), mount.clone()));
-                    }
-                    Err(e) => {
-                        tracing::trace!(
-                            "Failed to find serial {} in mount {}: {}",
-                            serial_format,
-                            mount,
-                            e
-                        );
-                        continue;
-                    }
+            tracing::trace!("Trying to find serial {serial} in mount {mount}");
+            match client.get_certificate_pem(mount, &serial).await {
+                Ok(pem) => {
+                    tracing::debug!("Found certificate with serial {serial} in mount {mount}");
+                    return Ok((pem, SerialNumber::new(identifier), mount.clone()));
+                }
+                Err(e) => {
+                    tracing::trace!("Failed to find serial {serial} in mount {mount}: {e}");
+                    continue;
                 }
             }
         }
@@ -79,13 +59,6 @@ pub async fn find_certificate_by_identifier(
         // Search by CN - find latest certificate with matching CN
         tracing::debug!("Searching for certificate by CN: '{}'", identifier);
         let cert_service = CertificateService::new().await?;
-
-        let pki_mounts = if let Some(mount) = pki_mount_filter {
-            vec![mount.to_string()]
-        } else {
-            client.list_pki_mounts().await?
-        };
-
         let mut matching_certs = Vec::new();
 
         for mount in &pki_mounts {

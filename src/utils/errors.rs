@@ -1,3 +1,4 @@
+use crate::cert::serial::SerialNumberParseError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -28,6 +29,12 @@ pub enum VaultCliError {
 
     #[error("Configuration error: {0}")]
     Config(String),
+
+    #[error("Invalid Serial Number '{key}': {source}")]
+    SerialNumberParse {
+        key: String,
+        source: SerialNumberParseError,
+    },
 
     #[error("Certificate not found: {0}")]
     CertNotFound(String),
