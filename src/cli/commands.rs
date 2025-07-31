@@ -40,6 +40,8 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
         Commands::CompletionHelper { ref command } => {
             crate::cli::completions::handle_completion_helper_command(command, &output).await
         }
+        Commands::Read { ref args } => handle_vault_command("read", args).await,
+        Commands::Write { ref args } => handle_vault_command("write", args).await,
         Commands::Secrets { ref args } => handle_vault_command("secrets", args).await,
         Commands::Operator { ref args } => handle_vault_command("operator", args).await,
     }

@@ -64,15 +64,27 @@ pub enum Commands {
         #[command(subcommand)]
         command: CompletionHelperCommands,
     },
+    /// Vault read operations (wrapper for vault secrets with preset VAULT_ADDR/VAULT_TOKEN)
+    /// Pass-through arguments to vault.
+    Read {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Vault read operations (wrapper for vault secrets with preset VAULT_ADDR/VAULT_TOKEN)
+    /// Pass-through arguments to vault.
+    Write {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Vault secrets engine operations (wrapper for vault secrets with preset VAULT_ADDR/VAULT_TOKEN)
+    /// Pass-through arguments to vault.
     Secrets {
-        /// Pass-through arguments to vault secrets
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
     /// Vault operator operations (wrapper for vault operator with preset VAULT_ADDR/VAULT_TOKEN)
+    /// Pass-through arguments to vault.
     Operator {
-        /// Pass-through arguments to vault operator  
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
