@@ -145,8 +145,12 @@ impl GetColumnValue for CertificateMetadata {
             CertificateColumn::Issuer => self.issuer.clone(),
             CertificateColumn::PkiMount => self.pki_mount.clone(),
             CertificateColumn::Revoked => {
-                if self.revocation_time.is_some() {
-                    "✗".to_string()
+                if let Some(revoke_time) = self.revocation_time {
+                    if revoke_time.timestamp() > 0 {
+                        "✗".to_string()
+                    } else {
+                        " ".to_string()
+                    }
                 } else {
                     " ".to_string()
                 }
