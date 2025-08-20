@@ -136,6 +136,13 @@ impl GetColumnValue for StorageCertificateMetadata {
             CertificateColumn::Issuer => "".to_string(), // Not available in storage metadata
             CertificateColumn::PkiMount => "".to_string(), // This comes from the parent struct
             CertificateColumn::Revoked => " ".to_string(), // Local storage doesn't track revocation
+            CertificateColumn::Expired => {
+                if self.is_expired() {
+                    "✗".to_string()
+                } else {
+                    " ".to_string()
+                }
+            }
         }
     }
 }
