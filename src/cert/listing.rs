@@ -84,13 +84,14 @@ impl CertificateListingService {
     ) -> Result<Vec<CertificateColumn>> {
         // Set default columns based on whether listing all mounts or specific mount
         let default_columns = if single_mount {
-            vec!["cn", "not_after", "revoked", "extended_key_usage"]
+            vec!["cn", "not_after", "revoked", "expired", "extended_key_usage"]
         } else {
             vec![
                 "pki_mount",
                 "cn",
                 "not_after",
                 "revoked",
+                "expired",
                 "extended_key_usage",
             ]
         };

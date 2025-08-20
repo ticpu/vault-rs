@@ -32,6 +32,7 @@ pub enum CertificateColumn {
     Issuer,
     PkiMount,
     Revoked,
+    Expired,
 }
 
 impl FromStr for CertificateColumn {
@@ -49,6 +50,7 @@ impl FromStr for CertificateColumn {
             "issuer" => Ok(Self::Issuer),
             "pki_mount" | "mount" => Ok(Self::PkiMount),
             "revoked" | "r" => Ok(Self::Revoked),
+            "expired" | "e" => Ok(Self::Expired),
             _ => Err(format!("Invalid column: {s}")),
         }
     }
@@ -67,6 +69,7 @@ impl CertificateColumn {
             Self::Issuer => "Issuer",
             Self::PkiMount => "PKI Mount",
             Self::Revoked => "R",
+            Self::Expired => "E",
         }
     }
 
@@ -82,6 +85,7 @@ impl CertificateColumn {
             Self::Issuer => 30,
             Self::PkiMount => 15,
             Self::Revoked => 1,
+            Self::Expired => 1,
         }
     }
 }
@@ -146,11 +150,20 @@ impl GetColumnValue for CertificateMetadata {
             CertificateColumn::PkiMount => self.pki_mount.clone(),
             CertificateColumn::Revoked => {
                 if let Some(revoke_time) = self.revocation_time {
+                    // Only show as revoked if revocation time is actually set (> 0)
+                    // Vault returns 0 for non-revoked certificates
                     if revoke_time.timestamp() > 0 {
                         "✗".to_string()
                     } else {
                         " ".to_string()
                     }
+                } else {
+                    " ".to_string()
+                }
+            }
+            CertificateColumn::Expired => {
+                if self.is_expired() {
+                    "✗".to_string()
                 } else {
                     " ".to_string()
                 }
