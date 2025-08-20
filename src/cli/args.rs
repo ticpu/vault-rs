@@ -343,6 +343,8 @@ pub enum CompletionHelperCommands {
         /// PKI mount path
         pki_mount: String,
     },
+    /// List available columns for completion
+    Columns,
 }
 
 #[derive(ValueEnum, Clone, Debug)]

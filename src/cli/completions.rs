@@ -44,13 +44,45 @@ _vault_rs_complete_roles() {{
     fi
 }}
 
+_vault_rs_complete_columns() {{
+    local columns
+    columns=$(vault-rs completion-helper columns 2>/dev/null)
+    
+    # Handle comma-separated values and + prefix
+    local current_word="${{cur}}"
+    local prefix=""
+    
+    # Check if the current word starts with +
+    if [[ "$current_word" == +* ]]; then
+        prefix="+"
+        current_word="${{current_word:1}}"
+    fi
+    
+    # Find the last comma to determine what we're completing
+    if [[ "$current_word" == *,* ]]; then
+        # Extract everything before the last comma as prefix
+        prefix="${{prefix}}${{current_word%,*}},"
+        current_word="${{current_word##*,}}"
+    fi
+    
+    # Generate completions by prefixing each column with the accumulated prefix
+    local word_list=""
+    for col in $columns; do
+        if [[ "$col" == "$current_word"* ]]; then
+            word_list="$word_list ${{prefix}}${{col}}"
+        fi
+    done
+    
+    COMPREPLY=($(compgen -W "$word_list" -- "${{cur}}"))
+}}
+
 # Override the generated completion for specific arguments
 _vault_rs_override() {{
     local cur prev words cword
     _init_completion || return
 
     case "${{words[*]}}" in
-        *"cert list"*|*"cert list-roles"*|*"cert create"*|*"cert sign"*)
+        *"cert list"*|*"cert list-roles"*|*"cert create"*|*"cert sign"*|*"storage list"*)
             # Check if we're completing a PKI mount argument
             case "$prev" in
                 "list-roles"|"create"|"sign")
@@ -63,6 +95,10 @@ _vault_rs_override() {{
                     ;;
                 "--role")
                     _vault_rs_complete_roles
+                    return 0
+                    ;;
+                "--columns")
+                    _vault_rs_complete_columns
                     return 0
                     ;;
             esac
@@ -106,6 +142,24 @@ pub async fn handle_completion_helper_command(
             if let Ok(roles) = client.list_roles(pki_mount).await {
                 output.print_list(&roles);
             }
+        }
+        CompletionHelperCommands::Columns => {
+            let columns = vec![
+                "cn",
+                "serial",
+                "not_before",
+                "not_after",
+                "sans",
+                "key_usage",
+                "extended_key_usage",
+                "ext_key_usage",
+                "issuer",
+                "pki_mount",
+                "mount",
+                "revoked",
+                "r",
+            ];
+            output.print_list(&columns);
         }
     }
 
