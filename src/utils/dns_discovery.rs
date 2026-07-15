@@ -1,9 +1,9 @@
 use crate::utils::errors::{Result, VaultCliError};
+use hickory_resolver::proto::rr::RData;
+use hickory_resolver::TokioResolver;
 use ordermap::OrderSet;
 use serde::{Deserialize, Serialize};
 use std::{env, fs};
-use hickory_resolver::proto::rr::RData;
-use hickory_resolver::TokioResolver;
 
 #[derive(Serialize, Deserialize)]
 struct CachedVaultAddr {
@@ -53,10 +53,13 @@ pub async fn discover_vault_addr() -> Result<String> {
         match resolver.srv_lookup(&srv_name).await {
             Ok(lookup) => {
                 // Use the first SRV record found
-                let srv_record = lookup.answers().iter().find_map(|record| match &record.data {
-                    RData::SRV(srv) => Some((srv, record.ttl)),
-                    _ => None,
-                });
+                let srv_record = lookup
+                    .answers()
+                    .iter()
+                    .find_map(|record| match &record.data {
+                        RData::SRV(srv) => Some((srv, record.ttl)),
+                        _ => None,
+                    });
                 if let Some((srv, ttl)) = srv_record {
                     let host = srv.target.to_string();
                     let port = srv.port;
@@ -141,7 +144,7 @@ fn get_cached_vault_addr() -> Result<String> {
     let cache_content = fs::read_to_string(&cache_file)
         .map_err(|e| VaultCliError::Config(format!("Failed to read cached Vault address: {e}")))?;
 
-    let cached: CachedVaultAddr = serde_yaml::from_str(&cache_content)
+    let cached: CachedVaultAddr = serde_yaml_ng::from_str(&cache_content)
         .map_err(|e| VaultCliError::Config(format!("Failed to parse cached Vault address: {e}")))?;
 
     // Check if cache has expired based on DNS TTL
@@ -194,7 +197,7 @@ fn cache_vault_addr(vault_addr: &str, ttl_seconds: u32) -> Result<()> {
         ttl_seconds: ttl_seconds as u64,
     };
 
-    let cache_content = serde_yaml::to_string(&cached)
+    let cache_content = serde_yaml_ng::to_string(&cached)
         .map_err(|e| VaultCliError::Config(format!("Failed to serialize cache data: {e}")))?;
 
     fs::write(&cache_file, cache_content)

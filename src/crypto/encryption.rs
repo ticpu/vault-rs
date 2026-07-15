@@ -121,7 +121,7 @@ impl EncryptionManager {
         data: &T,
         context: &str,
     ) -> Result<Vec<u8>> {
-        let yaml_string = serde_yaml::to_string(data)?;
+        let yaml_string = serde_yaml_ng::to_string(data)?;
         self.encrypt_string(&yaml_string, context).await
     }
 
@@ -132,7 +132,7 @@ impl EncryptionManager {
         context: &str,
     ) -> Result<T> {
         let yaml_string = self.decrypt_string(encrypted_data, context).await?;
-        let data = serde_yaml::from_str(&yaml_string)?;
+        let data = serde_yaml_ng::from_str(&yaml_string)?;
         Ok(data)
     }
 
