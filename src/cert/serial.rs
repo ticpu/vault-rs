@@ -41,16 +41,17 @@ impl SerialNumber {
         // Remove colons and convert to lowercase
         let cleaned = identifier.replace(':', "").to_lowercase();
 
-        // Check if length is even (hex pairs)
-        if !cleaned.len().is_multiple_of(2) {
-            return Err(SerialNumberParseError::InvalidLength);
-        }
-
-        // Validate all characters are hex
+        // Validate hex characters before length: a non-hex char is a more
+        // specific failure than odd length, which an all-hex string can also hit.
         for ch in cleaned.chars() {
             if !ch.is_ascii_hexdigit() {
                 return Err(SerialNumberParseError::InvalidHexCharacter(ch));
             }
+        }
+
+        // Check if length is even (hex pairs)
+        if !cleaned.len().is_multiple_of(2) {
+            return Err(SerialNumberParseError::InvalidLength);
         }
 
         Ok(Self { hex: cleaned })
