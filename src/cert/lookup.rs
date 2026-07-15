@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+
 use crate::cert::{CertificateService, SerialNumber};
 use crate::utils::errors::{Result, VaultCliError};
 use crate::vault::client::VaultClient;
@@ -109,7 +111,7 @@ pub async fn find_certificate_by_identifier(
         }
 
         // Sort by not_after date (newest first) and take the latest
-        matching_certs.sort_by(|a, b| b.0.not_after.cmp(&a.0.not_after));
+        matching_certs.sort_by_key(|c| Reverse(c.0.not_after));
         let (latest_cert, mount) = &matching_certs[0];
 
         // Fetch the PEM data for the latest certificate

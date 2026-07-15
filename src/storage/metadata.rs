@@ -81,18 +81,13 @@ pub struct FileInfo {
     pub checksum: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum CertStatus {
     Active,
     Expired,
     Revoked,
+    #[default]
     Unknown,
-}
-
-impl Default for CertStatus {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl StorageCertificateMetadata {
@@ -210,8 +205,7 @@ impl MasterIndex {
     }
 
     pub fn sort_by_expiry(&mut self) {
-        self.certificates
-            .sort_by(|a, b| a.meta.expires.cmp(&b.meta.expires));
+        self.certificates.sort_by_key(|a| a.meta.expires);
     }
 
     pub fn update_last_sync(&mut self) {

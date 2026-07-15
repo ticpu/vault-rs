@@ -42,7 +42,7 @@ impl SerialNumber {
         let cleaned = identifier.replace(':', "").to_lowercase();
 
         // Check if length is even (hex pairs)
-        if cleaned.len() % 2 != 0 {
+        if !cleaned.len().is_multiple_of(2) {
             return Err(SerialNumberParseError::InvalidLength);
         }
 
