@@ -47,5 +47,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # DNS resolution
-trust-dns-resolver = "0.23"
+hickory-resolver = "0.26"
 ordermap = "0.5.8"

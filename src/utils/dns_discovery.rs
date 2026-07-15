@@ -2,7 +2,8 @@ use crate::utils::errors::{Result, VaultCliError};
 use ordermap::OrderSet;
 use serde::{Deserialize, Serialize};
 use std::{env, fs};
-use trust_dns_resolver::TokioAsyncResolver;
+use hickory_resolver::proto::rr::RData;
+use hickory_resolver::TokioResolver;
 
 #[derive(Serialize, Deserialize)]
 struct CachedVaultAddr {
@@ -39,8 +40,10 @@ pub async fn discover_vault_addr() -> Result<String> {
     );
 
     // Create DNS resolver with system configuration
-    let resolver = TokioAsyncResolver::tokio_from_system_conf()
-        .map_err(|e| VaultCliError::Config(format!("Failed to create DNS resolver: {e}")))?;
+    let resolver = TokioResolver::builder_tokio()
+        .map_err(|e| VaultCliError::Config(format!("Failed to create DNS resolver: {e}")))?
+        .build()
+        .map_err(|e| VaultCliError::Config(format!("Failed to build DNS resolver: {e}")))?;
 
     // Try each search domain
     for domain in search_domains {
@@ -48,23 +51,19 @@ pub async fn discover_vault_addr() -> Result<String> {
         tracing::debug!("Querying SRV record: {srv_name}");
 
         match resolver.srv_lookup(&srv_name).await {
-            Ok(srv_response) => {
+            Ok(lookup) => {
                 // Use the first SRV record found
-                if let Some(srv_record) = srv_response.iter().next() {
-                    let host = srv_record.target().to_string();
-                    let port = srv_record.port();
+                let srv_record = lookup.answers().iter().find_map(|record| match &record.data {
+                    RData::SRV(srv) => Some((srv, record.ttl)),
+                    _ => None,
+                });
+                if let Some((srv, ttl)) = srv_record {
+                    let host = srv.target.to_string();
+                    let port = srv.port;
 
                     // Remove trailing dot from DNS name if present
                     let clean_host = host.trim_end_matches('.');
                     let vault_addr = format!("https://{clean_host}:{port}");
-
-                    // Get TTL from the first record - use a reasonable default if not available
-                    let ttl = srv_response
-                        .as_lookup()
-                        .records()
-                        .first()
-                        .map(|record| record.ttl())
-                        .unwrap_or(300); // Default to 5 minutes if TTL unavailable
 
                     tracing::info!("Discovered Vault server via DNS: {vault_addr} (TTL: {ttl}s)");
 
