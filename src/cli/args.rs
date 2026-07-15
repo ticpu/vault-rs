@@ -64,27 +64,133 @@ pub enum Commands {
         #[command(subcommand)]
         command: CompletionHelperCommands,
     },
-    /// Vault read operations (wrapper for vault secrets with preset VAULT_ADDR/VAULT_TOKEN)
-    /// Pass-through arguments to vault.
+    /// Read data and retrieves secrets (passthrough to vault, preset VAULT_ADDR/VAULT_TOKEN)
     Read {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Vault read operations (wrapper for vault secrets with preset VAULT_ADDR/VAULT_TOKEN)
-    /// Pass-through arguments to vault.
+    /// Write data, configuration, and secrets (passthrough to vault)
     Write {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Vault secrets engine operations (wrapper for vault secrets with preset VAULT_ADDR/VAULT_TOKEN)
-    /// Pass-through arguments to vault.
+    /// Delete secrets and configuration (passthrough to vault)
+    Delete {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// List data or secrets (passthrough to vault)
+    List {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Patch data, configuration, and secrets (passthrough to vault)
+    Patch {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Unwrap a wrapped secret (passthrough to vault)
+    Unwrap {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Print seal and HA status (passthrough to vault)
+    Status {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Retrieve API help for paths (passthrough to vault)
+    PathHelp {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Print runtime configurations (passthrough to vault)
+    Print {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Print the version history of the target Vault server (passthrough to vault)
+    VersionHistory {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with audit devices (passthrough to vault)
+    Audit {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Run the debug command (passthrough to vault)
+    Debug {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with events (passthrough to vault)
+    Events {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with Vault's Key-Value storage (passthrough to vault)
+    Kv {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with leases (passthrough to vault)
+    Lease {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Stream log messages from a Vault server (passthrough to vault)
+    Monitor {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with namespaces (passthrough to vault)
+    Namespace {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Perform operator-specific tasks (passthrough to vault)
+    Operator {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with Vault's PKI Secrets Engine (passthrough to vault)
+    Pki {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with Vault plugins and catalog (passthrough to vault)
+    Plugin {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with policies (passthrough to vault)
+    Policy {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with secrets engines (passthrough to vault)
     Secrets {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Vault operator operations (wrapper for vault operator with preset VAULT_ADDR/VAULT_TOKEN)
-    /// Pass-through arguments to vault.
-    Operator {
+    /// Initiate an SSH session (passthrough to vault)
+    Ssh {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with tokens (passthrough to vault)
+    Token {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with Vault's Transform Secrets Engine (passthrough to vault)
+    Transform {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Interact with Vault's Transit Secrets Engine (passthrough to vault)
+    Transit {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },

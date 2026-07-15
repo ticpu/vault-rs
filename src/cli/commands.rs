@@ -42,8 +42,32 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
         }
         Commands::Read { ref args } => handle_vault_command("read", args).await,
         Commands::Write { ref args } => handle_vault_command("write", args).await,
-        Commands::Secrets { ref args } => handle_vault_command("secrets", args).await,
+        Commands::Delete { ref args } => handle_vault_command("delete", args).await,
+        Commands::List { ref args } => handle_vault_command("list", args).await,
+        Commands::Patch { ref args } => handle_vault_command("patch", args).await,
+        Commands::Unwrap { ref args } => handle_vault_command("unwrap", args).await,
+        Commands::Status { ref args } => handle_vault_command("status", args).await,
+        Commands::PathHelp { ref args } => handle_vault_command("path-help", args).await,
+        Commands::Print { ref args } => handle_vault_command("print", args).await,
+        Commands::VersionHistory { ref args } => {
+            handle_vault_command("version-history", args).await
+        }
+        Commands::Audit { ref args } => handle_vault_command("audit", args).await,
+        Commands::Debug { ref args } => handle_vault_command("debug", args).await,
+        Commands::Events { ref args } => handle_vault_command("events", args).await,
+        Commands::Kv { ref args } => handle_vault_command("kv", args).await,
+        Commands::Lease { ref args } => handle_vault_command("lease", args).await,
+        Commands::Monitor { ref args } => handle_vault_command("monitor", args).await,
+        Commands::Namespace { ref args } => handle_vault_command("namespace", args).await,
         Commands::Operator { ref args } => handle_vault_command("operator", args).await,
+        Commands::Pki { ref args } => handle_vault_command("pki", args).await,
+        Commands::Plugin { ref args } => handle_vault_command("plugin", args).await,
+        Commands::Policy { ref args } => handle_vault_command("policy", args).await,
+        Commands::Secrets { ref args } => handle_vault_command("secrets", args).await,
+        Commands::Ssh { ref args } => handle_vault_command("ssh", args).await,
+        Commands::Token { ref args } => handle_vault_command("token", args).await,
+        Commands::Transform { ref args } => handle_vault_command("transform", args).await,
+        Commands::Transit { ref args } => handle_vault_command("transit", args).await,
     }
 }
 

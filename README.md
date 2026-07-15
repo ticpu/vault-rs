@@ -58,7 +58,7 @@ vault-rs cert export example.com --format chain   # Full certificate chain
 - **Intelligent refresh**: Only fetches certificates when cache is stale
 
 ### 🔄 **Vault Integration**
-- **Command passthrough**: `vault-rs read/write/secrets/operator` commands pass through to official vault with preset auth
+- **Command passthrough**: client commands (`read`, `write`, `delete`, `list`, `patch`, `unwrap`, `status`, `path-help`, `print`, `version-history`, `audit`, `debug`, `events`, `kv`, `lease`, `monitor`, `namespace`, `operator`, `pki`, `plugin`, `policy`, `secrets`, `ssh`, `token`, `transform`, `transit`) pass through to official vault with preset auth
 - **Token management**: Secure token storage and automatic refresh
 - **Mount discovery**: Automatic PKI mount detection and validation
 
