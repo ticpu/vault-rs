@@ -2,7 +2,7 @@ use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::PROGRAM_NAME;
 use crate::vault::client::VaultClient;
 use aes_gcm::{Aes256Gcm, Key, KeyInit};
-use rand::RngCore;
+use rand::Rng;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
