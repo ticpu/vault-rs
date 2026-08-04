@@ -1,5 +1,10 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
+use std::time::Duration;
+
+fn parse_expiring_within(s: &str) -> Result<Duration, String> {
+    humantime::parse_duration(s).map_err(|e| e.to_string())
+}
 
 #[derive(Parser)]
 #[command(name = "vault-rs")]
@@ -228,6 +233,24 @@ pub enum CertCommands {
         /// Columns to display (comma-separated): cn, serial, not_before, not_after, sans, key_usage, extended_key_usage, issuer, pki_mount, revoked, expired. Prefix any with + to add it to the defaults instead of replacing them.
         #[arg(long)]
         columns: Option<String>,
+        /// Only certificates expiring within this duration (e.g. 90d, 6M, 1y). Matching at least one certificate exits 1, for cron/monitoring use.
+        #[arg(long, value_parser = parse_expiring_within)]
+        expiring_within: Option<Duration>,
+        /// Only expired certificates
+        #[arg(long, conflicts_with = "exclude_expired")]
+        only_expired: bool,
+        /// Exclude expired certificates
+        #[arg(long, conflicts_with = "only_expired")]
+        exclude_expired: bool,
+        /// Only revoked certificates
+        #[arg(long, conflicts_with = "exclude_revoked")]
+        only_revoked: bool,
+        /// Exclude revoked certificates
+        #[arg(long, conflicts_with = "only_revoked")]
+        exclude_revoked: bool,
+        /// Filter by extended key usage: client, server, or a raw usage name/OID (case-insensitive)
+        #[arg(long)]
+        eku: Option<String>,
     },
     /// List all PKI mounts
     ListMounts,
@@ -375,6 +398,9 @@ pub enum StorageCommands {
         /// Show certificates expiring soon
         #[arg(long)]
         expires_soon: Option<String>,
+        /// Filter by issuing role. Only local storage records the role; cert list cannot offer this filter.
+        #[arg(long)]
+        role: Option<String>,
         /// Columns to display (comma-separated): cn, serial, not_before, not_after, sans, key_usage, extended_key_usage, issuer, pki_mount, revoked, expired. Prefix any with + to add it to the defaults instead of replacing them.
         #[arg(long)]
         columns: Option<String>,
@@ -476,4 +502,30 @@ pub enum ExportFormat {
     /// Leaf + intermediates + root, for internal trust configuration
     ChainWithRoot,
     All,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expiring_within_accepts_humantime_durations() {
+        assert_eq!(
+            parse_expiring_within("90d").unwrap(),
+            Duration::from_secs(90 * 24 * 3600)
+        );
+        assert_eq!(
+            parse_expiring_within("1y").unwrap(),
+            Duration::from_secs(365 * 24 * 3600 + 6 * 3600) // humantime's year includes leap-day fraction
+        );
+        assert_eq!(
+            parse_expiring_within("6M").unwrap(),
+            Duration::from_secs(6 * 2630016) // humantime's month is 30.44 days
+        );
+    }
+
+    #[test]
+    fn expiring_within_rejects_garbage() {
+        assert!(parse_expiring_within("not-a-duration").is_err());
+    }
 }

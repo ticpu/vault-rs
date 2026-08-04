@@ -24,6 +24,7 @@ x509-parser = "0.17"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 hex = "0.4"
+humantime = "2"
 
 # CLI framework
 clap = { version = "4.4", features = ["derive", "env"] }

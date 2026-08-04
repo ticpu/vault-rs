@@ -16,7 +16,7 @@ pub use ca_info::show_ca_info;
 pub use cache::CertificateCache;
 pub use create::{create_certificate, CreateCertificateRequest};
 pub use export::{export_certificate, ExportCertificateRequest};
-pub use listing::CertificateListingService;
+pub use listing::{CertListFilter, CertificateListingService};
 pub use lookup::find_certificate_by_identifier;
 pub use metadata::{CertificateColumn, CertificateMetadata};
 pub use parser::CertificateParser;

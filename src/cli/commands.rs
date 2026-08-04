@@ -75,16 +75,49 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
     let client = VaultClient::new().await;
 
     match command {
-        CertCommands::List { pki_mount, columns } => {
-            use crate::cert::{CertificateListingService, CertificateService};
-            let cert_service = CertificateService::new().await?;
-            CertificateListingService::list_vault_certificates(
-                &cert_service,
+        CertCommands::List {
+            pki_mount,
+            columns,
+            expiring_within,
+            only_expired,
+            exclude_expired,
+            only_revoked,
+            exclude_revoked,
+            eku,
+        } => {
+            use crate::cert::{CertListFilter, CertificateListingService};
+
+            let filter = match CertListFilter::new(
+                expiring_within,
+                only_expired,
+                exclude_expired,
+                only_revoked,
+                exclude_revoked,
+                eku,
+            ) {
+                Ok(filter) => filter,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(2);
+                }
+            };
+            let expiring_within_given = filter.is_expiring_within_active();
+
+            match CertificateListingService::run_cert_list(
                 pki_mount.as_deref(),
                 columns,
+                &filter,
                 output,
             )
             .await
+            {
+                Ok(matched) if expiring_within_given && matched => std::process::exit(1),
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(2);
+                }
+            }
         }
         CertCommands::ListMounts => {
             // List all PKI mounts with crypto types - UNIX friendly output
@@ -287,6 +320,7 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
             pki,
             expired,
             expires_soon,
+            role,
             columns,
         } => {
             use crate::cert::CertificateListingService;
@@ -295,6 +329,7 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
                 pki,
                 expired,
                 expires_soon,
+                role,
                 columns,
                 output,
             )

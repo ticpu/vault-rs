@@ -1,35 +1,152 @@
 use crate::cert::metadata::COLUMN_NAMES;
-use crate::cert::{CertificateColumn, CertificateService};
+use crate::cert::{CertificateColumn, CertificateMetadata, CertificateService};
 use crate::storage::local::LocalStorage;
 use crate::utils::build_table_data_with_headers;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
+use chrono::{DateTime, Utc};
 use std::str::FromStr;
+use std::time::Duration;
+
+/// Filters for `cert list`. Vault's certificate store (and the cache built on
+/// top of it) records no issuing role, so unlike `storage list` there is no
+/// `--role` filter here: offering one would silently return nothing instead
+/// of failing, which is worse than not offering it.
+pub struct CertListFilter {
+    expiring_before: Option<DateTime<Utc>>,
+    only_expired: bool,
+    exclude_expired: bool,
+    only_revoked: bool,
+    exclude_revoked: bool,
+    eku: Option<String>,
+}
+
+impl CertListFilter {
+    pub fn new(
+        expiring_within: Option<Duration>,
+        only_expired: bool,
+        exclude_expired: bool,
+        only_revoked: bool,
+        exclude_revoked: bool,
+        eku: Option<String>,
+    ) -> Result<Self> {
+        let expiring_before = expiring_within
+            .map(|duration| {
+                chrono::Duration::from_std(duration)
+                    .map(|delta| Utc::now() + delta)
+                    .map_err(|e| {
+                        VaultCliError::InvalidInput(format!(
+                            "--expiring-within duration out of range: {e}"
+                        ))
+                    })
+            })
+            .transpose()?;
+
+        Ok(Self {
+            expiring_before,
+            only_expired,
+            exclude_expired,
+            only_revoked,
+            exclude_revoked,
+            eku,
+        })
+    }
+
+    /// Whether `--expiring-within` was given. Drives the exit-code contract:
+    /// only this flag turns "at least one match" into a distinct exit code
+    /// (for cron/Checkmk), other filters do not.
+    pub fn is_expiring_within_active(&self) -> bool {
+        self.expiring_before.is_some()
+    }
+
+    pub fn matches(&self, cert: &CertificateMetadata) -> bool {
+        if self.only_expired && !cert.is_expired() {
+            return false;
+        }
+        if self.exclude_expired && cert.is_expired() {
+            return false;
+        }
+        if self.only_revoked && !cert.is_revoked() {
+            return false;
+        }
+        if self.exclude_revoked && cert.is_revoked() {
+            return false;
+        }
+        if let Some(threshold) = self.expiring_before {
+            if cert.not_after > threshold {
+                return false;
+            }
+        }
+        if let Some(ref eku) = self.eku {
+            if !eku_matches(&cert.extended_key_usage, eku) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// Matches extended key usage entries against a filter value. `client` and
+/// `server` are friendly aliases for the strings the parser produces
+/// (`ClientAuth`, `ServerAuth`); anything else, including raw OIDs, is
+/// compared case-insensitively as-is.
+fn eku_matches(cert_ekus: &[String], filter: &str) -> bool {
+    let filter_lower = filter.to_lowercase();
+    let target = match filter_lower.as_str() {
+        "client" => "clientauth",
+        "server" => "serverauth",
+        other => other,
+    };
+    cert_ekus.iter().any(|usage| usage.to_lowercase() == target)
+}
 
 /// Unified certificate listing service that handles both CertCommands::List and StorageCommands::List
 pub struct CertificateListingService;
 
 impl CertificateListingService {
-    /// List certificates from Vault with column formatting
+    /// Runs `cert list` end to end, including standing up the `CertificateService`.
+    /// Keeping every fallible step inside one `Result` lets the caller map any
+    /// failure to a single exit code without a `?` escaping its local handling.
+    pub async fn run_cert_list(
+        pki_mount: Option<&str>,
+        columns: Option<String>,
+        filter: &CertListFilter,
+        output: &OutputFormat,
+    ) -> Result<bool> {
+        let cert_service = CertificateService::new().await?;
+        Self::list_vault_certificates(&cert_service, pki_mount, columns, filter, output).await
+    }
+
+    /// List certificates from Vault with column formatting. Returns whether at
+    /// least one certificate matched `filter`.
     pub async fn list_vault_certificates(
         cert_service: &CertificateService,
         pki_mount: Option<&str>,
         columns: Option<String>,
+        filter: &CertListFilter,
         output: &OutputFormat,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let certificates = cert_service
             .list_certificates_with_metadata(pki_mount)
             .await?;
 
-        if certificates.is_empty() {
-            return Ok(());
+        // Already sorted ascending by not_after (soonest expiry first) by
+        // the service layer; filtering with retain-style semantics preserves it.
+        let filtered: Vec<_> = certificates
+            .into_iter()
+            .filter(|c| filter.matches(c))
+            .collect();
+        let matched = !filtered.is_empty();
+
+        if !matched {
+            return Ok(false);
         }
 
         let parsed_columns = Self::parse_columns(columns, pki_mount.is_some())?;
-        let (headers, table_data) = build_table_data_with_headers(&certificates, &parsed_columns);
+        let (headers, table_data) = build_table_data_with_headers(&filtered, &parsed_columns);
 
         output.print_table_with_headers(&headers, &table_data);
-        Ok(())
+        Ok(true)
     }
 
     /// List certificates from local storage with column formatting
@@ -38,6 +155,7 @@ impl CertificateListingService {
         pki: Option<String>,
         expired: bool,
         expires_soon: Option<String>,
+        role: Option<String>,
         columns: Option<String>,
         output: &OutputFormat,
     ) -> Result<()> {
@@ -51,7 +169,7 @@ impl CertificateListingService {
             })
             .transpose()?;
 
-        let filtered_certs: Vec<_> = certificates
+        let mut filtered_certs: Vec<_> = certificates
             .into_iter()
             .filter(|cert| {
                 if let Some(ref pki_filter) = pki {
@@ -67,9 +185,17 @@ impl CertificateListingService {
                         return false;
                     }
                 }
+                if let Some(ref role_filter) = role {
+                    if cert.meta.role != *role_filter {
+                        return false;
+                    }
+                }
                 true
             })
             .collect();
+
+        // Soonest expiry first, consistent with `cert list`.
+        filtered_certs.sort_by_key(|c| c.meta.expires);
 
         if filtered_certs.is_empty() {
             return Ok(());
@@ -138,6 +264,7 @@ impl CertificateListingService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cert::SerialNumber;
     use CertificateColumn as C;
 
     fn parse(spec: &str) -> Result<Vec<CertificateColumn>> {
@@ -194,5 +321,140 @@ mod tests {
         let err = parse("cn,nope").unwrap_err().to_string();
         assert!(err.contains("nope"), "{err}");
         assert!(err.contains("Known columns"), "{err}");
+    }
+
+    fn cert(not_after: DateTime<Utc>, extended_key_usage: &[&str]) -> CertificateMetadata {
+        CertificateMetadata {
+            serial: SerialNumber::new("00"),
+            cn: "test".to_string(),
+            not_before: Utc::now(),
+            not_after,
+            sans: vec!["test.example.test".to_string()],
+            key_usage: vec![],
+            extended_key_usage: extended_key_usage.iter().map(|s| s.to_string()).collect(),
+            is_ca: false,
+            issuer: "issuer".to_string(),
+            pki_mount: "mount".to_string(),
+            cached_at: Utc::now(),
+            revocation_time: None,
+        }
+    }
+
+    fn no_filter() -> CertListFilter {
+        CertListFilter::new(None, false, false, false, false, None).unwrap()
+    }
+
+    #[test]
+    fn expiring_before_excludes_certs_past_the_threshold() {
+        let filter = CertListFilter {
+            expiring_before: Some(Utc::now() + chrono::Duration::days(30)),
+            ..no_filter()
+        };
+        let soon = cert(Utc::now() + chrono::Duration::days(10), &[]);
+        let later = cert(Utc::now() + chrono::Duration::days(100), &[]);
+        assert!(filter.matches(&soon));
+        assert!(!filter.matches(&later));
+    }
+
+    #[test]
+    fn only_expired_keeps_only_expired_certs() {
+        let filter = CertListFilter {
+            only_expired: true,
+            ..no_filter()
+        };
+        let expired = cert(Utc::now() - chrono::Duration::days(1), &[]);
+        let valid = cert(Utc::now() + chrono::Duration::days(1), &[]);
+        assert!(filter.matches(&expired));
+        assert!(!filter.matches(&valid));
+    }
+
+    #[test]
+    fn exclude_expired_drops_expired_certs() {
+        let filter = CertListFilter {
+            exclude_expired: true,
+            ..no_filter()
+        };
+        let expired = cert(Utc::now() - chrono::Duration::days(1), &[]);
+        let valid = cert(Utc::now() + chrono::Duration::days(1), &[]);
+        assert!(!filter.matches(&expired));
+        assert!(filter.matches(&valid));
+    }
+
+    #[test]
+    fn only_revoked_and_exclude_revoked_are_opposite_filters() {
+        let mut revoked = cert(Utc::now() + chrono::Duration::days(1), &[]);
+        revoked.revocation_time = Some(Utc::now());
+        let active = cert(Utc::now() + chrono::Duration::days(1), &[]);
+
+        let only_revoked = CertListFilter {
+            only_revoked: true,
+            ..no_filter()
+        };
+        assert!(only_revoked.matches(&revoked));
+        assert!(!only_revoked.matches(&active));
+
+        let exclude_revoked = CertListFilter {
+            exclude_revoked: true,
+            ..no_filter()
+        };
+        assert!(!exclude_revoked.matches(&revoked));
+        assert!(exclude_revoked.matches(&active));
+    }
+
+    #[test]
+    fn eku_filter_accepts_client_server_aliases_case_insensitively() {
+        let now = Utc::now();
+        let client_cert = cert(now, &["ClientAuth"]);
+        let server_cert = cert(now, &["ServerAuth"]);
+
+        let want_client = CertListFilter {
+            eku: Some("CLIENT".to_string()),
+            ..no_filter()
+        };
+        assert!(want_client.matches(&client_cert));
+        assert!(!want_client.matches(&server_cert));
+
+        let want_server = CertListFilter {
+            eku: Some("server".to_string()),
+            ..no_filter()
+        };
+        assert!(want_server.matches(&server_cert));
+        assert!(!want_server.matches(&client_cert));
+    }
+
+    #[test]
+    fn eku_filter_matches_raw_names_and_oids() {
+        let now = Utc::now();
+        let code_signing = cert(now, &["CodeSigning"]);
+        let oid_cert = cert(now, &["1.2.3.4"]);
+
+        let filter = CertListFilter {
+            eku: Some("codesigning".to_string()),
+            ..no_filter()
+        };
+        assert!(filter.matches(&code_signing));
+
+        let oid_filter = CertListFilter {
+            eku: Some("1.2.3.4".to_string()),
+            ..no_filter()
+        };
+        assert!(oid_filter.matches(&oid_cert));
+    }
+
+    #[test]
+    fn expiring_within_flag_reflects_construction() {
+        let inactive = CertListFilter::new(None, false, false, false, false, None).unwrap();
+        assert!(!inactive.is_expiring_within_active());
+
+        let active = CertListFilter::new(
+            Some(Duration::from_secs(3600)),
+            false,
+            false,
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+        assert!(active.is_expiring_within_active());
     }
 }

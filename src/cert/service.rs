@@ -1,7 +1,6 @@
 use crate::cert::{CertificateCache, CertificateMetadata, CertificateParser, SerialNumber};
 use crate::utils::errors::Result;
 use crate::vault::client::VaultClient;
-use std::cmp::Reverse;
 use std::collections::HashMap;
 
 pub struct CertificateService {
@@ -35,14 +34,12 @@ impl CertificateService {
         let mut all_certificates = Vec::new();
 
         for mount in pki_mounts {
-            if let Ok(certs) = self.list_certificates_single_mount(&mount).await {
-                all_certificates.extend(certs);
-            }
-            // Silently skip mounts that fail (might not have permissions)
+            let certs = self.list_certificates_single_mount(&mount).await?;
+            all_certificates.extend(certs);
         }
 
-        // Sort by not_after date (newest first)
-        all_certificates.sort_by_key(|c| Reverse(c.not_after));
+        // Sort by not_after date, soonest expiry first
+        all_certificates.sort_by_key(|c| c.not_after);
 
         Ok(all_certificates)
     }
@@ -99,8 +96,8 @@ impl CertificateService {
             results.extend(fetched_metadata);
         }
 
-        // Sort by not_after date (newest first)
-        results.sort_by_key(|c| Reverse(c.not_after));
+        // Sort by not_after date, soonest expiry first
+        results.sort_by_key(|c| c.not_after);
 
         tracing::info!("Retrieved {} certificate metadata entries", results.len());
         Ok(results)
