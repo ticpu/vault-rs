@@ -9,9 +9,6 @@ use crate::utils::errors::{Result, VaultCliError};
 use chrono::{DateTime, Utc};
 use x509_parser::prelude::*;
 
-const LABEL_WIDTH: usize = 10;
-const VALUE_WIDTH: usize = 30;
-
 /// One labeled fact about an issuance. `annotation` is a single inline note;
 /// `details` breaks a field down by source when more than one applies (e.g. a
 /// subject's CN and its OU/O/C come from different places).
@@ -105,13 +102,38 @@ impl IdentityField {
 /// never data (see docs/design-rationale.md, "Austerity applies to the data
 /// stream only").
 pub fn print_identity_fields(fields: &[IdentityField]) {
+    for line in format_identity_fields(fields) {
+        eprintln!("{line}");
+    }
+}
+
+/// Column widths are derived from the fields actually being printed, plus a
+/// guaranteed minimum separator, rather than a fixed constant: a fixed width
+/// only moves the "content exactly fills the column" bug to a longer value,
+/// it doesn't remove it.
+fn format_identity_fields(fields: &[IdentityField]) -> Vec<String> {
+    let label_width = fields
+        .iter()
+        .map(|f| f.label.chars().count())
+        .max()
+        .unwrap_or(0)
+        + 1;
+    let value_width = fields
+        .iter()
+        .filter(|f| f.annotation.is_some())
+        .map(|f| f.value.chars().count())
+        .max()
+        .unwrap_or(0)
+        + 1;
+
+    let mut lines = Vec::new();
     for field in fields {
         match &field.annotation {
-            Some(note) => eprintln!(
-                "{:<LABEL_WIDTH$}{:<VALUE_WIDTH$}({note})",
+            Some(note) => lines.push(format!(
+                "{:<label_width$}{:<value_width$}({note})",
                 field.label, field.value
-            ),
-            None => eprintln!("{:<LABEL_WIDTH$}{}", field.label, field.value),
+            )),
+            None => lines.push(format!("{:<label_width$}{}", field.label, field.value)),
         }
 
         if !field.details.is_empty() {
@@ -123,10 +145,14 @@ pub fn print_identity_fields(fields: &[IdentityField]) {
                 .unwrap_or(0)
                 + 2;
             for (sub_label, text) in &field.details {
-                eprintln!("{:LABEL_WIDTH$}{:<sub_width$}{text}", "", sub_label);
+                lines.push(format!(
+                    "{:label_width$}{:<sub_width$}{text}",
+                    "", sub_label
+                ));
             }
         }
     }
+    lines
 }
 
 /// Describe a just-issued leaf certificate with the same field shape as
@@ -229,5 +255,34 @@ mod tests {
     fn absent_eku_and_san_read_as_none_not_omitted() {
         let fields = describe_certificate(&testdata("eku-none")).unwrap();
         assert_eq!(field(&fields, "eku").value, "none");
+    }
+
+    /// "extensions" is exactly as wide as the label column it sits in here
+    /// (the widest label present); a fixed-width pad with no minimum
+    /// separator printed it running straight into its value.
+    #[test]
+    fn label_as_wide_as_the_column_still_gets_a_separator() {
+        let fields = vec![
+            IdentityField::plain("san", "none"),
+            IdentityField::plain("extensions", "none"),
+        ];
+        let lines = format_identity_fields(&fields);
+        assert!(
+            lines[1]["extensions".len()..].starts_with(' '),
+            "{}",
+            lines[1]
+        );
+    }
+
+    /// An annotated value as wide as the value column (three SANs joined,
+    /// in the real report) ran straight into its `(annotation)` with no
+    /// separator under the old fixed-width pad.
+    #[test]
+    fn annotated_value_as_wide_as_the_column_still_gets_a_separator() {
+        let value = "a".repeat(30);
+        let fields = vec![IdentityField::annotated("san", value.clone(), "note")];
+        let lines = format_identity_fields(&fields);
+        let after_value = &lines[0][lines[0].find(&value).unwrap() + value.len()..];
+        assert!(after_value.starts_with(' '), "{}", lines[0]);
     }
 }
