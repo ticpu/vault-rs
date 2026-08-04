@@ -1,0 +1,22 @@
+title = "vault-rs gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "vault-token"
+description = "Vault token (service, batch, recovery, or legacy)"
+regex = '''\b(hv[sbr]\.[A-Za-z0-9_-]{20,}|s\.[A-Za-z0-9]{24})\b'''
+tags = ["secret", "vault"]
+
+[[rules]]
+id = "vault-unseal-key"
+description = "Vault unseal key share (base64, 33 bytes)"
+regex = '''\b[A-Za-z0-9+/]{43}=\b'''
+tags = ["secret", "vault"]
+
+[[rules]]
+id = "pem-private-key"
+description = "PEM private key block"
+regex = '''-----BEGIN (RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----'''
+tags = ["secret", "key"]
