@@ -395,7 +395,7 @@ pub enum CertCommands {
         /// PKI mount (for CN lookups, optional)
         #[arg(long, short = 'm')]
         pki_mount: Option<String>,
-        /// Export format: pem, der, key, p12, chain, chain-with-root, or all
+        /// Export format: pem, der, key, p12, chain, chain-with-root, or bundle
         #[arg(long, default_value = "pem")]
         format: ExportFormat,
         /// Output directory (default: stdout for PEM format)
@@ -423,8 +423,8 @@ pub enum CertCommands {
         /// PKI mount to scope the search (optional)
         #[arg(long, short = 'm')]
         pki_mount: Option<String>,
-        /// Export format: pem, der, key, p12, chain, chain-with-root, or all
-        #[arg(long, default_value = "all")]
+        /// Export format: pem, der, key, p12, chain, chain-with-root, or bundle
+        #[arg(long, default_value = "pem")]
         format: ExportFormat,
         /// Output directory
         #[arg(long, default_value = ".")]
@@ -572,7 +572,8 @@ pub enum ExportFormat {
     Chain,
     /// Leaf + intermediates + root, for internal trust configuration
     ChainWithRoot,
-    All,
+    /// Private key + leaf + intermediates, self-signed root dropped; requires a stored key
+    Bundle,
 }
 
 #[cfg(test)]

@@ -140,45 +140,28 @@ async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) ->
     }
 }
 
-/// All format: private key + certificate + CA chain in PEM format
-async fn export_all(
-    client: &VaultClient,
-    request: &ExportCertificateRequest,
-    certificate: PemCertificate,
-) -> Result<()> {
-    // Try to get complete bundle from local storage first
-    match get_certificate_bundle_from_storage(client, &request.identifier).await {
-        Ok((private_key, cert_from_storage, ca_chain_from_storage)) => {
-            let ca_chain = ca_chain_from_storage.without_root()?;
-            let bundle = PemCertificateBundle::new(private_key, cert_from_storage, ca_chain);
-            let output_content = bundle.output(request.text);
-            write_output_or_print(
-                request.output_dir.as_deref(),
-                &format!("{}.pem", sanitize_filename(&request.identifier)),
-                &output_content,
-            )
-        }
-        Err(_) => {
-            // Fallback: export certificate and chain only (no private key)
-            tracing::info!("Private key for '{}' not found in local storage, exporting certificate and chain only", request.identifier);
-            let ca_chain_pem = client.get_ca_chain(&request.mount).await?;
-            let ca_chain = build_ca_chain(&ca_chain_pem);
-            if ca_chain.certificates().is_empty() {
-                return Err(VaultCliError::InvalidInput(format!(
-                    "Mount '{}' has no CA chain configured",
-                    request.mount
-                )));
-            }
-            let ca_chain = ca_chain.without_root()?;
-            let bundle = PemCertificateBundle::new(None, certificate, ca_chain);
-            let output_content = bundle.output(request.text);
-            write_output_or_print(
-                request.output_dir.as_deref(),
-                &format!("{}.pem", sanitize_filename(&request.identifier)),
-                &output_content,
-            )
-        }
-    }
+/// Bundle format: private key + certificate + CA chain in PEM format. Requires
+/// the key to be held in local storage — the keyless artifact is `chain`.
+async fn export_bundle(client: &VaultClient, request: &ExportCertificateRequest) -> Result<()> {
+    let (private_key, cert_from_storage, ca_chain_from_storage) =
+        get_certificate_bundle_from_storage(client, &request.identifier)
+            .await
+            .map_err(|e| {
+                VaultCliError::InvalidInput(format!(
+                    "Bundle export requires a private key held in local storage for '{}': {e}. \
+                     Use --format chain for a keyless artifact.",
+                    request.identifier
+                ))
+            })?;
+
+    let ca_chain = ca_chain_from_storage.without_root()?;
+    let bundle = PemCertificateBundle::new(private_key, cert_from_storage, ca_chain);
+    let output_content = bundle.output(request.text);
+    write_output_or_print(
+        request.output_dir.as_deref(),
+        &format!("{}.pem", sanitize_filename(&request.identifier)),
+        &output_content,
+    )
 }
 
 /// Default PEM format - output to stdout (pipe-friendly) or file
@@ -339,7 +322,7 @@ pub async fn export_certificate(
         }
         ExportFormat::Key => export_key(client, &request).await,
         ExportFormat::P12 => export_p12(client, &request).await,
-        ExportFormat::All => export_all(client, &request, certificate).await,
+        ExportFormat::Bundle => export_bundle(client, &request).await,
     }
 }
 
@@ -397,5 +380,34 @@ mod tests {
             "root is self-signed and dropped from the CA chain, leaf remains"
         );
         assert_eq!(chain.certificates()[0].pem_data(), leaf.pem_data());
+    }
+
+    /// A local store with no matching record makes `get_certificate_bundle_from_storage`
+    /// fail without ever reaching the network, so this exercises `export_bundle`'s
+    /// real error path without a stub Vault server.
+    #[tokio::test]
+    async fn bundle_export_without_a_stored_key_is_an_error() {
+        let client =
+            VaultClient::for_test("http://127.0.0.1:1".to_string(), "test-token".to_string())
+                .expect("test client");
+
+        let request = ExportCertificateRequest {
+            pem_data: testdata("leaf-client"),
+            mount: "pki".to_string(),
+            identifier: format!("no-such-cert-{}", std::process::id()),
+            format: ExportFormat::Bundle,
+            output_dir: None,
+            no_passphrase: false,
+            text: false,
+        };
+
+        let err = export_bundle(&client, &request).await.expect_err(
+            "bundle export must fail without a stored key, never fall back to keyless output",
+        );
+        assert!(
+            err.to_string()
+                .contains("Bundle export requires a private key"),
+            "unexpected error: {err}"
+        );
     }
 }

@@ -153,9 +153,9 @@ impl PemCertificateChain {
     pub fn output(&self, include_text: bool) -> String {
         let mut result = String::new();
 
-        for cert in self.certificates.iter() {
+        for (i, cert) in self.certificates.iter().enumerate() {
             // Only include text for the first certificate (the leaf certificate)
-            let cert_text = include_text;
+            let cert_text = include_text && i == 0;
             result.push_str(&cert.output(cert_text));
         }
 
