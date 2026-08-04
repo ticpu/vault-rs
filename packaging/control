@@ -1,0 +1,18 @@
+Package: vault-rs
+Version: 0.0.0-replaced-by-makefile
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: replaced-by-makefile
+Recommends: openssl
+Maintainer: Jérôme Poulin <jeromepoulin@gmail.com>
+Homepage: https://github.com/ticpu/vault-rs
+Description: PKI certificate management for HashiCorp Vault
+ Issues, signs, inspects, verifies and exports certificates from a Vault PKI
+ mount, and forwards every verb it does not model to the vault CLI with the
+ server address and token already resolved. Output is one record per line for
+ grep and awk, with an exit code that distinguishes an expiring certificate
+ from a failure so cron and monitoring can act on it. Certificates and keys it
+ issues are cached locally under a key held in the operator's own KV mount.
+ Requires the vault CLI for passthrough subcommands, and openssl for
+ --text output.

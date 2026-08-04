@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+    - name: Check
+      run: cargo check --all-targets --message-format=short
+
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
+
+    - name: Format
+      run: cargo fmt --all -- --check
+
+    # The same gate the pre-commit hook runs, so a discard cannot reach master
+    # through a push that skipped the hook.
+    - name: Error discards
+      run: ./scripts/check-error-discards.sh
+
+    - name: Test
+      run: cargo test --release
+
+  # amd64 only: enough to catch a broken Containerfile or control file, without
+  # paying for the second architecture on every push.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Build .deb
+      run: make deb
+
+    - name: Inspect .deb
+      run: |
+        dpkg-deb -I vault-rs_*_amd64.deb
+        dpkg-deb -c vault-rs_*_amd64.deb
