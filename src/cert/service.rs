@@ -76,16 +76,7 @@ impl CertificateService {
 
             for serial in to_fetch.into_iter() {
                 match self.fetch_certificate_metadata(pki_mount, &serial).await {
-                    Ok(metadata) => {
-                        // Update cache
-                        if let Err(e) =
-                            self.cache
-                                .update_entry(pki_mount, &serial, metadata.clone())
-                        {
-                            tracing::warn!("Failed to cache metadata for {}: {}", serial, e);
-                        }
-                        fetched_metadata.push(metadata);
-                    }
+                    Ok(metadata) => fetched_metadata.push(metadata),
                     Err(e) => {
                         tracing::warn!("Failed to fetch metadata for {}: {}", serial, e);
                         // Continue with other certificates instead of failing completely
@@ -93,7 +84,13 @@ impl CertificateService {
                 }
             }
 
-            results.extend(fetched_metadata);
+            // One rewrite of the mount's cache file for the whole batch,
+            // instead of update_entry's per-certificate rewrite (O(n^2) file
+            // writes on a cold cache).
+            results.extend(fetched_metadata.iter().cloned());
+            if let Err(e) = self.cache.bulk_update(pki_mount, fetched_metadata) {
+                tracing::warn!("Failed to cache metadata batch for {}: {}", pki_mount, e);
+            }
         }
 
         // Sort by not_after date, soonest expiry first

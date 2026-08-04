@@ -102,6 +102,22 @@ async fn check_permissions() {
         }
     };
 
+    match test_client.health().await {
+        Ok(health) => {
+            let version = health
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let sealed = health
+                .get("sealed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let state = if sealed { "sealed" } else { "unsealed" };
+            println!("✓ Vault reachable (version {version}, {state})");
+        }
+        Err(e) => println!("✗ Vault health check failed: {e}"),
+    }
+
     match test_client.get("sys/mounts").await {
         Ok(_) => println!("✓ Can list secret engines"),
         Err(_) => println!("✗ Cannot list secret engines (sys/mounts)"),

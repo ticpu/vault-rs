@@ -82,23 +82,6 @@ impl CertificateColumn {
             Self::Role => "Role",
         }
     }
-
-    pub fn width(&self) -> usize {
-        match self {
-            Self::Cn => 30,
-            Self::Serial => 20,
-            Self::NotBefore => 19,
-            Self::NotAfter => 19,
-            Self::Sans => 40,
-            Self::KeyUsage => 20,
-            Self::ExtendedKeyUsage => 25,
-            Self::Issuer => 30,
-            Self::PkiMount => 15,
-            Self::Revoked => 1,
-            Self::Expired => 1,
-            Self::Role => 15,
-        }
-    }
 }
 
 /// Boolean columns render as a mark or an empty cell. Empty, not a space:
