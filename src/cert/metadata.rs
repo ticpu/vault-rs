@@ -33,12 +33,15 @@ pub enum CertificateColumn {
     PkiMount,
     Revoked,
     Expired,
+    /// The issuing role. Only local storage records it; `cert list` reads
+    /// straight from Vault's certificate store, which has no such field.
+    Role,
 }
 
 /// Canonical column names, for help text and parse errors. Kept beside the
 /// `FromStr` arms below so the two cannot drift.
 pub const COLUMN_NAMES: &str = "cn, serial, not_before, not_after, sans, key_usage, \
-     extended_key_usage, issuer, pki_mount, revoked, expired";
+     extended_key_usage, issuer, pki_mount, revoked, expired, role";
 
 impl FromStr for CertificateColumn {
     type Err = String;
@@ -56,6 +59,7 @@ impl FromStr for CertificateColumn {
             "pki_mount" | "mount" => Ok(Self::PkiMount),
             "revoked" | "r" => Ok(Self::Revoked),
             "expired" | "e" => Ok(Self::Expired),
+            "role" => Ok(Self::Role),
             _ => Err(format!("Invalid column: {s}")),
         }
     }
@@ -75,6 +79,7 @@ impl CertificateColumn {
             Self::PkiMount => "PKI Mount",
             Self::Revoked => "R",
             Self::Expired => "E",
+            Self::Role => "Role",
         }
     }
 
@@ -91,6 +96,7 @@ impl CertificateColumn {
             Self::PkiMount => 15,
             Self::Revoked => 1,
             Self::Expired => 1,
+            Self::Role => 15,
         }
     }
 }
@@ -122,6 +128,8 @@ impl GetColumnValue for CertificateMetadata {
             CertificateColumn::PkiMount => self.pki_mount.clone(),
             CertificateColumn::Revoked => flag(self.is_revoked()),
             CertificateColumn::Expired => flag(self.is_expired()),
+            // Vault's certificate store records no issuing role.
+            CertificateColumn::Role => String::new(),
         }
     }
 }

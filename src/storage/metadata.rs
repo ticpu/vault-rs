@@ -112,22 +112,7 @@ impl GetColumnValue for StorageCertificateMetadata {
             CertificateColumn::NotAfter => self.expires.format("%Y-%m-%d %H:%M").to_string(),
             CertificateColumn::Sans => self.sans.join(","),
             CertificateColumn::KeyUsage => "".to_string(), // Not available in storage metadata
-            CertificateColumn::ExtendedKeyUsage => {
-                let status = if self.is_expired() {
-                    "EXPIRED"
-                } else {
-                    "ACTIVE"
-                };
-                format!(
-                    "{}{}",
-                    self.role,
-                    if status == "EXPIRED" {
-                        " (EXPIRED)"
-                    } else {
-                        ""
-                    }
-                )
-            }
+            CertificateColumn::ExtendedKeyUsage => "".to_string(), // Not available in storage metadata
             CertificateColumn::Issuer => "".to_string(), // Not available in storage metadata
             CertificateColumn::PkiMount => "".to_string(), // This comes from the parent struct
             CertificateColumn::Revoked => String::new(), // Local storage doesn't track revocation
@@ -135,6 +120,7 @@ impl GetColumnValue for StorageCertificateMetadata {
                 true => "✗".to_string(),
                 false => String::new(),
             },
+            CertificateColumn::Role => self.role.clone(),
         }
     }
 }

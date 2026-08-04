@@ -167,6 +167,7 @@ pub async fn handle_completion_helper_command(
                 "r",
                 "expired",
                 "e",
+                "role",
             ];
             output.print_list(&columns);
         }

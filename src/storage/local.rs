@@ -66,16 +66,20 @@ impl LocalStorage {
             .encrypt_to_file(cert_data.ca_chain_pem.as_bytes(), &context, &ca_file)
             .await?;
 
-        // Create P12 bundle and store it
+        // Create P12 bundle and store it, when there's a private key to embed
+        // (CSR signing keeps the key with the requester, so this is skipped
+        // rather than stored as a p12 with no key in it).
         let p12_data = self.create_p12_bundle(
             cert_data.certificate_pem,
             cert_data.private_key_pem,
             cert_data.ca_chain_pem,
         )?;
         let p12_file = cert_dir.join("p12.enc");
-        self.encryption_manager
-            .encrypt_to_file(&p12_data, &context, &p12_file)
-            .await?;
+        if let Some(ref p12_data) = p12_data {
+            self.encryption_manager
+                .encrypt_to_file(p12_data, &context, &p12_file)
+                .await?;
+        }
 
         // Create file info map
         use crate::storage::metadata::{CertificateStorage, FileInfo};
@@ -106,14 +110,16 @@ impl LocalStorage {
                 checksum: self.calculate_file_checksum(&ca_file)?,
             },
         );
-        file_info.insert(
-            "p12.enc".to_string(),
-            FileInfo {
-                size: fs::metadata(&p12_file)?.len(),
-                created: chrono::Utc::now(),
-                checksum: self.calculate_file_checksum(&p12_file)?,
-            },
-        );
+        if p12_data.is_some() {
+            file_info.insert(
+                "p12.enc".to_string(),
+                FileInfo {
+                    size: fs::metadata(&p12_file)?.len(),
+                    created: chrono::Utc::now(),
+                    checksum: self.calculate_file_checksum(&p12_file)?,
+                },
+            );
+        }
 
         // Create the full CertificateStorage structure
         let cert_storage = CertificateStorage {
@@ -445,12 +451,37 @@ impl LocalStorage {
         self.store_master_index(&index).await
     }
 
-    /// Create P12 bundle from PEM files
-    fn create_p12_bundle(&self, cert_pem: &str, key_pem: &str, ca_pem: &str) -> Result<Vec<u8>> {
-        // For now, return a concatenated version
-        // In a real implementation, you'd use openssl or a similar library to create proper P12
-        let bundle = format!("{key_pem}\n{cert_pem}\n{ca_pem}");
-        Ok(bundle.into_bytes())
+    /// Build a real PKCS12 bundle via `utils::create_p12_file` (the same path
+    /// `cert export --format p12` uses), or `None` when there's no private
+    /// key to embed. `create_p12_file` writes to a final destination rather
+    /// than returning bytes, so this runs it against a runtime-dir scratch
+    /// file and reads the result back for encryption into `p12.enc`.
+    fn create_p12_bundle(
+        &self,
+        cert_pem: &str,
+        key_pem: &str,
+        ca_pem: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        if key_pem.is_empty() {
+            return Ok(None);
+        }
+
+        let temp_dir = VaultCliPaths::runtime_dir()?;
+        VaultCliPaths::ensure_dir_exists(&temp_dir)?;
+        let temp_p12 = temp_dir.join(format!("store_{}.p12", std::process::id()));
+
+        crate::utils::create_p12_file(&temp_p12, key_pem, cert_pem, ca_pem, true)?;
+
+        let data = fs::read(&temp_p12)?;
+        if let Err(e) = fs::remove_file(&temp_p12) {
+            tracing::warn!(
+                "Failed to remove temporary P12 file {}: {}",
+                temp_p12.display(),
+                e
+            );
+        }
+
+        Ok(Some(data))
     }
 
     /// Calculate SHA256 checksum of a file

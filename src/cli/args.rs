@@ -234,7 +234,7 @@ pub enum CertCommands {
         /// PKI mount path (lists all mounts if not provided)
         #[arg(long, short = 'm', value_hint = clap::ValueHint::Other)]
         pki_mount: Option<String>,
-        /// Columns to display (comma-separated): cn, serial, not_before, not_after, sans, key_usage, extended_key_usage, issuer, pki_mount, revoked, expired. Prefix any with + to add it to the defaults instead of replacing them.
+        /// Columns to display (comma-separated): cn, serial, not_before, not_after, sans, key_usage, extended_key_usage, issuer, pki_mount, revoked, expired, role. Prefix any with + to add it to the defaults instead of replacing them.
         #[arg(long)]
         columns: Option<String>,
         /// Only certificates expiring within this duration (e.g. 90d, 6M, 1y). Matching at least one certificate exits 1, for cron/monitoring use.
@@ -450,7 +450,7 @@ pub enum StorageCommands {
         /// Filter by issuing role. Only local storage records the role; cert list cannot offer this filter.
         #[arg(long)]
         role: Option<String>,
-        /// Columns to display (comma-separated): cn, serial, not_before, not_after, sans, key_usage, extended_key_usage, issuer, pki_mount, revoked, expired. Prefix any with + to add it to the defaults instead of replacing them.
+        /// Columns to display (comma-separated): cn, serial, not_before, not_after, sans, key_usage, extended_key_usage, issuer, pki_mount, revoked, expired, role. Prefix any with + to add it to the defaults instead of replacing them.
         #[arg(long)]
         columns: Option<String>,
     },

@@ -202,9 +202,14 @@ impl CertificateStorageHelper {
             return Ok(());
         }
 
+        use crate::cert::CertificateParser;
         use crate::storage::metadata::CertStatus;
         use crate::storage::{CertificateData, LocalStorage, StorageCertificateMetadata};
         use chrono::Utc;
+
+        // The real expiry, read off the certificate being stored: `storage
+        // list --expired`/`--expires-soon` filter on this field.
+        let not_after = CertificateParser::parse_pem(certificate_pem, pki_mount)?.not_after;
 
         let storage = LocalStorage::new().await;
         let metadata = StorageCertificateMetadata {
@@ -213,7 +218,7 @@ impl CertificateStorageHelper {
             role: self.role.clone(),
             crypto: self.crypto.clone(),
             created: Utc::now(),
-            expires: Utc::now() + chrono::Duration::days(365), // Will be updated with actual expiry
+            expires: not_after,
             status: CertStatus::Active,
             sans: self.sans.clone(),
         };
