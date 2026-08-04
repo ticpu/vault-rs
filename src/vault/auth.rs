@@ -6,6 +6,18 @@ use std::env;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+/// What `auth status` found, as opposed to what `get_token` needs.
+///
+/// `get_token` collapses all of these into "a usable token or an error",
+/// which is right for its callers and wrong for a status report: "there is
+/// no token", "the server rejected the one there is" and "I could not find
+/// out" are three different answers, and the third is not a status at all.
+pub enum TokenState {
+    Absent,
+    Rejected,
+    Valid(String),
+}
+
 pub struct VaultAuth {
     client: Client,
     vault_addr: String,
@@ -16,6 +28,31 @@ impl VaultAuth {
         let client = super::create_http_client().expect("Failed to create HTTP client");
 
         Self { client, vault_addr }
+    }
+
+    /// The stored token's state. Only a genuine absence is `Absent`; an
+    /// unreadable file or an unreachable Vault is an error, not a report that
+    /// there is no token.
+    pub async fn token_state(&self) -> Result<TokenState> {
+        let token = match env::var("VAULT_TOKEN") {
+            Ok(token) if !token.is_empty() => token,
+            _ => {
+                let token_file = VaultCliPaths::vault_token()?;
+                if !token_file.exists() {
+                    return Ok(TokenState::Absent);
+                }
+                let token = fs::read_to_string(&token_file)?.trim().to_string();
+                if token.is_empty() {
+                    return Ok(TokenState::Absent);
+                }
+                token
+            }
+        };
+
+        match self.validate_token(&token).await? {
+            true => Ok(TokenState::Valid(token)),
+            false => Ok(TokenState::Rejected),
+        }
     }
 
     /// Get Vault token from environment or stored token file
@@ -247,9 +284,13 @@ impl VaultAuth {
         // Validate token is still valid
         if !self.validate_token(&token).await? {
             // Try to renew token
-            if let Ok(renewed_token) = self.renew_token(&token).await {
-                return Ok(renewed_token);
-            }
+            let renewal_error = match self.renew_token(&token).await {
+                Ok(renewed_token) => return Ok(renewed_token),
+                // Discarding this reported an unreachable Vault during renewal
+                // as a rejected token, sending the operator to log in again
+                // when logging in would fail the same way.
+                Err(e) => e,
+            };
             // Nothing else expires this file, and it outlives the session when
             // the fallback state directory is in use.
             if let Err(e) = fs::remove_file(&token_file) {
@@ -258,9 +299,9 @@ impl VaultAuth {
                     token_file.display()
                 );
             }
-            return Err(VaultCliError::Auth(
-                "Stored token is invalid. Please login again.".to_string(),
-            ));
+            return Err(VaultCliError::Auth(format!(
+                "Stored token is invalid and could not be renewed: {renewal_error}"
+            )));
         }
 
         Ok(token)

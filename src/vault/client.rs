@@ -50,7 +50,9 @@ impl VaultClient {
         let vault_addr = get_vault_addr().await?;
         let auth = crate::vault::auth::VaultAuth::new(vault_addr.clone());
         let token = auth.get_token().await?;
-        tracing::debug!("Using {vault_addr} with token: {}***", &token[..8]);
+        // Char boundaries, not bytes: a short or non-ASCII token panicked here.
+        let prefix: String = token.chars().take(8).collect();
+        tracing::debug!("Using {vault_addr} with token: {prefix}***");
 
         Ok(Self {
             client,

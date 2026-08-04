@@ -2,13 +2,16 @@ use crate::cli::args::AuthCommands;
 use crate::utils::dns_discovery::get_vault_addr;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
-use crate::vault::{auth::VaultAuth, client::VaultClient};
+use crate::vault::{
+    auth::{TokenState, VaultAuth},
+    client::VaultClient,
+};
 
 pub async fn handle_auth_commands(command: AuthCommands, output: &OutputFormat) -> Result<()> {
     match command {
         AuthCommands::Login { method, username } => login_command(method, username).await,
         AuthCommands::Logout => logout_command().await,
-        AuthCommands::Status => status_command().await,
+        AuthCommands::Status => status_command(output).await,
         AuthCommands::InitEncryption {
             destroy_all_my_keys,
         } => init_encryption_command(destroy_all_my_keys).await,
@@ -25,7 +28,9 @@ async fn login_command(method: String, username: Option<String>) -> Result<()> {
         None => auth.interactive_login(Some(method)).await?,
     };
 
-    println!("Successfully logged in with token: {}***", &token[..8]);
+    // Char boundaries, not bytes: a short or non-ASCII token panicked here.
+    let prefix: String = token.chars().take(8).collect();
+    eprintln!("Successfully logged in with token: {prefix}***");
     Ok(())
 }
 
@@ -46,83 +51,86 @@ async fn logout_command() -> Result<()> {
     let vault_addr = get_vault_addr().await?;
     let auth = VaultAuth::new(vault_addr);
     auth.logout().await?;
-    println!("Successfully logged out");
+    eprintln!("Successfully logged out");
     Ok(())
 }
 
-async fn status_command() -> Result<()> {
+/// The token's state is what this command was asked for, so it goes to stdout
+/// through `OutputFormat`. The reachability checklist below it is written for
+/// a person and stays on stderr.
+async fn status_command(output: &OutputFormat) -> Result<()> {
     let vault_addr = get_vault_addr().await?;
     let auth = VaultAuth::new(vault_addr);
 
-    let token = match auth.get_token().await {
-        Ok(token) => token,
-        Err(_) => {
-            println!("No active token found");
-            return Ok(());
-        }
+    let token = match auth.token_state().await? {
+        TokenState::Absent => return report_token(output, "absent", &serde_json::Value::Null),
+        TokenState::Rejected => return report_token(output, "rejected", &serde_json::Value::Null),
+        TokenState::Valid(token) => token,
     };
 
-    let info = match auth.get_token_info(&token).await {
-        Ok(info) => info,
-        Err(_) => {
-            println!("Token status: Invalid");
-            return Ok(());
-        }
-    };
-
-    print_token_status(&info);
+    let info = auth.get_token_info(&token).await?;
+    report_token(output, "valid", &info)?;
     check_permissions().await;
     Ok(())
 }
 
-fn print_token_status(info: &serde_json::Value) {
-    println!("Token status: Valid");
+fn report_token(output: &OutputFormat, state: &str, info: &serde_json::Value) -> Result<()> {
+    let mut rows = vec![("token".to_string(), state.to_string())];
 
-    let Some(data) = info.get("data") else { return };
+    if let Some(data) = info.get("data") {
+        for (label, key) in [
+            ("user", "display_name"),
+            ("policies", "policies"),
+            ("ttl_seconds", "ttl"),
+            ("entity_id", "entity_id"),
+        ] {
+            if let Some(value) = data.get(key) {
+                // A string renders bare; anything else keeps its JSON shape
+                // rather than being coerced into one it does not have.
+                let rendered = match value.as_str() {
+                    Some(s) => s.to_string(),
+                    None => value.to_string(),
+                };
+                rows.push((label.to_string(), rendered));
+            }
+        }
+    }
 
-    if let Some(display_name) = data.get("display_name") {
-        println!("User: {display_name}");
-    }
-    if let Some(policies) = data.get("policies") {
-        println!("Policies: {policies}");
-    }
-    if let Some(ttl) = data.get("ttl") {
-        println!("TTL: {ttl} seconds");
-    }
-    if let Some(entity_id) = data.get("entity_id") {
-        println!("Entity ID: {entity_id}");
-    }
+    output.print_key_value(&rows);
+    Ok(())
 }
 
 async fn check_permissions() {
-    println!("\nChecking permissions:");
+    eprintln!();
+    eprintln!("Checking permissions:");
     let test_client = match VaultClient::new().await {
         Ok(client) => client,
         Err(e) => {
-            println!("✗ Cannot connect to Vault: {e}");
+            eprintln!("✗ Cannot connect to Vault: {e}");
             return;
         }
     };
 
     match test_client.health().await {
         Ok(health) => {
+            // A missing seal state used to render as "unsealed".
             let version = health
                 .get("version")
                 .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let sealed = health
-                .get("sealed")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let state = if sealed { "sealed" } else { "unsealed" };
-            println!("✓ Vault reachable (version {version}, {state})");
+                .unwrap_or("version not reported");
+            let state = match health.get("sealed").and_then(|v| v.as_bool()) {
+                Some(true) => "sealed",
+                Some(false) => "unsealed",
+                None => "seal state not reported",
+            };
+            eprintln!("✓ Vault reachable ({version}, {state})");
         }
-        Err(e) => println!("✗ Vault health check failed: {e}"),
+        Err(e) => eprintln!("✗ Vault health check failed: {e}"),
     }
 
     match test_client.get("sys/mounts").await {
-        Ok(_) => println!("✓ Can list secret engines"),
-        Err(_) => println!("✗ Cannot list secret engines (sys/mounts)"),
+        Ok(_) => eprintln!("✓ Can list secret engines"),
+        Err(e) => eprintln!("✗ Cannot list secret engines (sys/mounts): {e}"),
     }
 }
 
@@ -131,20 +139,16 @@ async fn init_encryption_command(destroy_existing: bool) -> Result<()> {
     encryption_manager
         .init_encryption_key(destroy_existing)
         .await?;
-    println!("Encryption key initialized in personal vault");
+    eprintln!("Encryption key initialized in personal vault");
     Ok(())
 }
 
 async fn list_secrets_command(output: &OutputFormat) -> Result<()> {
     let client = VaultClient::new().await?;
 
-    let mounts = match client.list_mounts().await {
-        Ok(mounts) => mounts,
-        Err(_) => {
-            eprintln!("Cannot list secret engines - insufficient permissions");
-            std::process::exit(1);
-        }
-    };
+    // Asserting a permission verdict for what may be a refused connection,
+    // and exiting 1 where 1 means a match, not an error.
+    let mounts = client.list_mounts().await?;
 
     output.print_table(&mounts.as_table_data());
     Ok(())
