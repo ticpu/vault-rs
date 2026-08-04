@@ -55,6 +55,16 @@ the whole hierarchy authority over every connection that host makes. The distinc
 legible in the filename, or the safe artifact gets assembled by hand and the unsafe one gets
 attached.
 
+## Cached metadata carries a schema version, not just a timestamp
+
+The cache holds what the parser concluded, not the certificate it read, so a change to any derived
+field is invisible to a mount already cached: the new binary deserializes the old conclusions and
+renders them faithfully, and nothing about a stale entry looks stale. A version compared on read,
+discarding the file when it differs, makes such a change self-invalidating rather than dependent on
+someone being told to clear it — a timestamp cannot express that an entry was produced by code that
+got the answer wrong. Anything that alters a parsed or computed field has to bump it, and a suite
+that exercises only the parser cannot catch a failure to.
+
 ## The local store is a convenience copy, not the record
 
 Artifacts are cached locally under uniform encryption and decrypted only on request; the PKI
