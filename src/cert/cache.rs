@@ -251,6 +251,7 @@ impl CertificateCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cert::{CertificateColumn, CertificateParser};
     use chrono::Utc;
 
     fn scratch(name: &str) -> PathBuf {
@@ -317,6 +318,162 @@ mod tests {
 
         assert!(cache.load_cache("mount").unwrap().is_empty());
         assert!(!path.exists(), "stale file should be removed, not reused");
+    }
+
+    /// Every fixture, so a new one is covered without anyone remembering to
+    /// add it here.
+    fn fixtures() -> Vec<(String, CertificateMetadata)> {
+        let dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/src/cert/testdata"));
+        let mut parsed: Vec<_> = fs::read_dir(&dir)
+            .expect("testdata directory")
+            .map(|entry| entry.expect("directory entry").path())
+            .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("pem"))
+            .map(|path| {
+                let name = path.file_stem().unwrap().to_str().unwrap().to_string();
+                let pem = fs::read_to_string(&path).expect("fixture");
+                let metadata =
+                    CertificateParser::parse_pem(&pem, "test-mount").expect("fixture parses");
+                (name, metadata)
+            })
+            .collect();
+        parsed.sort_by(|a, b| a.0.cmp(&b.0));
+        assert!(!parsed.is_empty(), "no fixtures found");
+        parsed
+    }
+
+    /// The suite otherwise stops at the parser, and `cache.rs`'s own tests use
+    /// a hand-built struct, so nothing real ever went through the cache. A
+    /// computed column reading differently from a cached entry than from a
+    /// fresh parse would have shipped with a green suite.
+    #[test]
+    fn every_fixture_survives_the_cache_unchanged() {
+        use crate::utils::output::GetColumnValue;
+
+        let columns = [
+            CertificateColumn::Cn,
+            CertificateColumn::Serial,
+            CertificateColumn::NotBefore,
+            CertificateColumn::NotAfter,
+            CertificateColumn::Sans,
+            CertificateColumn::KeyUsage,
+            CertificateColumn::ExtendedKeyUsage,
+            CertificateColumn::Issuer,
+            CertificateColumn::PkiMount,
+            CertificateColumn::Revoked,
+            CertificateColumn::Expired,
+        ];
+
+        for (name, parsed) in fixtures() {
+            let cache = CertificateCache::with_dir(scratch(&format!("roundtrip-{name}"))).unwrap();
+            cache.bulk_update("mount", vec![parsed.clone()]).unwrap();
+
+            let cached = cache
+                .get_metadata("mount", &parsed.serial)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{name} did not come back out of the cache"));
+
+            assert_eq!(cached, parsed, "{name} changed across the cache");
+            for column in &columns {
+                assert_eq!(
+                    cached.get_column_value(column),
+                    parsed.get_column_value(column),
+                    "{name} renders {column:?} differently from the cache"
+                );
+            }
+        }
+    }
+
+    /// Pinned per fixture, not one hash over the set: a new fixture then adds
+    /// an entry instead of breaking every pin, and only a changed derivation
+    /// fails one. A single hash would fail on both and train reflexive
+    /// repinning, which is how a pin stops guarding anything.
+    ///
+    /// `cached_at` is normalised because it is wall-clock, not derived. A
+    /// column computed at render time from stored fields is deliberately not
+    /// covered: the new binary recomputes it from the cached raw values, so it
+    /// cannot go stale and needs no bump. Only what the cache stores can.
+    const FIXTURE_FINGERPRINTS: &[(&str, &str)] = &[
+        (
+            "ca-intermediate",
+            "60bccabc7c84e176ccdb57a204bdf010c397b551e5f04ffa132727a8f7091690",
+        ),
+        (
+            "ca-other-root",
+            "f51220a9dcbcab571d7f3fd94a9f7da0e97aa133813c0a3239aa281895635ee5",
+        ),
+        (
+            "ca-root",
+            "3b2c17f8aa72555f33e9031c8d04335d1b46b586c22e9b3c07a9579a0b11769e",
+        ),
+        (
+            "chain-no-root",
+            "125850594bd05e0c48b33a6353973d9248bb91e4390eefc0e13257509058a698",
+        ),
+        (
+            "chain-with-root",
+            "125850594bd05e0c48b33a6353973d9248bb91e4390eefc0e13257509058a698",
+        ),
+        (
+            "eku-client",
+            "99add85a3bf9a74387a3a18df25243363661e6d22eeb8258637c119e6cbc6655",
+        ),
+        (
+            "eku-client-server",
+            "547496fe9be8ace5be95de5aa3134440ad534c1689847fca70137eb417622a3e",
+        ),
+        (
+            "eku-none",
+            "6b9e65d87d50783da88be38ba25fb0a5adc205ba3bfe15118f1e319ea16fb561",
+        ),
+        (
+            "eku-server",
+            "1f7ac1a9f076912ee1888f5ad3a151bf123a0619259a8fe95dbd580466cfa609",
+        ),
+        (
+            "eku-unknown",
+            "9675da0e8dcc7402a654616ae899768b5cfa7e2477f0ff1e511241638264a061",
+        ),
+        (
+            "leaf-client",
+            "125850594bd05e0c48b33a6353973d9248bb91e4390eefc0e13257509058a698",
+        ),
+        (
+            "leaf-noeku",
+            "987959ecbbc677d278ef73969e557f4848464f6e963eb30aa0517aaa4fc3836a",
+        ),
+        (
+            "leaf-server",
+            "69c95abaa35df18cc7314bdaff1a21901053429bcd1b1f9fdf70bdcb0e6430b7",
+        ),
+    ];
+
+    fn fingerprint(metadata: &CertificateMetadata) -> String {
+        use sha2::{Digest, Sha256};
+        let mut normalised = metadata.clone();
+        normalised.cached_at = chrono::DateTime::from_timestamp(0, 0).unwrap();
+        let json = serde_json::to_string(&normalised).expect("metadata serializes");
+        hex::encode(Sha256::digest(json.as_bytes()))
+    }
+
+    #[test]
+    fn what_the_parser_derives_is_pinned_per_fixture() {
+        let pinned: HashMap<&str, &str> = FIXTURE_FINGERPRINTS.iter().copied().collect();
+
+        for (name, metadata) in fixtures() {
+            let actual = fingerprint(&metadata);
+            match pinned.get(name.as_str()) {
+                None => panic!(
+                    "fixture '{name}' has no pinned fingerprint; add (\"{name}\", \"{actual}\") \
+                     to FIXTURE_FINGERPRINTS"
+                ),
+                Some(expected) => assert_eq!(
+                    &actual, expected,
+                    "what the parser derives from '{name}' changed. If that is intended, bump \
+                     CACHE_SCHEMA_VERSION so already-cached mounts refetch, then repin this to \
+                     {actual}"
+                ),
+            }
+        }
     }
 
     /// The pre-versioning format was a bare map of serial to entry. Reading one
