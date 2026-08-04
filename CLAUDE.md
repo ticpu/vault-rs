@@ -37,7 +37,8 @@ changing issuance, verification or export behaviour.
 
 ## Security
 
-- System trust store via `rustls-tls-native-roots`.
+- System trust store via reqwest's `rustls` feature, which pulls in
+  `rustls-platform-verifier`. There is no separate native-roots feature to enable.
 - Tokens in `XDG_RUNTIME_DIR`, mode 0600.
 - Temporary files go under `VaultCliPaths::runtime_dir()`, mode 0600, removed after use.
 

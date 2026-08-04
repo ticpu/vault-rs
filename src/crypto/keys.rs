@@ -178,8 +178,7 @@ impl KeyManager {
 
     /// Create an AES-GCM cipher instance from a key
     pub fn create_cipher(&self, key: &[u8; 32]) -> Aes256Gcm {
-        let key = Key::<Aes256Gcm>::from_slice(key);
-        Aes256Gcm::new(key)
+        Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
     }
 
     /// Generate a random nonce for AES-GCM

@@ -1,11 +1,12 @@
 use crate::crypto::keys::KeyManager;
 use crate::utils::errors::{Result, VaultCliError};
-use aes_gcm::{
-    aead::{Aead, AeadCore, OsRng},
-    Aes256Gcm, Nonce,
-};
+use aes_gcm::{aead::Aead, Nonce};
 use std::fs;
 use std::path::Path;
+
+/// Stored artifacts are `nonce || ciphertext+tag`. Changing this would make
+/// every already-encrypted artifact in the local store unreadable.
+const NONCE_LEN: usize = 12;
 
 pub struct EncryptionManager {
     key_manager: KeyManager,
@@ -30,7 +31,7 @@ impl EncryptionManager {
         let context_key = self.key_manager.derive_key(&master_key, context);
         let cipher = self.key_manager.create_cipher(&context_key);
 
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let nonce = Nonce::from(self.key_manager.generate_nonce());
         let ciphertext = cipher
             .encrypt(&nonce, data)
             .map_err(|e| VaultCliError::Encryption(format!("Encryption failed: {e}")))?;
@@ -45,7 +46,7 @@ impl EncryptionManager {
 
     /// Decrypt data using context-specific derived key
     pub async fn decrypt_data(&self, encrypted_data: &[u8], context: &str) -> Result<Vec<u8>> {
-        if encrypted_data.len() < 12 {
+        if encrypted_data.len() < NONCE_LEN {
             return Err(VaultCliError::Encryption(
                 "Encrypted data too short".to_string(),
             ));
@@ -56,11 +57,12 @@ impl EncryptionManager {
         let cipher = self.key_manager.create_cipher(&context_key);
 
         // Extract nonce and ciphertext
-        let (nonce_bytes, ciphertext) = encrypted_data.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let (nonce_bytes, ciphertext) = encrypted_data.split_at(NONCE_LEN);
+        let nonce = Nonce::try_from(nonce_bytes)
+            .map_err(|e| VaultCliError::Encryption(format!("Invalid nonce: {e}")))?;
 
         let plaintext = cipher
-            .decrypt(nonce, ciphertext)
+            .decrypt(&nonce, ciphertext)
             .map_err(|e| VaultCliError::Encryption(format!("Decryption failed: {e}")))?;
 
         Ok(plaintext)
@@ -166,5 +168,41 @@ impl EncryptionManager {
     ) -> Result<T> {
         let encrypted_data = fs::read(&file_path)?;
         self.decrypt_yaml(&encrypted_data, context).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aes_gcm::{aead::Aead, Aes256Gcm, Key, KeyInit, Nonce};
+
+    /// Pins the stored ciphertext format against an independent AES-256-GCM
+    /// implementation. The local store holds artifacts encrypted by earlier
+    /// builds; a crate upgrade that changed nonce length, tag placement or
+    /// tag length would make them permanently unreadable, and a round-trip
+    /// test would not notice because it would break both directions together.
+    #[test]
+    fn stored_ciphertext_format_is_unchanged() {
+        let key: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let nonce: [u8; 12] = std::array::from_fn(|i| i as u8);
+        let expected =
+            "3163a377b1c8b068ad32e3e4c38c1c4df0b3e446950fbbae6a3bbcbfb3a2a4e3455b8c52c943";
+
+        let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(key));
+        let ciphertext = cipher
+            .encrypt(&Nonce::from(nonce), b"vault-rs stored secret".as_ref())
+            .expect("encryption");
+
+        assert_eq!(hex::encode(&ciphertext), expected);
+    }
+
+    /// The split point decryption uses must match what encryption prepends.
+    #[test]
+    fn nonce_length_matches_the_stored_prefix() {
+        let nonce = Nonce::from([0u8; super::NONCE_LEN]);
+        assert_eq!(super::NONCE_LEN, nonce.len());
+        // The cipher must accept a nonce of exactly that size.
+        Aes256Gcm::new(&Key::<Aes256Gcm>::from([0u8; 32]))
+            .encrypt(&nonce, b"x".as_ref())
+            .expect("nonce size accepted by the cipher");
     }
 }
