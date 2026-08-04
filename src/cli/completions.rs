@@ -89,10 +89,10 @@ _vault_rs_override() {{
     _init_completion || return
 
     case "${{words[*]}}" in
-        *"cert list"*|*"cert list-roles"*|*"cert create"*|*"cert sign"*|*"storage list"*)
+        *"cert list"*|*"cert list-roles"*|*"cert ca-info"*|*"cert create"*|*"cert sign"*|*"storage list"*)
             # Check if we're completing a PKI mount argument
             case "$prev" in
-                "list-roles")
+                "list-roles"|"ca-info")
                     _vault_rs_complete_pki_mounts
                     return 0
                     ;;

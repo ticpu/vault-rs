@@ -1,3 +1,4 @@
+pub mod ca_info;
 pub mod cache;
 pub mod create;
 pub mod export;
@@ -11,6 +12,7 @@ pub mod service;
 pub mod show;
 pub mod sign;
 
+pub use ca_info::show_ca_info;
 pub use cache::CertificateCache;
 pub use create::{create_certificate, CreateCertificateRequest};
 pub use export::{export_certificate, ExportCertificateRequest};

@@ -102,6 +102,20 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             output.print_key_value(&mount_data);
             Ok(())
         }
+        CertCommands::CaInfo {
+            pki_mount_pos,
+            pki_mount,
+        } => {
+            use crate::cert::show_ca_info;
+
+            let mount = pki_mount.or(pki_mount_pos).ok_or_else(|| {
+                VaultCliError::InvalidInput(
+                    "PKI mount required: pass it positionally or with -m/--pki-mount".to_string(),
+                )
+            })?;
+
+            show_ca_info(&client, &mount, output).await
+        }
         CertCommands::ListRoles { pki_mount } => {
             // List available roles in PKI mount - UNIX friendly output
             match client.list_roles(&pki_mount).await {

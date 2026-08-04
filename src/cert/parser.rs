@@ -104,8 +104,9 @@ impl CertificateParser {
     }
 
     /// Raw DER of the first extension with this OID, or None if the certificate
-    /// does not carry it.
-    fn extension<'a>(cert: &'a X509Certificate, oid: &oid::Oid) -> Option<&'a [u8]> {
+    /// does not carry it. `pub(crate)` so ca_info can look up SKI/AKI/AIA/CRL
+    /// without a parallel extension-lookup helper.
+    pub(crate) fn extension<'a>(cert: &'a X509Certificate, oid: &oid::Oid) -> Option<&'a [u8]> {
         cert.extensions()
             .iter()
             .find(|ext| &ext.oid == oid)
@@ -114,7 +115,10 @@ impl CertificateParser {
 
     /// A present-but-unparseable extension aborts rather than reading as absent:
     /// the two are indistinguishable downstream, and empty reads as "not set".
-    fn parse_extension<'a, T: FromDer<'a, X509Error>>(der: &'a [u8], name: &str) -> Result<T> {
+    pub(crate) fn parse_extension<'a, T: FromDer<'a, X509Error>>(
+        der: &'a [u8],
+        name: &str,
+    ) -> Result<T> {
         T::from_der(der)
             .map(|(_rem, parsed)| parsed)
             .map_err(|e| VaultCliError::CertParsing(format!("malformed {name} extension: {e}")))

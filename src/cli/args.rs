@@ -237,6 +237,16 @@ pub enum CertCommands {
         #[arg(value_hint = clap::ValueHint::Other)]
         pki_mount: String,
     },
+    /// Show CA certificate info for a PKI mount: subject, issuer, serial,
+    /// validity, Subject/Authority Key Identifier, AIA and CRL URLs
+    CaInfo {
+        /// PKI mount path
+        #[arg(value_name = "PKI_MOUNT", value_hint = clap::ValueHint::Other)]
+        pki_mount_pos: Option<String>,
+        /// PKI mount path
+        #[arg(long = "pki-mount", short = 'm', value_hint = clap::ValueHint::Other)]
+        pki_mount: Option<String>,
+    },
     /// Create new certificate
     Create {
         /// PKI mount
