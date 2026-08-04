@@ -240,8 +240,8 @@ pub enum CertCommands {
     /// Create new certificate
     Create {
         /// PKI mount
-        #[arg(value_hint = clap::ValueHint::Other)]
-        pki: String,
+        #[arg(long, short = 'm', value_hint = clap::ValueHint::Other)]
+        pki_mount: String,
         /// Common name
         cn: String,
         /// Certificate role (use 'vault-rs cert list-roles <pki>' to see available roles)
@@ -269,8 +269,8 @@ pub enum CertCommands {
     /// Sign certificate from CSR
     Sign {
         /// PKI mount
-        #[arg(value_hint = clap::ValueHint::Other)]
-        pki: String,
+        #[arg(long, short = 'm', value_hint = clap::ValueHint::Other)]
+        pki_mount: String,
         /// Common name
         cn: String,
         /// CSR file path
@@ -302,7 +302,7 @@ pub enum CertCommands {
         /// Certificate identifier (Common Name or serial number)
         identifier: String,
         /// PKI mount (for CN lookups, optional)
-        #[arg(long)]
+        #[arg(long, short = 'm')]
         pki_mount: Option<String>,
         /// Export format: pem, der, key, p12, chain, chain-with-root, or all
         #[arg(long, default_value = "pem")]
@@ -310,9 +310,6 @@ pub enum CertCommands {
         /// Output directory (default: stdout for PEM format)
         #[arg(long)]
         output: Option<String>,
-        /// Export decrypted files
-        #[arg(long)]
-        decrypt: bool,
         /// Skip passphrase prompt for P12 export (creates unprotected P12)
         #[arg(long)]
         no_passphrase: bool,
@@ -320,47 +317,37 @@ pub enum CertCommands {
         #[arg(long)]
         text: bool,
     },
-    /// Extract and store from Vault JSON response
-    Extract {
-        /// JSON file path
-        json_file: String,
-        /// Override common name for storage
-        #[arg(long)]
-        cn: Option<String>,
-        /// Specify PKI mount for organization
-        #[arg(long)]
-        pki_mount: Option<String>,
-    },
     /// Show certificate details by CN or serial
     Show {
         /// Certificate identifier (Common Name or serial number)
         identifier: String,
         /// PKI mount (for CN lookups, optional)
-        #[arg(long)]
+        #[arg(long, short = 'm')]
         pki_mount: Option<String>,
     },
     /// Export certificate by serial number
     ExportBySerial {
         /// Certificate serial number
         serial: String,
+        /// PKI mount to scope the search (optional)
+        #[arg(long, short = 'm')]
+        pki_mount: Option<String>,
         /// Export format: pem, der, key, p12, chain, chain-with-root, or all
         #[arg(long, default_value = "all")]
         format: ExportFormat,
         /// Output directory
         #[arg(long, default_value = ".")]
         output: String,
-    },
-    /// Find certificate by serial number
-    FindSerial {
-        /// Certificate serial number
-        serial: String,
+        /// Include OpenSSL-style text output before PEM data
+        #[arg(long)]
+        text: bool,
     },
     /// Revoke certificate in Vault
     Revoke {
         /// Certificate identifier (Common Name or serial number)
         identifier: String,
         /// PKI mount (for CN lookups, optional)
-        #[arg(long)]
+        #[arg(long, short = 'm')]
         pki_mount: Option<String>,
     },
 }

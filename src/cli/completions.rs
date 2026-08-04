@@ -31,12 +31,12 @@ _vault_rs_complete_pki_mounts() {{
 
 _vault_rs_complete_roles() {{
     local roles pki_mount
-    # Find the PKI mount from previous arguments
+    # Find the PKI mount: positional after "list-roles", or the value of -m/--pki-mount
     local i=0
     for word in "${{COMP_WORDS[@]}}"; do
-        if [[ $i -gt 0 && "${{COMP_WORDS[$((i-1))]}}" != "-"* ]]; then
+        if [[ $i -gt 0 ]]; then
             case "${{COMP_WORDS[$((i-1))]}}" in
-                "list-roles"|"create"|"sign")
+                "list-roles"|"-m"|"--pki-mount")
                     pki_mount="$word"
                     break
                     ;;
@@ -44,7 +44,7 @@ _vault_rs_complete_roles() {{
         fi
         ((i++))
     done
-    
+
     if [[ -n "$pki_mount" ]]; then
         roles=$({PROGRAM_NAME} completion-helper roles "$pki_mount" 2>/dev/null)
         COMPREPLY=($(compgen -W "$roles" -- "${{cur}}"))
@@ -92,7 +92,7 @@ _vault_rs_override() {{
         *"cert list"*|*"cert list-roles"*|*"cert create"*|*"cert sign"*|*"storage list"*)
             # Check if we're completing a PKI mount argument
             case "$prev" in
-                "list-roles"|"create"|"sign")
+                "list-roles")
                     _vault_rs_complete_pki_mounts
                     return 0
                     ;;

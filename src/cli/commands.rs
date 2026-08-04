@@ -120,7 +120,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             Ok(())
         }
         CertCommands::Create {
-            pki,
+            pki_mount,
             cn,
             role,
             crypto,
@@ -133,7 +133,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             use crate::cert::{create_certificate, CreateCertificateRequest};
 
             let request = CreateCertificateRequest {
-                pki: pki.clone(),
+                pki: pki_mount,
                 cn: cn.clone(),
                 role: role.clone(),
                 crypto,
@@ -148,7 +148,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             Ok(())
         }
         CertCommands::Sign {
-            pki,
+            pki_mount,
             cn,
             csr_file,
             role,
@@ -162,7 +162,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             use crate::cert::{sign_certificate_from_csr, CsrSignRequest};
 
             let request = CsrSignRequest {
-                pki,
+                pki: pki_mount,
                 cn,
                 csr_file,
                 role,
@@ -181,7 +181,6 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             pki_mount,
             format,
             output,
-            decrypt: _,
             no_passphrase,
             text,
         } => {
@@ -208,15 +207,6 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             }
             Ok(())
         }
-        CertCommands::Extract {
-            json_file,
-            cn: _,
-            pki_mount: _,
-        } => {
-            println!("Extract from JSON file: {json_file}");
-            // TODO: Implement extract
-            Ok(())
-        }
         CertCommands::Show {
             identifier,
             pki_mount,
@@ -229,14 +219,16 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         },
         CertCommands::ExportBySerial {
             serial,
+            pki_mount,
             format,
             output,
+            text,
         } => {
             // Use shared lookup function (serial is treated as identifier)
             use crate::cert::{
                 export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
             };
-            match find_certificate_by_identifier(&client, &serial, None).await {
+            match find_certificate_by_identifier(&client, &serial, pki_mount.as_deref()).await {
                 Ok((pem, _found_serial, mount)) => {
                     let request = ExportCertificateRequest {
                         pem_data: pem,
@@ -244,8 +236,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         identifier: serial.clone(),
                         format,
                         output_dir: Some(output),
-                        no_passphrase: false, // Extract command defaults to no passphrase
-                        text: false,          // ExportBySerial doesn't support --text flag
+                        no_passphrase: false, // export-by-serial has no --no-passphrase flag
+                        text,
                     };
                     export_certificate(&client, request).await?;
                 }
@@ -254,11 +246,6 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                     std::process::exit(1);
                 }
             }
-            Ok(())
-        }
-        CertCommands::FindSerial { serial } => {
-            println!("Find certificate by serial: {serial}");
-            // TODO: Implement find serial
             Ok(())
         }
         CertCommands::Revoke {
