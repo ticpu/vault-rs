@@ -1,7 +1,8 @@
+use crate::cert::metadata::COLUMN_NAMES;
 use crate::cert::{CertificateColumn, CertificateService};
 use crate::storage::local::LocalStorage;
 use crate::utils::build_table_data_with_headers;
-use crate::utils::errors::Result;
+use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use std::str::FromStr;
 
@@ -42,23 +43,27 @@ impl CertificateListingService {
     ) -> Result<()> {
         let certificates = storage.list_certificates().await?;
 
+        let expires_soon_days = expires_soon
+            .map(|days| {
+                days.parse::<u32>().map_err(|e| {
+                    VaultCliError::InvalidInput(format!("--expires-soon '{days}': {e}"))
+                })
+            })
+            .transpose()?;
+
         let filtered_certs: Vec<_> = certificates
             .into_iter()
             .filter(|cert| {
-                // Filter by PKI mount if specified
                 if let Some(ref pki_filter) = pki {
                     if cert.pki_mount != *pki_filter {
                         return false;
                     }
                 }
-                // Filter by expiration status
                 if expired && !cert.meta.is_expired() {
                     return false;
                 }
-                // Filter by expires soon
-                if let Some(days) = &expires_soon {
-                    let days_u32 = days.parse::<u32>().unwrap_or(30);
-                    if !cert.meta.expires_soon(days_u32) {
+                if let Some(days) = expires_soon_days {
+                    if !cert.meta.expires_soon(days) {
                         return false;
                     }
                 }
@@ -77,68 +82,117 @@ impl CertificateListingService {
         Ok(())
     }
 
-    /// Parse columns parameter with default logic
+    /// Parse the `--columns` value. A `+` on any entry means "add to the
+    /// defaults" rather than replace them, and is accepted anywhere in the
+    /// list; the result is deduplicated so appending a column that is already
+    /// a default does not print it twice.
     fn parse_columns(
         columns: Option<String>,
         single_mount: bool,
     ) -> Result<Vec<CertificateColumn>> {
-        // Set default columns based on whether listing all mounts or specific mount
-        let default_columns = if single_mount {
-            vec![
-                "cn",
-                "not_after",
-                "revoked",
-                "expired",
-                "extended_key_usage",
-            ]
-        } else {
-            vec![
-                "pki_mount",
-                "cn",
-                "not_after",
-                "revoked",
-                "expired",
-                "extended_key_usage",
-            ]
+        let mut defaults = vec![
+            "cn",
+            "not_after",
+            "revoked",
+            "expired",
+            "extended_key_usage",
+        ];
+        if !single_mount {
+            defaults.insert(0, "pki_mount");
+        }
+
+        let Some(spec) = columns else {
+            return Self::resolve(&defaults);
         };
 
-        // Parse columns with support for + prefix (append to defaults)
-        let column_names: Vec<String> = if let Some(columns_str) = columns {
-            if let Some(stripped) = columns_str.strip_prefix('+') {
-                // Append mode: start with defaults and add specified columns
-                let mut result_columns: Vec<String> =
-                    default_columns.into_iter().map(|s| s.to_string()).collect();
-                let additional_cols: Vec<String> = stripped
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                result_columns.extend(additional_cols);
-                result_columns
-            } else {
-                // Override mode: use only specified columns
-                columns_str
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            }
-        } else {
-            default_columns.into_iter().map(|s| s.to_string()).collect()
-        };
-
-        // Parse column enums
-        let parsed_columns: std::result::Result<Vec<CertificateColumn>, _> = column_names
-            .into_iter()
-            .map(|col| CertificateColumn::from_str(&col))
+        let requested: Vec<&str> = spec
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
             .collect();
 
-        match parsed_columns {
-            Ok(cols) => Ok(cols),
-            Err(e) => {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
+        let mut names = match requested.iter().any(|s| s.starts_with('+')) {
+            true => defaults,
+            false => Vec::new(),
+        };
+        names.extend(requested.iter().map(|s| s.trim_start_matches('+')));
+
+        Self::resolve(&names)
+    }
+
+    fn resolve(names: &[&str]) -> Result<Vec<CertificateColumn>> {
+        let mut columns = Vec::new();
+        for name in names {
+            let column = CertificateColumn::from_str(name).map_err(|e| {
+                VaultCliError::InvalidInput(format!("{e}. Known columns: {COLUMN_NAMES}"))
+            })?;
+            if !columns.contains(&column) {
+                columns.push(column);
             }
         }
+
+        Ok(columns)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use CertificateColumn as C;
+
+    fn parse(spec: &str) -> Result<Vec<CertificateColumn>> {
+        CertificateListingService::parse_columns(Some(spec.to_string()), true)
+    }
+
+    #[test]
+    fn defaults_apply_when_unspecified() {
+        let columns = CertificateListingService::parse_columns(None, true).unwrap();
+        assert_eq!(
+            columns,
+            [
+                C::Cn,
+                C::NotAfter,
+                C::Revoked,
+                C::Expired,
+                C::ExtendedKeyUsage
+            ]
+        );
+        assert_eq!(
+            CertificateListingService::parse_columns(None, false).unwrap()[0],
+            C::PkiMount
+        );
+    }
+
+    #[test]
+    fn without_plus_the_list_replaces_the_defaults() {
+        assert_eq!(parse("cn,serial").unwrap(), [C::Cn, C::Serial]);
+    }
+
+    /// `+` used to be recognised only as a prefix on the whole string, so this
+    /// reported `Invalid column: +issuer`.
+    #[test]
+    fn plus_is_accepted_anywhere_in_the_list() {
+        let columns = parse("cn,+issuer").unwrap();
+        assert!(columns.contains(&C::Issuer));
+        assert!(columns.contains(&C::NotAfter), "defaults kept");
+    }
+
+    /// Appending a column already in the defaults printed it twice.
+    #[test]
+    fn appending_a_default_does_not_duplicate_it() {
+        let columns = parse("+extended_key_usage").unwrap();
+        let count = columns
+            .iter()
+            .filter(|c| **c == C::ExtendedKeyUsage)
+            .count();
+        assert_eq!(count, 1);
+    }
+
+    /// Previously this called process::exit, so it could not be tested at all.
+    #[test]
+    fn an_unknown_column_is_an_error_not_an_exit() {
+        let err = parse("cn,nope").unwrap_err().to_string();
+        assert!(err.contains("nope"), "{err}");
+        assert!(err.contains("Known columns"), "{err}");
     }
 }

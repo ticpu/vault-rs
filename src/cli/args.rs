@@ -225,7 +225,7 @@ pub enum CertCommands {
         /// PKI mount path (lists all mounts if not provided)
         #[arg(long, short = 'm', value_hint = clap::ValueHint::Other)]
         pki_mount: Option<String>,
-        /// Columns to display (comma-separated): cn,serial,not_before,not_after,sans,key_usage,extended_key_usage,issuer,pki_mount. Use +column to append to defaults.
+        /// Columns to display (comma-separated): cn, serial, not_before, not_after, sans, key_usage, extended_key_usage, issuer, pki_mount, revoked, expired. Prefix any with + to add it to the defaults instead of replacing them.
         #[arg(long)]
         columns: Option<String>,
     },
@@ -378,7 +378,7 @@ pub enum StorageCommands {
         /// Show certificates expiring soon
         #[arg(long)]
         expires_soon: Option<String>,
-        /// Columns to display (comma-separated): cn,serial,not_before,not_after,sans,key_usage,extended_key_usage,issuer,pki_mount. Use +column to append to defaults.
+        /// Columns to display (comma-separated): cn, serial, not_before, not_after, sans, key_usage, extended_key_usage, issuer, pki_mount, revoked, expired. Prefix any with + to add it to the defaults instead of replacing them.
         #[arg(long)]
         columns: Option<String>,
     },

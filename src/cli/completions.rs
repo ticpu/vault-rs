@@ -165,6 +165,8 @@ pub async fn handle_completion_helper_command(
                 "mount",
                 "revoked",
                 "r",
+                "expired",
+                "e",
             ];
             output.print_list(&columns);
         }

@@ -20,7 +20,7 @@ pub struct CertificateMetadata {
     pub revocation_time: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CertificateColumn {
     Cn,
     Serial,
@@ -34,6 +34,11 @@ pub enum CertificateColumn {
     Revoked,
     Expired,
 }
+
+/// Canonical column names, for help text and parse errors. Kept beside the
+/// `FromStr` arms below so the two cannot drift.
+pub const COLUMN_NAMES: &str = "cn, serial, not_before, not_after, sans, key_usage, \
+     extended_key_usage, issuer, pki_mount, revoked, expired";
 
 impl FromStr for CertificateColumn {
     type Err = String;
