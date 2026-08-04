@@ -270,9 +270,11 @@ mod tests {
 
     fn csr_with_cn(cn: &str) -> CsrInfo {
         CsrInfo {
+            subject: format!("CN={cn}"),
             subject_cn: Some(cn.to_string()),
             sans: vec![format!("DNS:{cn}.example.test")],
             key_description: "EC prime256v1".to_string(),
+            requested_extensions: vec!["subjectAltName".to_string()],
         }
     }
 

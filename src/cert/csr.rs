@@ -7,9 +7,13 @@ use crate::utils::errors::{Result, VaultCliError};
 use x509_parser::prelude::*;
 
 pub struct CsrInfo {
+    pub subject: String,
     pub subject_cn: Option<String>,
     pub sans: Vec<String>,
     pub key_description: String,
+    /// Names of every extension the CSR asked for (via its extensionRequest
+    /// attribute), independent of whether a role would honor any of them.
+    pub requested_extensions: Vec<String>,
 }
 
 pub fn parse_csr_pem(pem_data: &str) -> Result<CsrInfo> {
@@ -42,11 +46,39 @@ pub fn parse_csr_pem(pem_data: &str) -> Result<CsrInfo> {
         })
         .unwrap_or_default();
 
+    let requested_extensions = csr
+        .requested_extensions()
+        .into_iter()
+        .flatten()
+        .map(extension_name)
+        .collect();
+
     let key_description = CertificateParser::describe_public_key(&info.subject_pki);
 
     Ok(CsrInfo {
+        subject: info.subject.to_string(),
         subject_cn,
         sans,
         key_description,
+        requested_extensions,
     })
+}
+
+/// A short name for a requested extension. Only the ones a signing decision
+/// commonly turns on are spelled out; anything else falls back to its OID (for
+/// `UnsupportedExtension`) or its variant name (everything x509-parser does
+/// recognise but this tool has no opinion on).
+fn extension_name(ext: &ParsedExtension) -> String {
+    match ext {
+        ParsedExtension::SubjectAlternativeName(_) => "subjectAltName".to_string(),
+        ParsedExtension::KeyUsage(_) => "keyUsage".to_string(),
+        ParsedExtension::ExtendedKeyUsage(_) => "extendedKeyUsage".to_string(),
+        ParsedExtension::BasicConstraints(_) => "basicConstraints".to_string(),
+        ParsedExtension::UnsupportedExtension { oid } => oid.to_string(),
+        other => format!("{other:?}")
+            .split(['(', ' '])
+            .next()
+            .unwrap_or("extension")
+            .to_string(),
+    }
 }

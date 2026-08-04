@@ -260,6 +260,21 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
 
             sign_certificate_from_csr(&client, request).await
         }
+        CertCommands::InspectCsr {
+            file,
+            pki_mount,
+            role,
+        } => {
+            use crate::cert::{inspect_csr, InspectCsrRequest};
+
+            let request = InspectCsrRequest {
+                csr_file: file,
+                pki_mount,
+                role,
+            };
+
+            inspect_csr(Some(&client), request).await
+        }
         CertCommands::Export {
             identifier,
             pki_mount,

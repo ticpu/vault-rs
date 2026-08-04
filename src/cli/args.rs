@@ -362,6 +362,20 @@ pub enum CertCommands {
         #[arg(long)]
         yes: bool,
     },
+    /// Inspect a CSR: subject, key type, SANs and requested extensions. With
+    /// -m/--pki-mount and --role, also show what the role would keep,
+    /// override or drop when signing it
+    InspectCsr {
+        /// CSR file path
+        #[arg(value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+        file: String,
+        /// PKI mount to check the role against (requires --role)
+        #[arg(long = "pki-mount", short = 'm', requires = "role", value_hint = clap::ValueHint::Other)]
+        pki_mount: Option<String>,
+        /// Role to check the CSR against (requires -m/--pki-mount)
+        #[arg(long, requires = "pki_mount")]
+        role: Option<String>,
+    },
     /// Export certificate by CN or serial
     Export {
         /// Certificate identifier (Common Name or serial number)
