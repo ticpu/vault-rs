@@ -1,6 +1,7 @@
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::get_vault_addr;
 use crate::vault::mounts::MountsResponse;
+use crate::vault::pki::RoleConfig;
 use reqwest::{Client, Response};
 use serde_json::{json, Value};
 
@@ -162,6 +163,26 @@ impl VaultClient {
         }
     }
 
+    /// Get the (single) CA certificate for a PKI mount (returns raw PEM data)
+    pub async fn get_ca_certificate(&self, pki_mount: &str) -> Result<String> {
+        let url = format!("{}/v1/{}/cert/ca", self.vault_addr, pki_mount);
+        let response = self
+            .client
+            .get(&url)
+            .header("X-Vault-Token", &self.token)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let pem_data = response.text().await?;
+            Ok(pem_data)
+        } else {
+            Err(VaultCliError::VaultApi(
+                response.error_for_status().unwrap_err(),
+            ))
+        }
+    }
+
     /// List roles for a PKI mount
     pub async fn list_roles(&self, pki_mount: &str) -> Result<Vec<String>> {
         let url = format!("{}/v1/{}/roles", self.vault_addr, pki_mount);
@@ -175,6 +196,16 @@ impl VaultClient {
         let response = self.handle_response(response).await?;
 
         Ok(super::extract_keys_array(&response))
+    }
+
+    /// Read a role's configuration for a PKI mount
+    pub async fn read_role(&self, mount: &str, role: &str) -> Result<RoleConfig> {
+        let path = format!("{mount}/roles/{role}");
+        let response = self.get(&path).await?;
+
+        let data = response.get("data").cloned().unwrap_or(Value::Null);
+        serde_json::from_value(data)
+            .map_err(|e| VaultCliError::Storage(format!("Failed to parse role response: {e}")))
     }
 
     /// Get PKI mount issuer configuration to determine crypto type

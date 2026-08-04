@@ -127,16 +127,18 @@ pub async fn resolve_crypto_type(
     }
 }
 
-/// Validate that a role exists for the given PKI mount and show helpful warnings
+/// Validate that a role exists for the given PKI mount, failing before any
+/// write. Revocation is the only undo for a bad issuance, so a bad --role
+/// must not reach the CA as a write.
 pub async fn validate_role_exists(client: &VaultClient, pki_mount: &str, role: &str) -> Result<()> {
-    if let Ok(available_roles) = client.list_roles(pki_mount).await {
-        if !available_roles.is_empty() && !available_roles.contains(&role.to_string()) {
-            eprintln!("Warning: Role '{role}' not found in available roles for PKI '{pki_mount}'");
-            eprintln!("Available roles: {}", available_roles.join(", "));
-            eprintln!("Continuing anyway - Vault will return an error if role is invalid.");
-        }
+    let available_roles = client.list_roles(pki_mount).await?;
+    if available_roles.contains(&role.to_string()) {
+        return Ok(());
     }
-    Ok(())
+    Err(VaultCliError::InvalidInput(format!(
+        "role '{role}' not found on mount '{pki_mount}'; available roles: [{}]",
+        available_roles.join(", ")
+    )))
 }
 
 /// Parse comma-separated strings into vectors, trimming whitespace

@@ -245,7 +245,7 @@ pub enum CertCommands {
         /// Common name
         cn: String,
         /// Certificate role (use 'vault-rs cert list-roles <pki>' to see available roles)
-        #[arg(long, default_value = "default")]
+        #[arg(long)]
         role: String,
         /// Cryptographic algorithm (auto-detected from PKI mount if not specified)
         #[arg(long)]
@@ -276,7 +276,7 @@ pub enum CertCommands {
         /// CSR file path
         csr_file: String,
         /// Certificate role (use 'vault-rs cert list-roles <pki>' to see available roles)
-        #[arg(long, default_value = "default")]
+        #[arg(long)]
         role: String,
         /// Cryptographic algorithm (auto-detected from PKI mount if not specified)
         #[arg(long)]
