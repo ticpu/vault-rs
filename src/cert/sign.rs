@@ -190,6 +190,14 @@ pub async fn sign_certificate_from_csr(
 
         eprintln!("✓ Certificate files exported to: {export_dir}");
         eprintln!("Note: Private key not exported (CSR signing - key remains with requester)");
+
+        if ca_chain_no_root.certificates().len() < ca_chain_with_root.certificates().len() {
+            crate::cert::report::print_handoff_note(
+                &format!("{}.crt", request.cn),
+                &format!("{}.crt", request.pki),
+                &format!("{}_chain-with-root.crt", request.pki),
+            );
+        }
     }
 
     Ok(())

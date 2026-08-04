@@ -184,6 +184,14 @@ pub async fn create_certificate(
         crate::utils::create_p12_file(&p12_file, private_key, certificate, issuing_ca, true)?;
 
         eprintln!("✓ Plain files exported to: {export_dir}");
+
+        if ca_chain_no_root.certificates().len() < ca_chain_with_root.certificates().len() {
+            crate::cert::report::print_handoff_note(
+                &format!("{}.crt", request.cn),
+                &format!("{}.crt", request.pki),
+                &format!("{}_chain-with-root.crt", request.pki),
+            );
+        }
     }
 
     Ok(())

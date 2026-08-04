@@ -170,6 +170,21 @@ pub fn describe_certificate(pem: &str) -> Result<Vec<IdentityField>> {
     ])
 }
 
+/// After `--export-plain` writes a chain containing the internal root, name
+/// which file is safe to hand a peer and which is not (see
+/// docs/design-rationale.md, "Chain artifacts separate internal configuration
+/// from external handoff").
+pub fn print_handoff_note(
+    leaf_filename: &str,
+    issuer_filename: &str,
+    chain_with_root_filename: &str,
+) {
+    eprintln!(
+        "Send: {leaf_filename} (leaf). Add {issuer_filename} if the peer cannot find the issuer."
+    );
+    eprintln!("Do not send {chain_with_root_filename} externally - it contains the internal root.");
+}
+
 fn format_time(timestamp: i64) -> String {
     DateTime::<Utc>::from_timestamp(timestamp, 0)
         .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())

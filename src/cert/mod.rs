@@ -25,7 +25,7 @@ pub use lookup::find_certificate_by_identifier;
 pub use metadata::{CertificateColumn, CertificateMetadata};
 pub use parser::CertificateParser;
 pub use plan::{build_plan, PlanInput};
-pub use report::{print_identity_fields, IdentityField};
+pub use report::{print_handoff_note, print_identity_fields, IdentityField};
 pub use revoke::{revoke_certificate, RevokeRequest};
 pub use serial::SerialNumber;
 pub use service::CertificateService;
