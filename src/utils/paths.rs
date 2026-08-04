@@ -96,7 +96,11 @@ impl VaultCliPaths {
     /// left behind by an earlier version, or created by someone else first,
     /// is exactly the case the 0600 file mode does not cover.
     pub fn ensure_dir_exists(path: &PathBuf) -> Result<()> {
-        if !path.exists() {
+        // `create_dir_all` applies the umask, so a directory we just made is
+        // usually 0755 and tightening it is routine, not worth reporting.
+        // Finding a pre-existing one too open is the case worth a warning.
+        let existed = path.exists();
+        if !existed {
             fs::create_dir_all(path)?;
         }
 
@@ -106,7 +110,11 @@ impl VaultCliPaths {
             let mut perms = fs::metadata(path)?.permissions();
             let mode = perms.mode() & 0o777;
             if mode & 0o077 != 0 {
-                tracing::warn!("Tightening {} from mode {mode:04o} to 0700", path.display());
+                if existed {
+                    tracing::warn!("Tightening {} from mode {mode:04o} to 0700", path.display());
+                } else {
+                    tracing::debug!("Created {} as 0700", path.display());
+                }
                 perms.set_mode(0o700);
                 fs::set_permissions(path, perms)?;
             }
