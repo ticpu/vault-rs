@@ -100,6 +100,15 @@ fn eku_matches(cert_ekus: &[String], filter: &str) -> bool {
     cert_ekus.iter().any(|usage| usage.to_lowercase() == target)
 }
 
+/// Which command is asking for columns. `Role` is only ever populated by
+/// local storage (see `CertListFilter`'s doc comment), so `cert list` must
+/// reject it rather than silently print a blank column.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ListingCommand {
+    CertList,
+    StorageList,
+}
+
 /// Unified certificate listing service that handles both CertCommands::List and StorageCommands::List
 pub struct CertificateListingService;
 
@@ -166,7 +175,8 @@ impl CertificateListingService {
             return Ok(false);
         }
 
-        let parsed_columns = Self::parse_columns(columns, pki_mount.is_some())?;
+        let parsed_columns =
+            Self::parse_columns(columns, pki_mount.is_some(), ListingCommand::CertList)?;
         let (headers, table_data) = build_table_data_with_headers(&filtered, &parsed_columns);
 
         output.print_table_with_headers(&headers, &table_data);
@@ -235,7 +245,8 @@ impl CertificateListingService {
             return Ok(());
         }
 
-        let parsed_columns = Self::parse_columns(columns, pki.is_some())?;
+        let parsed_columns =
+            Self::parse_columns(columns, pki.is_some(), ListingCommand::StorageList)?;
         let (headers, table_data) = build_table_data_with_headers(&filtered_certs, &parsed_columns);
 
         output.print_table_with_headers(&headers, &table_data);
@@ -249,6 +260,7 @@ impl CertificateListingService {
     fn parse_columns(
         columns: Option<String>,
         single_mount: bool,
+        command: ListingCommand,
     ) -> Result<Vec<CertificateColumn>> {
         let mut defaults = vec![
             "cn",
@@ -262,7 +274,7 @@ impl CertificateListingService {
         }
 
         let Some(spec) = columns else {
-            return Self::resolve(&defaults);
+            return Self::resolve(&defaults, command);
         };
 
         let requested: Vec<&str> = spec
@@ -277,15 +289,23 @@ impl CertificateListingService {
         };
         names.extend(requested.iter().map(|s| s.trim_start_matches('+')));
 
-        Self::resolve(&names)
+        Self::resolve(&names, command)
     }
 
-    fn resolve(names: &[&str]) -> Result<Vec<CertificateColumn>> {
+    fn resolve(names: &[&str], command: ListingCommand) -> Result<Vec<CertificateColumn>> {
         let mut columns = Vec::new();
         for name in names {
             let column = CertificateColumn::from_str(name).map_err(|e| {
                 VaultCliError::InvalidInput(format!("{e}. Known columns: {COLUMN_NAMES}"))
             })?;
+            if column == CertificateColumn::Role && command == ListingCommand::CertList {
+                return Err(VaultCliError::InvalidInput(
+                    "column 'role' is not available for cert list: Vault's certificate store \
+                     records no issuing role, it is only recorded for certificates this tool \
+                     stored locally (storage list --columns role has it)"
+                        .to_string(),
+                ));
+            }
             if !columns.contains(&column) {
                 columns.push(column);
             }
@@ -302,12 +322,17 @@ mod tests {
     use CertificateColumn as C;
 
     fn parse(spec: &str) -> Result<Vec<CertificateColumn>> {
-        CertificateListingService::parse_columns(Some(spec.to_string()), true)
+        CertificateListingService::parse_columns(
+            Some(spec.to_string()),
+            true,
+            ListingCommand::CertList,
+        )
     }
 
     #[test]
     fn defaults_apply_when_unspecified() {
-        let columns = CertificateListingService::parse_columns(None, true).unwrap();
+        let columns =
+            CertificateListingService::parse_columns(None, true, ListingCommand::CertList).unwrap();
         assert_eq!(
             columns,
             [
@@ -319,9 +344,31 @@ mod tests {
             ]
         );
         assert_eq!(
-            CertificateListingService::parse_columns(None, false).unwrap()[0],
+            CertificateListingService::parse_columns(None, false, ListingCommand::CertList)
+                .unwrap()[0],
             C::PkiMount
         );
+    }
+
+    /// `cert list` reads straight from Vault's certificate store, which has
+    /// no role field: accepting the column would silently print blanks.
+    #[test]
+    fn cert_list_rejects_role_column() {
+        let err = parse("cn,role").unwrap_err().to_string();
+        assert!(err.contains("role"), "{err}");
+        assert!(err.contains("cert list"), "{err}");
+    }
+
+    /// `storage list` records the issuing role locally, so it may request it.
+    #[test]
+    fn storage_list_accepts_role_column() {
+        let columns = CertificateListingService::parse_columns(
+            Some("cn,role".to_string()),
+            true,
+            ListingCommand::StorageList,
+        )
+        .unwrap();
+        assert!(columns.contains(&C::Role));
     }
 
     #[test]
