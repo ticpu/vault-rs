@@ -95,6 +95,15 @@ impl CertificateColumn {
     }
 }
 
+/// Boolean columns render as a mark or an empty cell. Empty, not a space:
+/// `--raw` splits on tabs, and a space is a value.
+fn flag(set: bool) -> String {
+    match set {
+        true => "✗".to_string(),
+        false => String::new(),
+    }
+}
+
 impl GetColumnValue for CertificateMetadata {
     fn get_column_value(&self, column: &CertificateColumn) -> String {
         match column {
@@ -111,26 +120,8 @@ impl GetColumnValue for CertificateMetadata {
             }
             CertificateColumn::Issuer => self.issuer.clone(),
             CertificateColumn::PkiMount => self.pki_mount.clone(),
-            CertificateColumn::Revoked => {
-                if let Some(revoke_time) = self.revocation_time {
-                    // Only show as revoked if revocation time is actually set (> 0)
-                    // Vault returns 0 for non-revoked certificates
-                    if revoke_time.timestamp() > 0 {
-                        "✗".to_string()
-                    } else {
-                        " ".to_string()
-                    }
-                } else {
-                    " ".to_string()
-                }
-            }
-            CertificateColumn::Expired => {
-                if self.is_expired() {
-                    "✗".to_string()
-                } else {
-                    " ".to_string()
-                }
-            }
+            CertificateColumn::Revoked => flag(self.is_revoked()),
+            CertificateColumn::Expired => flag(self.is_expired()),
         }
     }
 }
@@ -169,6 +160,13 @@ impl CertificateMetadata {
 
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.not_after
+    }
+
+    /// Vault reports a revocation time of 0 for certificates that were never
+    /// revoked, so the field being present is not the answer.
+    pub fn is_revoked(&self) -> bool {
+        self.revocation_time
+            .is_some_and(|time| time.timestamp() > 0)
     }
 
     pub fn expires_soon(&self, days: u32) -> bool {

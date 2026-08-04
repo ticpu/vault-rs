@@ -155,9 +155,11 @@ impl OutputFormat {
         let num_cols = data[0].len();
         let mut col_widths = vec![0; num_cols];
 
+        // Counted in characters, because the padding below is: a multi-byte
+        // cell measured in bytes reserves more columns than it occupies.
         for row in data {
             for (i, cell) in row.iter().enumerate() {
-                col_widths[i] = col_widths[i].max(cell.as_ref().len());
+                col_widths[i] = col_widths[i].max(cell.as_ref().chars().count());
             }
         }
 
