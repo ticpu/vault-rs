@@ -16,6 +16,15 @@ inferred value prints identically to a measured one, so a wrong guess presents a
 derived from key-usage bits and the presence of an alternative name labels every certificate on a
 client-authentication mount as its opposite. An inference worth keeping is marked as one.
 
+## An incomplete answer is refused, not annotated
+
+A command that could not read every record it was asked about fails outright: the exit code is the
+whole interface a script has, and one that must also mean "answered, partially" cannot be acted on
+without parsing prose meant for a person. Seeing the partial result is an escape hatch taken
+explicitly at the call site, and its cost is documented on the flag rather than encoded in a new exit
+code — a caller who did not ask for it never finds an exit code meaning something new, and one who
+did has been told the status is not authoritative for that run.
+
 ## The issuing role, not the invocation, defines the issued identity
 
 Subject, alternative names and validity come from the role for request signing, and arguments
@@ -47,6 +56,15 @@ Records stay machine-parseable; status and diagnostics on the secondary stream a
 person. Holding status to the same terseness buys nothing — nothing parses it — and leaves
 operators guessing at what happened.
 
+## Every exit site prints the source chain
+
+Handlers carrying their own exit code end the process where they are rather than returning to `main`,
+so a chain printed only at the top is not printed at all for them. Whatever drops the sources renders
+a refused connection, an expired server certificate and a name that does not resolve as one
+indistinguishable line, leaving the operator knowing a request failed and nothing about what to
+change. Errors stay typed with their causes attached on the way up; adding context is the binary's
+job, and so is printing every layer of it wherever the process actually ends.
+
 ## Chain artifacts separate internal configuration from external handoff
 
 Bundles meant for an external party exclude the self-signed root, and the artifact that includes it
@@ -64,6 +82,24 @@ discarding the file when it differs, makes such a change self-invalidating rathe
 someone being told to clear it — a timestamp cannot express that an entry was produced by code that
 got the answer wrong. Anything that alters a parsed or computed field has to bump it, and a suite
 that exercises only the parser cannot catch a failure to.
+
+## A private persistent directory over a shared volatile one
+
+When the session offers no runtime directory, the token goes to a directory only this user can reach,
+accepting two costs: it outlives the session, and on a networked home it reaches shared storage. The
+alternative is a predictable name under a world-writable parent, where a second user creates the
+directory first and the file mode the tool sets protects nothing — worse on both counts and
+unprotectable from inside the process. Because nothing expires the file, logout must unlink it and a
+token found expired must be unlinked rather than left, and no third fallback gets invented when
+neither directory is available.
+
+## An unreferenced `pub` item is dead, not surface
+
+The lib target exists so tests and the binary can share code, not because anything outside this
+repository links against it; no consumer can be named for an item nothing here calls. A `pub` with no
+caller is therefore dead until someone names the consumer, and a static analyzer flagging one is
+reporting a fact rather than guessing. Treating it as surface preserves whichever forked, unfixed copy
+of a code path happened to be marked `pub`.
 
 ## The local store is a convenience copy, not the record
 
