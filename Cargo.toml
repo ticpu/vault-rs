@@ -37,6 +37,7 @@ rand = "0.10"
 sha2 = "0.11"
 
 # System integration
+libc = "0.2"
 dirs = "6"
 rpassword = "7"
 which = "8"

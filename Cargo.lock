@@ -2488,6 +2488,7 @@ dependencies = [
  "hex",
  "hickory-resolver",
  "humantime",
+ "libc",
  "ordermap",
  "rand",
  "reqwest",
