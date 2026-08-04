@@ -72,8 +72,6 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
 }
 
 async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Result<()> {
-    let client = VaultClient::new().await;
-
     match command {
         CertCommands::List {
             pki_mount,
@@ -120,6 +118,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             }
         }
         CertCommands::ListMounts => {
+            let client = VaultClient::new().await?;
+
             // List all PKI mounts with crypto types - UNIX friendly output
             let pki_mounts = client.list_pki_mounts().await?;
 
@@ -147,6 +147,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 )
             })?;
 
+            let client = VaultClient::new().await?;
             show_ca_info(&client, &mount, output).await
         }
         CertCommands::Verify {
@@ -157,6 +158,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             use crate::cert::{verify_certificate, Purpose, VerifyRequest};
 
+            let client = VaultClient::new().await?;
             let request = VerifyRequest {
                 certificate_file,
                 against_ca,
@@ -179,6 +181,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             }
         }
         CertCommands::ListRoles { pki_mount } => {
+            let client = VaultClient::new().await?;
+
             // List available roles in PKI mount - UNIX friendly output
             match client.list_roles(&pki_mount).await {
                 Ok(roles) => {
@@ -210,6 +214,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             use crate::cert::{create_certificate, CreateCertificateRequest};
 
+            let client = VaultClient::new().await?;
             let request = CreateCertificateRequest {
                 pki: pki_mount,
                 cn: cn.clone(),
@@ -243,6 +248,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             use crate::cert::{sign_certificate_from_csr, CsrSignRequest};
 
+            let client = VaultClient::new().await?;
             let request = CsrSignRequest {
                 pki: pki_mount,
                 cn,
@@ -267,13 +273,20 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             use crate::cert::{inspect_csr, InspectCsrRequest};
 
+            // clap requires -m/--pki-mount and --role together, so a client
+            // is only ever needed when both are present.
+            let client = if pki_mount.is_some() {
+                Some(VaultClient::new().await?)
+            } else {
+                None
+            };
             let request = InspectCsrRequest {
                 csr_file: file,
                 pki_mount,
                 role,
             };
 
-            inspect_csr(Some(&client), request).await
+            inspect_csr(client.as_ref(), request).await
         }
         CertCommands::Export {
             identifier,
@@ -286,6 +299,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             use crate::cert::{
                 export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
             };
+            let client = VaultClient::new().await?;
             match find_certificate_by_identifier(&client, &identifier, pki_mount.as_deref()).await {
                 Ok((pem, _serial, mount)) => {
                     let request = ExportCertificateRequest {
@@ -309,13 +323,16 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         CertCommands::Show {
             identifier,
             pki_mount,
-        } => match show_certificate(&client, &identifier, pki_mount.as_deref(), output).await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
+        } => {
+            let client = VaultClient::new().await?;
+            match show_certificate(&client, &identifier, pki_mount.as_deref(), output).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
             }
-        },
+        }
         CertCommands::ExportBySerial {
             serial,
             pki_mount,
@@ -327,6 +344,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             use crate::cert::{
                 export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
             };
+            let client = VaultClient::new().await?;
             match find_certificate_by_identifier(&client, &serial, pki_mount.as_deref()).await {
                 Ok((pem, _found_serial, mount)) => {
                     let request = ExportCertificateRequest {
@@ -354,6 +372,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             use crate::cert::{revoke_certificate, RevokeRequest};
 
+            let client = VaultClient::new().await?;
             let request = RevokeRequest {
                 identifier: identifier.clone(),
                 pki_mount: pki_mount.clone(),
@@ -367,7 +386,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
 }
 
 async fn handle_storage_command(command: StorageCommands, output: &OutputFormat) -> Result<()> {
-    let storage = LocalStorage::new().await;
+    let storage = LocalStorage::new().await?;
 
     match command {
         StorageCommands::List {

@@ -21,10 +21,10 @@ pub struct LocalStorage {
 }
 
 impl LocalStorage {
-    pub async fn new() -> Self {
-        Self {
-            encryption_manager: EncryptionManager::new().await,
-        }
+    pub async fn new() -> Result<Self> {
+        Ok(Self {
+            encryption_manager: EncryptionManager::new().await?,
+        })
     }
 
     pub fn with_client(client: crate::vault::client::VaultClient) -> Self {

@@ -113,10 +113,19 @@ async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) ->
     fs::create_dir_all(dir)?;
 
     let bundle = PemCertificateBundle::new(private_key, certificate, ca_chain);
+    let private_key_pem = bundle
+        .private_key()
+        .ok_or_else(|| {
+            VaultCliError::InvalidInput(format!(
+                "P12 export requires private key. Certificate '{}' not found in local storage.",
+                request.identifier
+            ))
+        })?
+        .pem_data();
 
     match crate::utils::create_p12_file(
         &p12_path,
-        bundle.private_key().unwrap().pem_data(),
+        private_key_pem,
         bundle.certificate().pem_data(),
         &bundle.ca_chain().pem_data(),
         request.no_passphrase,

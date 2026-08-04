@@ -11,6 +11,13 @@ const OID_ECDSA_WITH_SHA256: &str = "1.2.840.10045.4.3.2";
 const OID_ECDSA_WITH_SHA384: &str = "1.2.840.10045.4.3.3";
 const OID_ECDSA_WITH_SHA512: &str = "1.2.840.10045.4.3.4";
 
+/// Vault's non-standard `LIST` verb, shared by every LIST-style request
+/// rather than unwrapped inline at each call site.
+fn list_method() -> Result<reqwest::Method> {
+    reqwest::Method::from_bytes(b"LIST")
+        .map_err(|e| VaultCliError::Storage(format!("invalid HTTP method: {e}")))
+}
+
 pub struct SignCertificateRequest<'a> {
     pub pki_mount: &'a str,
     pub role: &'a str,
@@ -38,18 +45,18 @@ pub struct VaultClient {
 }
 
 impl VaultClient {
-    pub async fn new() -> Self {
-        let client = super::create_http_client().expect("Failed to create HTTP client");
-        let vault_addr = get_vault_addr().await.expect("Failed to get vault address");
+    pub async fn new() -> Result<Self> {
+        let client = super::create_http_client()?;
+        let vault_addr = get_vault_addr().await?;
         let auth = crate::vault::auth::VaultAuth::new(vault_addr.clone());
-        let token = auth.get_token().await.expect("Failed to get a valid token");
+        let token = auth.get_token().await?;
         tracing::debug!("Using {vault_addr} with token: {}***", &token[..8]);
 
-        Self {
+        Ok(Self {
             client,
             vault_addr,
             token,
-        }
+        })
     }
 
     /// Health check
@@ -99,7 +106,7 @@ impl VaultClient {
         let url = format!("{}/v1/{}", self.vault_addr, path);
         let response = self
             .client
-            .request(reqwest::Method::from_bytes(b"LIST").unwrap(), &url)
+            .request(list_method()?, &url)
             .header("X-Vault-Token", &self.token)
             .send()
             .await?;
@@ -188,7 +195,7 @@ impl VaultClient {
         let url = format!("{}/v1/{}/roles", self.vault_addr, pki_mount);
         let response = self
             .client
-            .request(reqwest::Method::from_bytes(b"LIST").unwrap(), &url)
+            .request(list_method()?, &url)
             .header("X-Vault-Token", &self.token)
             .send()
             .await?;

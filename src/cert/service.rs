@@ -11,7 +11,7 @@ pub struct CertificateService {
 impl CertificateService {
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            client: VaultClient::new().await,
+            client: VaultClient::new().await?,
             cache: CertificateCache::new()?,
         })
     }

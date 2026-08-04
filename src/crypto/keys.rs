@@ -14,9 +14,9 @@ pub struct KeyManager {
 }
 
 impl KeyManager {
-    pub async fn new() -> Self {
-        let client = VaultClient::new().await;
-        Self { client }
+    pub async fn new() -> Result<Self> {
+        let client = VaultClient::new().await?;
+        Ok(Self { client })
     }
 
     pub fn with_client(client: VaultClient) -> Self {

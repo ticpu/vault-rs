@@ -211,7 +211,7 @@ impl CertificateStorageHelper {
         // list --expired`/`--expires-soon` filter on this field.
         let not_after = CertificateParser::parse_pem(certificate_pem, pki_mount)?.not_after;
 
-        let storage = LocalStorage::new().await;
+        let storage = LocalStorage::new().await?;
         let metadata = StorageCertificateMetadata {
             serial: self.serial.replace(':', "").to_lowercase(),
             cn: self.cn.clone(),

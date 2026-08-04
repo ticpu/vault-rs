@@ -12,10 +12,10 @@ pub struct EncryptionManager {
 }
 
 impl EncryptionManager {
-    pub async fn new() -> Self {
-        Self {
-            key_manager: KeyManager::new().await,
-        }
+    pub async fn new() -> Result<Self> {
+        Ok(Self {
+            key_manager: KeyManager::new().await?,
+        })
     }
 
     pub fn with_client(client: crate::vault::client::VaultClient) -> Self {

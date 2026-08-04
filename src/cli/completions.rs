@@ -137,7 +137,12 @@ pub async fn handle_completion_helper_command(
     command: &CompletionHelperCommands,
     output: &OutputFormat,
 ) -> Result<()> {
-    let client = VaultClient::new().await;
+    // A shell completion helper can only offer candidates or none; there is
+    // no channel back to the shell for an error, so an unconfigured
+    // environment deliberately yields no completions rather than failing.
+    let Ok(client) = VaultClient::new().await else {
+        return Ok(());
+    };
 
     match command {
         CompletionHelperCommands::PkiMounts => {

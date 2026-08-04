@@ -94,7 +94,13 @@ fn print_token_status(info: &serde_json::Value) {
 
 async fn check_permissions() {
     println!("\nChecking permissions:");
-    let test_client = VaultClient::new().await;
+    let test_client = match VaultClient::new().await {
+        Ok(client) => client,
+        Err(e) => {
+            println!("✗ Cannot connect to Vault: {e}");
+            return;
+        }
+    };
 
     match test_client.get("sys/mounts").await {
         Ok(_) => println!("✓ Can list secret engines"),
@@ -103,14 +109,14 @@ async fn check_permissions() {
 }
 
 async fn init_encryption_command() -> Result<()> {
-    let encryption_manager = crate::crypto::encryption::EncryptionManager::new().await;
+    let encryption_manager = crate::crypto::encryption::EncryptionManager::new().await?;
     encryption_manager.init_encryption_key().await?;
     println!("Encryption key initialized in personal vault");
     Ok(())
 }
 
 async fn list_secrets_command(output: &OutputFormat) -> Result<()> {
-    let client = VaultClient::new().await;
+    let client = VaultClient::new().await?;
 
     let mounts = match client.list_mounts().await {
         Ok(mounts) => mounts,
