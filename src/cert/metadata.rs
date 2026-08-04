@@ -100,51 +100,9 @@ impl GetColumnValue for CertificateMetadata {
             CertificateColumn::Sans => self.sans.join(","),
             CertificateColumn::KeyUsage => self.key_usage.join(","),
             CertificateColumn::ExtendedKeyUsage => {
-                // Combine CA status with usage type
                 let ca_prefix = if self.is_ca { "CA:" } else { "" };
 
-                // Simplify extended key usage to client/server/both
-                let has_client = self
-                    .extended_key_usage
-                    .iter()
-                    .any(|eku| eku.contains("ClientAuth"));
-                let has_server = self
-                    .extended_key_usage
-                    .iter()
-                    .any(|eku| eku.contains("ServerAuth"));
-
-                let usage = match (has_client, has_server) {
-                    (true, true) => "Client+Server",
-                    (true, false) => "Client",
-                    (false, true) => "Server",
-                    (false, false) => {
-                        // Fallback: if no Extended Key Usage, infer from Key Usage and SANs
-                        if self.extended_key_usage.is_empty() {
-                            let has_digital_sig = self
-                                .key_usage
-                                .iter()
-                                .any(|ku| ku.contains("DigitalSignature"));
-                            let has_key_encipherment = self
-                                .key_usage
-                                .iter()
-                                .any(|ku| ku.contains("KeyEncipherment"));
-                            let has_sans = !self.sans.is_empty();
-
-                            // Common heuristic: DigitalSignature + KeyEncipherment + SANs = Server cert
-                            if has_digital_sig && has_key_encipherment && has_sans {
-                                "Server"
-                            } else if has_digital_sig && has_key_encipherment {
-                                "Client+Server"
-                            } else {
-                                "Unknown"
-                            }
-                        } else {
-                            return self.extended_key_usage.join(",");
-                        }
-                    }
-                };
-
-                format!("{ca_prefix}{usage}")
+                format!("{ca_prefix}{}", self.summarize_extended_key_usage())
             }
             CertificateColumn::Issuer => self.issuer.clone(),
             CertificateColumn::PkiMount => self.pki_mount.clone(),
@@ -173,6 +131,37 @@ impl GetColumnValue for CertificateMetadata {
 }
 
 impl CertificateMetadata {
+    /// Abbreviates the TLS authentication usages, which is the distinction the
+    /// column exists to show, and passes anything else through verbatim so a
+    /// certificate that is also a code-signing cert does not read as only a
+    /// client one. An absent extension is reported as such: RFC 5280 leaves
+    /// such a certificate unconstrained, so narrowing it here would be an
+    /// opinion printed in the same shape as a reading.
+    fn summarize_extended_key_usage(&self) -> String {
+        if self.extended_key_usage.is_empty() {
+            return "None".to_string();
+        }
+
+        let (mut client, mut server) = (false, false);
+        let mut rest = Vec::new();
+        for usage in &self.extended_key_usage {
+            match usage.as_str() {
+                "ClientAuth" => client = true,
+                "ServerAuth" => server = true,
+                other => rest.push(other),
+            }
+        }
+
+        let tls = match (client, server) {
+            (true, true) => Some("Client+Server"),
+            (true, false) => Some("Client"),
+            (false, true) => Some("Server"),
+            (false, false) => None,
+        };
+
+        tls.into_iter().chain(rest).collect::<Vec<_>>().join(",")
+    }
+
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.not_after
     }
@@ -192,5 +181,73 @@ impl fmt::Display for CertificateMetadata {
             self.serial,
             self.not_after.format("%Y-%m-%d %H:%M")
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::output::GetColumnValue;
+
+    fn cert(extended_key_usage: &[&str]) -> CertificateMetadata {
+        CertificateMetadata {
+            serial: crate::cert::SerialNumber::new("00"),
+            cn: "test".to_string(),
+            not_before: Utc::now(),
+            not_after: Utc::now(),
+            sans: vec!["test.example.test".to_string()],
+            // The shape the removed heuristic read as "Server".
+            key_usage: vec![
+                "DigitalSignature".to_string(),
+                "KeyEncipherment".to_string(),
+            ],
+            extended_key_usage: extended_key_usage.iter().map(|s| s.to_string()).collect(),
+            is_ca: false,
+            issuer: "issuer".to_string(),
+            pki_mount: "mount".to_string(),
+            cached_at: Utc::now(),
+            revocation_time: None,
+        }
+    }
+
+    fn eku_column(cert: &CertificateMetadata) -> String {
+        cert.get_column_value(&CertificateColumn::ExtendedKeyUsage)
+    }
+
+    #[test]
+    fn absent_eku_is_reported_not_inferred() {
+        assert_eq!(eku_column(&cert(&[])), "None");
+    }
+
+    #[test]
+    fn tls_usages_are_abbreviated() {
+        assert_eq!(eku_column(&cert(&["ClientAuth"])), "Client");
+        assert_eq!(eku_column(&cert(&["ServerAuth"])), "Server");
+        assert_eq!(
+            eku_column(&cert(&["ServerAuth", "ClientAuth"])),
+            "Client+Server"
+        );
+    }
+
+    #[test]
+    fn other_usages_are_passed_through_alongside() {
+        assert_eq!(
+            eku_column(&cert(&["ClientAuth", "CodeSigning"])),
+            "Client,CodeSigning"
+        );
+        assert_eq!(eku_column(&cert(&["1.2.3.4"])), "1.2.3.4");
+    }
+
+    /// Previously an unrecognised EKU returned early and lost the marker.
+    #[test]
+    fn ca_prefix_survives_every_branch() {
+        let ca = |ekus: &[&str]| {
+            let mut c = cert(ekus);
+            c.is_ca = true;
+            eku_column(&c)
+        };
+        assert_eq!(ca(&[]), "CA:None");
+        assert_eq!(ca(&["ServerAuth"]), "CA:Server");
+        assert_eq!(ca(&["1.2.3.4"]), "CA:1.2.3.4");
     }
 }
