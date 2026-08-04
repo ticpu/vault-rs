@@ -9,6 +9,36 @@ use sha2::{Digest, Sha256};
 const DEFAULT_KV_MOUNT: &str = "secret";
 const KV_PATH: &str = "vault-rs/encryption-key";
 
+/// Whether the mount holding the master key would keep the version an
+/// overwrite replaces. This decides whether losing the local store is a
+/// rollback away or total, and the two must not read alike.
+enum VersionRetention {
+    Retained {
+        current: u64,
+        mount: String,
+        key: String,
+    },
+    None {
+        why: String,
+        mount: String,
+        key: String,
+    },
+}
+
+impl VersionRetention {
+    fn describe(&self) -> String {
+        match self {
+            Self::Retained { current, mount, key } => format!(
+                "This mount retains prior versions, so version {current} would remain and could \
+                 be restored with:\n  {PROGRAM_NAME} kv rollback -mount={mount} -version={current} {key}"
+            ),
+            Self::None { why, .. } => {
+                format!("{why}, so this would be permanent: there is no recovery.")
+            }
+        }
+    }
+}
+
 pub struct KeyManager {
     client: VaultClient,
 }
@@ -40,22 +70,142 @@ impl KeyManager {
     }
 
     /// Initialize encryption key in personal vault. `destroy_existing`
-    /// overwrites one that is already there, which is unrecoverable.
+    /// overwrites one that is already there.
     pub async fn init_encryption_key(&self, destroy_existing: bool) -> Result<()> {
-        if !destroy_existing && self.retrieve_key_from_vault().await?.is_some() {
-            let kv_path = self.get_kv_path().await?;
+        if self.retrieve_key_from_vault().await?.is_none() {
+            let key = self.generate_master_key();
+            self.store_key_in_vault(&key).await?;
+            tracing::info!("Encryption key initialized in personal vault");
+            return Ok(());
+        }
+
+        let kv_path = self.get_kv_path().await?;
+        // Whether an overwrite can be undone is a property of the mount, not of
+        // the flag: the same command is a rollback away from reversible on a
+        // mount that retains versions and total on one that does not.
+        let retention = self.version_retention(&kv_path).await?;
+
+        if !destroy_existing {
             return Err(VaultCliError::Storage(format!(
                 "An encryption key already exists at '{kv_path}'.\n\n\
-                 Overwriting it makes every certificate and private key already in the local store \
-                 permanently undecryptable. There is no recovery.\n\n\
-                 If that is genuinely what you want: {PROGRAM_NAME} auth init-encryption --destroy-all-my-keys"
+                 Overwriting it makes every certificate and private key in the local store \
+                 undecryptable. {}\n\n\
+                 If that is genuinely what you want: \
+                 {PROGRAM_NAME} auth init-encryption --destroy-all-my-keys",
+                retention.describe()
             )));
         }
 
+        // The flag consents to losing the local store. It cannot consent to a
+        // loss that nothing can undo, because the operator was not told which
+        // of the two they were agreeing to.
+        if let VersionRetention::None { why, mount, key } = &retention {
+            return Err(VaultCliError::Storage(format!(
+                "Refusing to overwrite the key at '{kv_path}': {why}, so this would be permanent \
+                 and total — every certificate and private key in the local store, including keys \
+                 that exist nowhere else.\n\n\
+                 --destroy-all-my-keys consents to losing the local store, not to losing it \
+                 irreversibly.\n\n\
+                 To go ahead anyway, remove the key yourself so the decision is explicit:\n  \
+                 {PROGRAM_NAME} kv delete -mount={mount} {key}"
+            )));
+        }
+
+        tracing::warn!("Overwriting the master key: {}", retention.describe());
         let key = self.generate_master_key();
         self.store_key_in_vault(&key).await?;
         tracing::info!("Encryption key initialized in personal vault");
         Ok(())
+    }
+
+    /// Whether writing a new key would leave the current one recoverable.
+    ///
+    /// Unreadable metadata is not "probably fine": it is the case where the
+    /// answer is unknown, and the caller refuses on it.
+    async fn version_retention(&self, kv_path: &str) -> Result<VersionRetention> {
+        let Some((mount, key)) = self.kv_location().await else {
+            return Err(VaultCliError::Storage(format!(
+                "Cannot determine the mount holding '{kv_path}', so cannot tell whether \
+                 overwriting the key there could be undone"
+            )));
+        };
+
+        let Some(data_path) = kv_path.split_once("/data/") else {
+            return Ok(VersionRetention::None {
+                why: "this is a KV v1 mount, which keeps no version history".to_string(),
+                mount,
+                key,
+            });
+        };
+
+        let metadata_path = format!("{}/metadata/{}", data_path.0, data_path.1);
+        let metadata = self.client.get(&metadata_path).await.map_err(|e| {
+            VaultCliError::Storage(format!(
+                "Cannot read '{metadata_path}' ({e}), so cannot tell whether overwriting the key \
+                 there could be undone"
+            ))
+        })?;
+
+        let max_versions = metadata["data"]["max_versions"].as_u64().ok_or_else(|| {
+            VaultCliError::Storage(format!(
+                "'{metadata_path}' does not report max_versions, so cannot tell whether \
+                 overwriting the key there could be undone"
+            ))
+        })?;
+
+        // 0 means the mount default, which retains history; 1 means the write
+        // that adds the new version drops the one it replaces.
+        if max_versions == 1 {
+            return Ok(VersionRetention::None {
+                why: "max_versions is 1, so writing a new version drops the current one"
+                    .to_string(),
+                mount,
+                key,
+            });
+        }
+
+        let current = metadata["data"]["current_version"].as_u64().unwrap_or(0);
+        Ok(VersionRetention::Retained {
+            current,
+            mount,
+            key,
+        })
+    }
+
+    /// The mount and key path as `vault-rs kv` would take them, for messages
+    /// that have to name a recovery command. Best effort: a failure here must
+    /// not replace the error it was being attached to.
+    async fn kv_location(&self) -> Option<(String, String)> {
+        // discard-ok: best effort for a message; the caller either falls back to
+        // generic wording or turns None into its own error
+        let kv_path = self.get_kv_path().await.ok()?;
+        match kv_path.split_once("/data/") {
+            Some((mount, key)) => Some((mount.to_string(), key.to_string())),
+            // discard-ok: a KV v1 path has no /data/ segment; split on the mount
+            None => kv_path
+                .split_once('/')
+                .map(|(mount, key)| (mount.to_string(), key.to_string())),
+        }
+    }
+
+    /// What an operator staring at an AEAD failure needs and does not have:
+    /// the one likely cause, and the command that shows whether the previous
+    /// key is still there.
+    pub async fn recovery_hint(&self) -> String {
+        let Some((mount, key)) = self.kv_location().await else {
+            return "The master key in Vault may not be the one this artifact was sealed with; \
+                    check that key's version history."
+                .to_string();
+        };
+
+        format!(
+            "The master key in Vault is probably not the one this artifact was sealed with.\n\
+             Check whether the previous key is still there:\n  \
+             {PROGRAM_NAME} kv metadata get -mount={mount} {key}\n\
+             If an earlier version holds it, restoring that version makes these artifacts \
+             readable again without destroying the current one:\n  \
+             {PROGRAM_NAME} kv rollback -mount={mount} -version=N {key}"
+        )
     }
 
     /// Generate a new 256-bit master key
@@ -228,6 +378,7 @@ mod tests {
 
     const V2_PATH: &str = "/v1/secret/data/vault-rs/encryption-key";
     const V1_PATH: &str = "/v1/secret/vault-rs/encryption-key";
+    const V2_META: &str = "/v1/secret/metadata/vault-rs/encryption-key";
 
     fn manager(server: &MockServer) -> KeyManager {
         KeyManager::with_client(
@@ -262,6 +413,19 @@ mod tests {
             .and(path(at))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": {} })))
             .expect(writes)
+            .mount(server)
+            .await;
+    }
+
+    /// The mount's version-retention answer. `max_versions` of 1 drops the
+    /// version an overwrite replaces; 0 is the mount default, which keeps it.
+    async fn mount_retention(server: &MockServer, max_versions: u64) {
+        let body = json!({
+            "data": { "max_versions": max_versions, "current_version": 7 }
+        });
+        Mock::given(method("GET"))
+            .and(path(V2_META))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(server)
             .await;
     }
@@ -358,6 +522,7 @@ mod tests {
         let server = MockServer::start().await;
         mount_kv(&server, "2").await;
         respond_to_read(&server, V2_PATH, stored_key(&"ab".repeat(32), true)).await;
+        mount_retention(&server, 0).await;
         expect_writes(&server, V2_PATH, 0).await;
 
         let err = manager(&server)
@@ -383,11 +548,88 @@ mod tests {
             .expect_err("an unread store is not an empty one");
     }
 
+    /// The refusal has to say which situation the operator is in: the same
+    /// flag is a rollback away from reversible here and total below.
+    #[tokio::test]
+    async fn the_refusal_names_the_rollback_when_history_is_kept() {
+        let server = MockServer::start().await;
+        mount_kv(&server, "2").await;
+        respond_to_read(&server, V2_PATH, stored_key(&"ab".repeat(32), true)).await;
+        mount_retention(&server, 0).await;
+        expect_writes(&server, V2_PATH, 0).await;
+
+        let err = manager(&server)
+            .init_encryption_key(false)
+            .await
+            .expect_err("a key is present")
+            .to_string();
+        assert!(err.contains("kv rollback"), "{err}");
+        assert!(err.contains("version=7"), "{err}");
+        assert!(!err.contains("no recovery"), "{err}");
+    }
+
+    /// max_versions=1 drops the version being replaced, so the overwrite is
+    /// total. The flag consents to losing the store, not to losing it with no
+    /// way back, so it is refused outright.
+    #[tokio::test]
+    async fn an_unrecoverable_overwrite_is_refused_even_with_the_flag() {
+        let server = MockServer::start().await;
+        mount_kv(&server, "2").await;
+        respond_to_read(&server, V2_PATH, stored_key(&"ab".repeat(32), true)).await;
+        mount_retention(&server, 1).await;
+        expect_writes(&server, V2_PATH, 0).await;
+
+        let err = manager(&server)
+            .init_encryption_key(true)
+            .await
+            .expect_err("no history means no consent")
+            .to_string();
+        assert!(err.contains("permanent"), "{err}");
+        assert!(err.contains("kv delete"), "{err}");
+    }
+
+    /// KV v1 keeps no versions at all.
+    #[tokio::test]
+    async fn a_kv_v1_overwrite_is_refused_even_with_the_flag() {
+        let server = MockServer::start().await;
+        mount_kv(&server, "1").await;
+        respond_to_read(&server, V1_PATH, stored_key(&"ab".repeat(32), false)).await;
+        expect_writes(&server, V1_PATH, 0).await;
+
+        let err = manager(&server)
+            .init_encryption_key(true)
+            .await
+            .expect_err("KV v1 has no history")
+            .to_string();
+        assert!(err.contains("KV v1"), "{err}");
+    }
+
+    /// Not knowing whether the overwrite could be undone is not the same as
+    /// knowing it could.
+    #[tokio::test]
+    async fn unreadable_retention_metadata_refuses_the_overwrite() {
+        let server = MockServer::start().await;
+        mount_kv(&server, "2").await;
+        respond_to_read(&server, V2_PATH, stored_key(&"ab".repeat(32), true)).await;
+        Mock::given(method("GET"))
+            .and(path(V2_META))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+        expect_writes(&server, V2_PATH, 0).await;
+
+        manager(&server)
+            .init_encryption_key(true)
+            .await
+            .expect_err("an unknown answer is not a yes");
+    }
+
     #[tokio::test]
     async fn init_overwrites_only_with_the_flag() {
         let server = MockServer::start().await;
         mount_kv(&server, "2").await;
         respond_to_read(&server, V2_PATH, stored_key(&"ab".repeat(32), true)).await;
+        mount_retention(&server, 0).await;
         expect_writes(&server, V2_PATH, 1).await;
 
         manager(&server)

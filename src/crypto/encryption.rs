@@ -61,9 +61,19 @@ impl EncryptionManager {
         let nonce = Nonce::try_from(nonce_bytes)
             .map_err(|e| VaultCliError::Encryption(format!("Invalid nonce: {e}")))?;
 
-        let plaintext = cipher
-            .decrypt(&nonce, ciphertext)
-            .map_err(|e| VaultCliError::Encryption(format!("Decryption failed: {e}")))?;
+        // An AEAD failure against the local store has one overwhelmingly likely
+        // cause and one obvious next step, both of which this code knows and the
+        // operator does not. Naming the mechanism alone leaves no route to
+        // recovery while the key that would open the artifact sits in Vault.
+        let plaintext = match cipher.decrypt(&nonce, ciphertext) {
+            Ok(plaintext) => plaintext,
+            Err(e) => {
+                return Err(VaultCliError::Encryption(format!(
+                    "Decryption failed ({e}).\n\n{}",
+                    self.key_manager.recovery_hint().await
+                )))
+            }
+        };
 
         Ok(plaintext)
     }
