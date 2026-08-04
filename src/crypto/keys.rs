@@ -184,10 +184,7 @@ impl KeyManager {
             key_data
         };
 
-        self.client
-            .post(&kv_path, payload)
-            .await
-            .map_err(|e| VaultCliError::Storage(format!("Failed to store key in vault: {e}")))?;
+        self.client.post(&kv_path, payload).await?;
 
         Ok(())
     }

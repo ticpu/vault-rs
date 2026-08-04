@@ -1,9 +1,12 @@
 use crate::cert::serial::SerialNumberParseError;
 use thiserror::Error;
 
+/// Variants carrying a `#[from]` source do NOT repeat it in their message:
+/// the source is printed by whoever walks the chain, and including it here
+/// too makes every such error render its cause twice.
 #[derive(Error, Debug)]
 pub enum VaultCliError {
-    #[error("Vault API error: {0}")]
+    #[error("Vault API error")]
     VaultApi(#[from] reqwest::Error),
 
     #[error("Authentication error: {0}")]
@@ -18,19 +21,19 @@ pub enum VaultCliError {
     #[error("Storage error: {0}")]
     Storage(String),
 
-    #[error("IO error: {0}")]
+    #[error("IO error")]
     Io(#[from] std::io::Error),
 
-    #[error("JSON error: {0}")]
+    #[error("JSON error")]
     Json(#[from] serde_json::Error),
 
-    #[error("YAML error: {0}")]
+    #[error("YAML error")]
     Yaml(#[from] serde_yaml_ng::Error),
 
     #[error("Configuration error: {0}")]
     Config(String),
 
-    #[error("Invalid Serial Number '{key}': {source}")]
+    #[error("Invalid Serial Number '{key}'")]
     SerialNumberParse {
         key: String,
         source: SerialNumberParseError,
@@ -47,7 +50,7 @@ pub enum VaultCliError {
     #[error("Incomplete result: {0}")]
     IncompleteRead(String),
 
-    #[error("UTF-8 conversion error: {0}")]
+    #[error("UTF-8 conversion error")]
     Utf8(#[from] std::string::FromUtf8Error),
 }
 

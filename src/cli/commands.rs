@@ -2,10 +2,12 @@ use crate::cert::show_certificate;
 use crate::cli::args::*;
 use crate::storage::local::LocalStorage;
 use crate::utils::dns_discovery::get_vault_addr;
-use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::errors::VaultCliError;
 use crate::utils::output::OutputFormat;
 use crate::utils::partial::{Incomplete, Partial};
+use crate::utils::PROGRAM_NAME;
 use crate::vault::client::VaultClient;
+use anyhow::{Context, Result};
 use std::io;
 
 pub async fn handle_command(cli: Cli) -> Result<()> {
@@ -31,15 +33,21 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
     crate::utils::paths::VaultCliPaths::ensure_all_dirs()?;
 
     match cli.command {
-        Commands::Auth { command } => crate::auth::handle_auth_commands(command, &output).await,
+        Commands::Auth { command } => crate::auth::handle_auth_commands(command, &output)
+            .await
+            .context("auth"),
         Commands::Cert { command } => handle_cert_command(command, &output).await,
         Commands::Storage { command } => handle_storage_command(command, &output).await,
-        Commands::Cache { command } => crate::cache::handle_cache_commands(command, &output).await,
+        Commands::Cache { command } => crate::cache::handle_cache_commands(command, &output)
+            .await
+            .context("cache"),
         Commands::Completion { ref command } => {
             crate::cli::completions::handle_completion_command(command, &cli)
+                .context("generating the completion script")
         }
         Commands::CompletionHelper { ref command } => {
-            crate::cli::completions::handle_completion_helper_command(command, &output).await
+            crate::cli::completions::handle_completion_helper_command(command, &output).await?;
+            Ok(())
         }
         Commands::Read { ref args } => handle_vault_command("read", args).await,
         Commands::Write { ref args } => handle_vault_command("write", args).await,
@@ -97,7 +105,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             ) {
                 Ok(filter) => filter,
                 Err(e) => {
-                    eprintln!("Error: {e}");
+                    eprintln!("Error: {:#}", anyhow::Error::from(e));
                     std::process::exit(2);
                 }
             };
@@ -115,7 +123,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 Ok(matched) if expiring_within_given && matched => std::process::exit(1),
                 Ok(_) => Ok(()),
                 Err(e) => {
-                    eprintln!("Error: {e}");
+                    eprintln!("Error: {:#}", anyhow::Error::from(e));
                     std::process::exit(2);
                 }
             }
@@ -154,7 +162,9 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             })?;
 
             let client = VaultClient::new().await?;
-            show_ca_info(&client, &mount, output).await
+            show_ca_info(&client, &mount, output)
+                .await
+                .with_context(|| format!("reading the CA of mount '{mount}'"))
         }
         CertCommands::Verify {
             certificate_file,
@@ -194,7 +204,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 Ok(true) => Ok(()),
                 Ok(false) => std::process::exit(1),
                 Err(e) => {
-                    eprintln!("Error: {e}");
+                    eprintln!("Error: {:#}", anyhow::Error::from(e));
                     std::process::exit(2);
                 }
             }
@@ -209,12 +219,12 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         output.print_list(&roles);
                     }
                 }
-                Err(VaultCliError::Auth(_)) => {
-                    eprintln!("Error: Access denied - your token may not have permission to list roles in PKI mount '{pki_mount}'");
-                    eprintln!("Try checking available PKI mounts with: vault-rs cert list-mounts");
-                    std::process::exit(1);
+                Err(VaultCliError::Auth(e)) => {
+                    eprintln!("Error: cannot list roles in PKI mount '{pki_mount}': {e}");
+                    eprintln!("Your token may lack permission; check the mounts you can reach with: {PROGRAM_NAME} cert list-mounts");
+                    std::process::exit(2);
                 }
-                Err(e) => return Err(e),
+                Err(e) => return Err(e.into()),
             }
             Ok(())
         }
@@ -283,7 +293,9 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 yes,
             };
 
-            sign_certificate_from_csr(&client, request).await
+            sign_certificate_from_csr(&client, request)
+                .await
+                .context("signing the certificate request")
         }
         CertCommands::InspectCsr {
             file,
@@ -305,7 +317,9 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 role,
             };
 
-            inspect_csr(client.as_ref(), request).await
+            inspect_csr(client.as_ref(), request)
+                .await
+                .context("inspecting the certificate request")
         }
         CertCommands::Export {
             identifier,
@@ -332,10 +346,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                     };
                     export_certificate(&client, request).await?;
                 }
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
-                }
+                Err(e) => return Err(e).context(format!("exporting '{identifier}'")),
             }
             Ok(())
         }
@@ -344,13 +355,9 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             pki_mount,
         } => {
             let client = VaultClient::new().await?;
-            match show_certificate(&client, &identifier, pki_mount.as_deref(), output).await {
-                Ok(()) => Ok(()),
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
-                }
-            }
+            show_certificate(&client, &identifier, pki_mount.as_deref(), output)
+                .await
+                .with_context(|| format!("showing '{identifier}'"))
         }
         CertCommands::ExportBySerial {
             serial,
@@ -377,10 +384,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                     };
                     export_certificate(&client, request).await?;
                 }
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
-                }
+                Err(e) => return Err(e).context(format!("exporting serial '{serial}'")),
             }
             Ok(())
         }
@@ -426,6 +430,7 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
                 output,
             )
             .await
+            .context("listing local storage")
         }
         StorageCommands::Show { cn, pki_mount } => {
             println!("Show stored certificate - CN: {cn}, PKI: {pki_mount:?}");
@@ -464,12 +469,13 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
                     return Err(VaultCliError::InvalidInput(
                         "Invalid path structure. Expected: .../secrets/{pki_mount}/{cn}/file.enc"
                             .to_string(),
-                    ));
+                    )
+                    .into());
                 }
             } else {
                 return Err(VaultCliError::InvalidInput(
                     "Path must contain 'secrets' directory. Expected: .../secrets/{pki_mount}/{cn}/file.enc".to_string()
-                ));
+                ).into());
             };
 
             let context = format!("cert-{pki_mount}-{cn}");
@@ -484,5 +490,7 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
 
 async fn handle_vault_command(subcommand: &str, args: &[String]) -> Result<()> {
     let vault_addr = get_vault_addr().await?;
-    crate::vault::wrapper::exec_vault_command(vault_addr, subcommand, args).await
+    crate::vault::wrapper::exec_vault_command(vault_addr, subcommand, args)
+        .await
+        .with_context(|| format!("vault {subcommand}"))
 }

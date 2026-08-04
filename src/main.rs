@@ -1,21 +1,30 @@
 use vault_rs::cli::{handle_command, Cli};
-use vault_rs::utils::errors::Result;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     use clap::Parser;
     let cli = Cli::parse();
 
     if let Err(e) = handle_command(cli).await {
-        // Handle broken pipe errors gracefully (e.g., when piping to head)
-        if let vault_rs::utils::errors::VaultCliError::Io(io_err) = &e {
+        // Piping into head closes the pipe under us; that is the reader's
+        // choice, not a failure of this command.
+        if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
             if io_err.kind() == std::io::ErrorKind::BrokenPipe {
                 std::process::exit(0);
             }
         }
-        eprintln!("Error: {e}");
-        std::process::exit(1);
-    }
+        if let Some(vault_rs::utils::errors::VaultCliError::Io(io_err)) =
+            e.downcast_ref::<vault_rs::utils::errors::VaultCliError>()
+        {
+            if io_err.kind() == std::io::ErrorKind::BrokenPipe {
+                std::process::exit(0);
+            }
+        }
 
-    Ok(())
+        // `{:#}` prints every cause: a refused connection, an expired server
+        // certificate and a name that does not resolve otherwise render as
+        // the same line.
+        eprintln!("Error: {e:#}");
+        std::process::exit(2);
+    }
 }
