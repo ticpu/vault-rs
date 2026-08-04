@@ -9,7 +9,9 @@ pub async fn handle_auth_commands(command: AuthCommands, output: &OutputFormat) 
         AuthCommands::Login { method, username } => login_command(method, username).await,
         AuthCommands::Logout => logout_command().await,
         AuthCommands::Status => status_command().await,
-        AuthCommands::InitEncryption => init_encryption_command().await,
+        AuthCommands::InitEncryption {
+            destroy_all_my_keys,
+        } => init_encryption_command(destroy_all_my_keys).await,
         AuthCommands::ListSecrets => list_secrets_command(output).await,
     }
 }
@@ -124,9 +126,11 @@ async fn check_permissions() {
     }
 }
 
-async fn init_encryption_command() -> Result<()> {
+async fn init_encryption_command(destroy_existing: bool) -> Result<()> {
     let encryption_manager = crate::crypto::encryption::EncryptionManager::new().await?;
-    encryption_manager.init_encryption_key().await?;
+    encryption_manager
+        .init_encryption_key(destroy_existing)
+        .await?;
     println!("Encryption key initialized in personal vault");
     Ok(())
 }

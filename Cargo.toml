@@ -52,3 +52,6 @@ hickory-resolver = "0.26"
 ordermap = "1"
 rustls-webpki = { version = "0.103", default-features = false, features = ["std", "aws-lc-rs"] }
 rustls-pki-types = "1"
+
+[dev-dependencies]
+wiremock = "0.6"

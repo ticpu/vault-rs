@@ -101,8 +101,8 @@ impl EncryptionManager {
     }
 
     /// Initialize encryption key in personal vault
-    pub async fn init_encryption_key(&self) -> Result<()> {
-        self.key_manager.init_encryption_key().await
+    pub async fn init_encryption_key(&self, destroy_existing: bool) -> Result<()> {
+        self.key_manager.init_encryption_key(destroy_existing).await
     }
 
     /// Encrypt string data

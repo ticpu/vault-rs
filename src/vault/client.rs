@@ -59,6 +59,17 @@ impl VaultClient {
         })
     }
 
+    /// A client against an explicit address, for tests that stand up a stub
+    /// Vault. Production goes through `new`, which resolves both fields.
+    #[cfg(test)]
+    pub fn for_test(vault_addr: String, token: String) -> Result<Self> {
+        Ok(Self {
+            client: super::create_http_client()?,
+            vault_addr,
+            token,
+        })
+    }
+
     /// Health check
     pub async fn health(&self) -> Result<Value> {
         let url = format!("{}/v1/sys/health", self.vault_addr);

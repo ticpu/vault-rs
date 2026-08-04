@@ -222,7 +222,12 @@ pub enum AuthCommands {
     /// Show authentication status
     Status,
     /// Initialize encryption key in personal vault
-    InitEncryption,
+    InitEncryption {
+        /// Overwrite an existing key. Every certificate and private key already
+        /// in the local store becomes permanently undecryptable.
+        #[arg(long)]
+        destroy_all_my_keys: bool,
+    },
     /// List available secret engines
     ListSecrets,
 }
