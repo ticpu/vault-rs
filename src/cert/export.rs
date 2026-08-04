@@ -95,16 +95,34 @@ async fn get_certificate_bundle_from_storage(
 }
 
 async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) -> Result<()> {
-    // P12 export requires both certificate and private key from local storage
-    let (private_key, certificate, ca_chain) =
-        get_certificate_bundle_from_storage(client, &request.identifier)
+    // P12 export requires both certificate and private key from local storage.
+    // find_certificate_in_storage/get_certificate_data_from_storage (not the
+    // combined get_certificate_bundle_from_storage) so a decrypt failure or
+    // corrupt index reports its own cause instead of "not found".
+    let storage = LocalStorage::with_client(client.clone());
+
+    let cert_record = find_certificate_in_storage(&storage, &request.identifier)
+        .await?
+        .ok_or_else(|| {
+            VaultCliError::InvalidInput(format!(
+                "P12 export requires private key. Certificate '{}' not found in local storage.",
+                request.identifier
+            ))
+        })?;
+
+    let (certificate_pem, private_key, ca_chain_pem) =
+        get_certificate_data_from_storage(&storage, &cert_record)
             .await
-            .map_err(|_| {
+            .map_err(|e| {
                 VaultCliError::InvalidInput(format!(
-                    "P12 export requires private key. Certificate '{}' not found in local storage.",
+                    "Failed to retrieve private key for '{}': {e}",
                     request.identifier
                 ))
             })?;
+
+    let private_key = PemPrivateKey::new(private_key);
+    let certificate = PemCertificate::new(certificate_pem);
+    let ca_chain = build_ca_chain(&ca_chain_pem);
 
     let dir = request.output_dir.as_deref().unwrap_or(".");
     let p12_filename = format!("{}.p12", sanitize_filename(&request.identifier));
@@ -112,20 +130,14 @@ async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) ->
 
     fs::create_dir_all(dir)?;
 
-    let bundle = PemCertificateBundle::new(private_key, certificate, ca_chain);
-    let private_key_pem = bundle
-        .private_key()
-        .ok_or_else(|| {
-            VaultCliError::InvalidInput(format!(
-                "P12 export requires private key. Certificate '{}' not found in local storage.",
-                request.identifier
-            ))
-        })?
-        .pem_data();
+    // Read before moving into the bundle: get_certificate_data_from_storage
+    // always returns a key, so there is no missing-key case left to check here.
+    let private_key_pem = private_key.pem_data().to_string();
+    let bundle = PemCertificateBundle::new(Some(private_key), certificate, ca_chain);
 
     match crate::utils::create_p12_file(
         &p12_path,
-        private_key_pem,
+        &private_key_pem,
         bundle.certificate().pem_data(),
         &bundle.ca_chain().pem_data(),
         request.no_passphrase,
