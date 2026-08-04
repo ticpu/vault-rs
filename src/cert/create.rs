@@ -1,6 +1,6 @@
 use crate::cert::plan::{build_plan, PlanInput};
-use crate::cert::report::print_identity_fields;
-use crate::cert::CertificateParser;
+use crate::cert::report::{describe_certificate, print_identity_fields};
+use crate::cert::{CertificateParser, SerialNumber};
 use crate::cli::args::CryptoType;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::pem::{PemCertificate, PemCertificateChain, PemPrivateKey};
@@ -118,9 +118,11 @@ pub async fn create_certificate(
         .as_str()
         .ok_or_else(|| VaultCliError::CertNotFound("Serial number not found".to_string()))?;
 
-    // Display serial without colons for consistency with lookup/export commands
-    let display_serial = serial.replace(':', "");
-    eprintln!("✓ Certificate issued with serial: {display_serial}");
+    eprintln!(
+        "✓ Certificate issued with serial: {}",
+        SerialNumber::new(serial).as_colon_hex()
+    );
+    print_identity_fields(&describe_certificate(certificate)?);
 
     // Store locally unless --no-store
     use crate::utils::cert_utils::CertificateStorageHelper;

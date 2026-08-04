@@ -4,17 +4,6 @@ use crate::cert::{CertificateService, SerialNumber};
 use crate::utils::errors::{Result, VaultCliError};
 use crate::vault::client::VaultClient;
 
-/// Format hex serial number with colons (e.g., "46a891..." -> "46:a8:91:...")
-pub fn format_serial_with_colons(serial: &str) -> String {
-    serial
-        .chars()
-        .collect::<Vec<_>>()
-        .chunks(2)
-        .map(|chunk| chunk.iter().collect::<String>())
-        .collect::<Vec<_>>()
-        .join(":")
-}
-
 /// Find certificate by identifier (CN or serial)
 /// Returns (certificate_pem, serial, pki_mount)
 pub async fn find_certificate_by_identifier(

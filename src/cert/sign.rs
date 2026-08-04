@@ -1,7 +1,7 @@
 use crate::cert::csr::parse_csr_pem;
 use crate::cert::plan::{build_plan, PlanInput};
-use crate::cert::report::print_identity_fields;
-use crate::cert::CertificateParser;
+use crate::cert::report::{describe_certificate, print_identity_fields};
+use crate::cert::{CertificateParser, SerialNumber};
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::pem::{PemCertificate, PemCertificateChain};
 use crate::utils::prompt::confirm;
@@ -135,7 +135,11 @@ pub async fn sign_certificate_from_csr(
         VaultCliError::CertNotFound("Serial number not found in response".to_string())
     })?;
 
-    eprintln!("✓ Certificate signed with serial: {serial}");
+    eprintln!(
+        "✓ Certificate signed with serial: {}",
+        SerialNumber::new(serial).as_colon_hex()
+    );
+    print_identity_fields(&describe_certificate(certificate)?);
 
     // Store locally unless --no-store
     use crate::utils::cert_utils::CertificateStorageHelper;
