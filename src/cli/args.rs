@@ -8,7 +8,7 @@ fn parse_expiring_within(s: &str) -> Result<Duration, String> {
 
 #[derive(Parser)]
 #[command(name = "vault-rs")]
-#[command(version = "1.0.0")]
+#[command(version)]
 #[command(about = "A secure Vault PKI management tool for sysadmins")]
 #[command(long_about = None)]
 pub struct Cli {
