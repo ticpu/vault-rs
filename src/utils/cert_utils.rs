@@ -5,6 +5,15 @@ use std::path::Path;
 use std::process::Command;
 
 /// Create a PKCS12 file using OpenSSL
+/// A path as a command-line argument. Paths are bytes on Unix, so a name that
+/// is not UTF-8 is a legitimate path this cannot pass to openssl — report it
+/// rather than panicking on the caller's filename.
+fn path_arg(path: &Path) -> Result<&str> {
+    path.to_str().ok_or_else(|| {
+        VaultCliError::InvalidInput(format!("path is not valid UTF-8: {}", path.display()))
+    })
+}
+
 pub fn create_p12_file(
     p12_path: &Path,
     private_key: &str,
@@ -45,15 +54,15 @@ pub fn create_p12_file(
         "pkcs12",
         "-export",
         "-out",
-        p12_path.to_str().unwrap(),
+        path_arg(p12_path)?,
         "-inkey",
-        key_file.to_str().unwrap(),
+        path_arg(&key_file)?,
         "-in",
-        cert_file.to_str().unwrap(),
+        path_arg(&cert_file)?,
     ];
 
     if !ca_cert.is_empty() {
-        args.extend_from_slice(&["-certfile", ca_file.to_str().unwrap()]);
+        args.extend_from_slice(&["-certfile", path_arg(&ca_file)?]);
     }
 
     if no_passphrase {

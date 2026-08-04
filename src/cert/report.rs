@@ -75,8 +75,8 @@ impl IdentityField {
             .collect::<Vec<_>>()
             .join(", ");
 
-        if sources.len() == 1 {
-            return Self::annotated(label, value, sources.into_iter().next().unwrap());
+        if let [only] = sources.as_slice() {
+            return Self::annotated(label, value, only.clone());
         }
 
         let details = sources
