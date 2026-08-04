@@ -1,70 +1,65 @@
 # Vault-RS Development Guidelines
 
-## Output Format Requirements
+## Output
 
-**UNIX-friendly output only** - All output should be machine-readable and pipeline-friendly:
+Stdout carries data only; every log, warning, prompt and status line goes to stderr. Records are
+one item per line with no prefixes, headers, labels, leading spaces or alignment fluff that would
+break `grep`/`awk`/`cut`.
 
-- One item per line, no prefixes
-- Clean data that can be piped to other commands
-- No decorative headers like "PKI Mounts:"
-- No leading spaces or formatting fluff
-- No pretty-printing or human-friendly labels
-- No decorative output that breaks `grep`, `awk`, etc.
-- **All logs, warnings, and errors must go to stderr, never stdout**
-- Stdout is reserved for data output only
+### OutputFormat (src/utils/output.rs)
 
-### Output Handling Guidelines (src/utils/output.rs)
+**Use `OutputFormat` for all structured data** — `print_table` / `print_table_with_headers` for
+columns, `print_list` for single-column, `print_key_value` for pairs, `print_json` for records. It
+owns the three output modes (formatted, `--raw`, `--json`); a direct `println!` bypasses whichever
+one the caller asked for.
 
-**MANDATORY: Use OutputFormat methods for ALL structured data:**
-- `output.print_table()` - Multi-column tabular data with --raw support
-- `output.print_list()` - Single-column lists, one item per line  
-- `output.print_key_value()` - Key-value pairs (2-column data)
+`println!` is for a single bare value with no `OutputFormat` in scope, `eprintln!` for anything
+addressed to a person, `tracing::*` for debug detail behind `-v`.
 
-**NEVER use direct println!() for structured data** - Always use OutputFormat methods.
+**`--json` must branch before `build_table_data`.** Table cells are display strings, already
+summarized and truncated — extended key usage renders as `CA:Client`, timestamps lose their
+seconds. Serializing a built table emits those strings instead of the data; serialize the records
+themselves. `cert list --json` and `storage list --json` therefore emit different schemas, because
+they are different records.
 
-**Direct output only for these specific cases:**
-- `println!()` - Single values only when OutputFormat isn't available
-- `eprintln!()` - User-facing status messages and errors to stderr
-- `tracing::info!()` - Debug/internal logging (controlled by -v flags)
+## Certificates
 
-**Critical:** OutputFormat automatically handles --raw vs formatted modes. Using direct println!() breaks UNIX pipeline compatibility and user formatting preferences.
+**Crypto type is detected, never defaulted.** `client.detect_crypto_type(mount)` reads the OIDs in
+the mount's issuer certificates; on failure it errors and tells the caller to pass `--crypto`. A
+certificate minted with the wrong key type has to be revoked, so guessing costs more than failing.
 
-## Certificate Management Features
+The same rule runs through the parser: an attribute is read off the artifact or reported absent,
+and a present-but-unparseable extension aborts rather than reading as empty. Where a value is
+predicted rather than read — `--dry-run` cannot know what Vault will do — the annotation says so.
 
-### Crypto Type Auto-Detection (src/vault/client.rs)
+`docs/design-rationale.md` records why these commands are shaped the way they are. Read it before
+changing issuance, verification or export behaviour.
 
-- PKI mounts can auto-detect crypto type (RSA/EC) from issuer certificates
-- Use `client.detect_crypto_type(token, pki_mount)` to get crypto type
-- **Never default to RSA** - fail fast if detection fails to prevent wrong cert types
-- Auto-detection queries `/pki/config/issuers` and parses certificate OIDs
-- Falls back to explicit `--crypto` parameter when auto-detection unavailable
+## Security
 
-## Security Principles
+- System trust store via `rustls-tls-native-roots`.
+- Tokens in `XDG_RUNTIME_DIR`, mode 0600.
+- Temporary files go under `VaultCliPaths::runtime_dir()`, mode 0600, removed after use.
 
-- Always use proper TLS certificate validation
-- Never disable security checks by default
-- Use system certificate stores (rustls-tls-native-roots)
-- Store tokens securely in `XDG_RUNTIME_DIR` with mode 600
-- **Never create certificates with wrong crypto type** - fail fast instead
-- **NEVER use /tmp for temporary files** - always use `VaultCliPaths::runtime_dir()` for volatile storage
-- Temporary files must have secure permissions (0o600) and be cleaned up immediately after use
+## Rust
 
-## Rust Coding Guidelines
+- **Keep `src/cli/commands.rs` thin.** It parses arguments, calls a module, and maps errors to exit
+  codes. Business logic lives in `cert/`, `vault/`, `storage/`.
+- Past ~7 arguments, take a struct.
+- Prefer `crate::utils::PROGRAM_NAME` over a literal `"vault-rs"`.
+- `cert -> cli -> crypto -> storage -> utils -> vault` is a real dependency cycle, caused by
+  `utils/cert_utils.rs` holding certificate logic. Do not deepen it: certificate logic belongs in
+  `cert/`, Vault API types in `vault/`, and only generic I/O in `utils/`.
 
-- **Use direct variable interpolation in format macros**:
-  - Good: `format!("{variable}")`, `println!("{value}")`, `eprintln!("Error: {error}")`
-  - Bad: `format!("{}", variable)`, `println!("{}", value)`, `eprintln!("Error: {}", error)`
-  - This prevents clippy warnings and is more readable
-  - Only use positional arguments (`{}`) when you need complex formatting or multiple uses of the same variable
+## Tests and hooks
 
-- **Keep commands.rs lightweight** - NEVER add complex logic to commands.rs. It should only:
-  - Parse command arguments
-  - Call functions from other modules
-  - Handle basic error responses
-  - All business logic must be in separate modules (cert/, vault/, storage/, etc.)
+`.git/hooks/pre-commit` runs fmt, clippy `-D warnings`, `cargo test --release` and
+`gitleaks git --staged`. It is the verification — do not re-run those separately. `--no-verify` is
+for a `test:` commit that deliberately lands a failing test.
 
-- If a function call takes more than ~7 arguments, use a data structure
+`.gitleaks.local.toml` extends the committed config with private patterns and is never committed
+itself.
 
-## Implementation Guidelines
-
-- When possible, use `PROGRAM_NAME` instead of `"vault-rs"` (import `crate::utils::PROGRAM_NAME` first)
+Fixtures live in `src/cert/testdata/`, regenerated by `generate.sh` (certificates only; it deletes
+the keys it makes). `.gitignore` excludes `*.pem` repo-wide and negates that directory — a new
+fixture extension needs the same negation or it will silently not be committed.
