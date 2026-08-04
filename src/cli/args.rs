@@ -260,9 +260,16 @@ pub enum CertCommands {
         /// Filter by extended key usage: client, server, or a raw usage name/OID (case-insensitive)
         #[arg(long)]
         eku: Option<String>,
+        /// List what could be read instead of failing when a record cannot be. Skipped records are named on stderr. Combined with --expiring-within the exit status is not authoritative: a partial read can exit 0 while blind to certificates it never read.
+        #[arg(long)]
+        allow_partial: bool,
     },
     /// List all PKI mounts
-    ListMounts,
+    ListMounts {
+        /// List mounts whose crypto type could not be detected, with that cell left empty, instead of failing. Skipped mounts are named on stderr.
+        #[arg(long)]
+        allow_partial: bool,
+    },
     /// List available roles in PKI mount
     ListRoles {
         /// PKI mount path
@@ -485,7 +492,11 @@ pub enum StorageCommands {
 #[derive(Subcommand)]
 pub enum CacheCommands {
     /// Show cache statistics
-    Status,
+    Status {
+        /// Report mounts whose cache file will not load, with the count left empty, instead of failing. Skipped mounts are named on stderr.
+        #[arg(long)]
+        allow_partial: bool,
+    },
     /// Clear certificate cache (lazy caching will refetch as needed)
     Clear {
         /// Specific PKI mount to clear

@@ -42,6 +42,11 @@ pub enum VaultCliError {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
+    /// Carries the whole report — every skipped subject and unread field — so
+    /// the caller prints one message rather than reconstructing the set.
+    #[error("Incomplete result: {0}")]
+    IncompleteRead(String),
+
     #[error("UTF-8 conversion error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
 }

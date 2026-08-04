@@ -4,6 +4,7 @@ use crate::storage::local::LocalStorage;
 use crate::utils::dns_discovery::get_vault_addr;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
+use crate::utils::partial::{Incomplete, Partial};
 use crate::vault::client::VaultClient;
 use std::io;
 
@@ -82,6 +83,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             only_revoked,
             exclude_revoked,
             eku,
+            allow_partial,
         } => {
             use crate::cert::{CertListFilter, CertificateListingService};
 
@@ -105,6 +107,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 pki_mount.as_deref(),
                 columns,
                 &filter,
+                allow_partial,
                 output,
             )
             .await
@@ -117,22 +120,25 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 }
             }
         }
-        CertCommands::ListMounts => {
+        CertCommands::ListMounts { allow_partial } => {
             let client = VaultClient::new().await?;
-
-            // List all PKI mounts with crypto types - UNIX friendly output
             let pki_mounts = client.list_pki_mounts().await?;
 
-            let mut mount_data = Vec::new();
+            // The mount name read fine; only the secondary query can fail, so
+            // the row stays and the cell is left empty rather than filled with
+            // a crypto type nobody detected.
+            let mut mount_data = Partial::new();
             for mount in pki_mounts {
-                let crypto_type = client
-                    .detect_crypto_type(&mount)
-                    .await
-                    .unwrap_or_else(|_| "unknown".to_string());
-                mount_data.push((mount, crypto_type));
+                match client.detect_crypto_type(&mount).await {
+                    Ok(crypto_type) => mount_data.push((mount, crypto_type)),
+                    Err(e) => {
+                        mount_data.fail(Incomplete::unread_field(&mount, "crypto type", e));
+                        mount_data.push((mount, String::new()));
+                    }
+                }
             }
 
-            output.print_key_value(&mount_data);
+            output.print_key_value(&mount_data.resolve(allow_partial)?);
             Ok(())
         }
         CertCommands::CaInfo {

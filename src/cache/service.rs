@@ -2,38 +2,41 @@ use crate::cli::args::CacheCommands;
 use crate::utils::errors::Result;
 use crate::utils::output::OutputFormat;
 
-pub async fn handle_cache_commands(command: CacheCommands, _output: &OutputFormat) -> Result<()> {
+pub async fn handle_cache_commands(command: CacheCommands, output: &OutputFormat) -> Result<()> {
     use crate::cert::CertificateService;
     let cert_service = CertificateService::new().await?;
 
     match command {
-        CacheCommands::Status => show_cache_status(&cert_service).await,
+        CacheCommands::Status { allow_partial } => {
+            show_cache_status(&cert_service, allow_partial, output).await
+        }
         CacheCommands::Clear { pki } => clear_cache(&cert_service, pki).await,
     }
 }
 
-async fn show_cache_status(cert_service: &crate::cert::CertificateService) -> Result<()> {
-    let stats = cert_service.get_cache_stats()?;
-    let total_entries: usize = stats.values().sum();
+/// The per-mount counts are what this command was asked for, so they go to
+/// stdout through `OutputFormat`; the totals above them are for a person.
+async fn show_cache_status(
+    cert_service: &crate::cert::CertificateService,
+    allow_partial: bool,
+    output: &OutputFormat,
+) -> Result<()> {
+    let mut stats = cert_service.get_cache_stats()?.resolve(allow_partial)?;
 
     if stats.is_empty() {
         eprintln!("No cache entries found");
         return Ok(());
     }
 
-    eprintln!("Cache Statistics:");
-    eprintln!("Total certificates cached: {total_entries}");
-    eprintln!("PKI mounts cached: {}", stats.len());
-    eprintln!();
-    eprintln!("Per-mount breakdown:");
+    stats.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let mut sorted_stats: Vec<_> = stats.into_iter().collect();
-    sorted_stats.sort_by(|a, b| a.0.cmp(&b.0));
+    let total: usize = stats
+        .iter()
+        .filter_map(|(_, count)| count.parse::<usize>().ok())
+        .sum();
+    eprintln!("{} PKI mounts cached, {total} certificates", stats.len());
 
-    for (mount, count) in sorted_stats {
-        eprintln!("  {mount}: {count} certificates");
-    }
-
+    output.print_key_value(&stats);
     Ok(())
 }
 

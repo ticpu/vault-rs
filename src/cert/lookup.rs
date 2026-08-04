@@ -55,6 +55,9 @@ pub async fn find_certificate_by_identifier(
         tracing::debug!("Searching for certificate by CN: '{}'", identifier);
         let cert_service = CertificateService::new().await?;
         let mut matching_certs = Vec::new();
+        // A record that could not be read may be the one asked for, so a miss
+        // has to report that rather than a clean absence.
+        let mut unreadable = Vec::new();
 
         for mount in &pki_mounts {
             tracing::debug!("Searching for CN '{}' in mount '{}'", identifier, mount);
@@ -62,12 +65,14 @@ pub async fn find_certificate_by_identifier(
                 .list_certificates_with_metadata(Some(mount))
                 .await
             {
-                Ok(certificates) => {
+                Ok(listing) => {
+                    let (certificates, failures) = listing.into_parts();
                     tracing::debug!(
                         "Found {} certificates in mount '{}'",
                         certificates.len(),
                         mount
                     );
+                    unreadable.extend(failures.into_iter().map(|f| f.subject));
                     for cert in certificates {
                         tracing::trace!("Checking certificate CN: '{}'", cert.cn);
                         if cert.cn == identifier {
@@ -80,22 +85,27 @@ pub async fn find_certificate_by_identifier(
                         }
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to list certificates in mount {}: {}", mount, e);
-                    continue;
-                }
+                Err(e) => unreadable.push(format!("{mount} ({e})")),
             }
         }
 
         if matching_certs.is_empty() {
+            let scope = if let Some(mount) = pki_mount_filter {
+                format!(" in PKI mount '{mount}'")
+            } else {
+                " in any PKI mount".to_string()
+            };
+            let caveat = if unreadable.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ". {} record(s) could not be read and may be the one you asked for: {}",
+                    unreadable.len(),
+                    unreadable.join(", ")
+                )
+            };
             return Err(VaultCliError::CertNotFound(format!(
-                "No certificate found with CN '{}'{}",
-                identifier,
-                if let Some(mount) = pki_mount_filter {
-                    format!(" in PKI mount '{mount}'")
-                } else {
-                    " in any PKI mount".to_string()
-                }
+                "No certificate found with CN '{identifier}'{scope}{caveat}"
             )));
         }
 

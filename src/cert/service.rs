@@ -1,7 +1,7 @@
 use crate::cert::{CertificateCache, CertificateMetadata, CertificateParser, SerialNumber};
 use crate::utils::errors::Result;
+use crate::utils::partial::{Incomplete, Partial};
 use crate::vault::client::VaultClient;
-use std::collections::HashMap;
 
 pub struct CertificateService {
     client: VaultClient,
@@ -16,30 +16,39 @@ impl CertificateService {
         })
     }
 
-    /// List certificates with metadata from all PKI mounts or specific mount
+    /// List certificates with metadata from all PKI mounts or specific mount.
+    ///
+    /// Certificates that could not be read come back as failures rather than
+    /// silently missing rows; the caller decides whether an incomplete listing
+    /// is an answer.
     pub async fn list_certificates_with_metadata(
         &self,
         pki_mount: Option<&str>,
-    ) -> Result<Vec<CertificateMetadata>> {
-        if let Some(mount) = pki_mount {
-            self.list_certificates_single_mount(mount).await
+    ) -> Result<Partial<CertificateMetadata>> {
+        let mut result = if let Some(mount) = pki_mount {
+            self.list_certificates_single_mount(mount).await?
         } else {
-            self.list_certificates_all_mounts().await
-        }
+            self.list_certificates_all_mounts().await?
+        };
+
+        // Soonest expiry first.
+        result.items_mut().sort_by_key(|c| c.not_after);
+
+        Ok(result)
     }
 
     /// List certificates with metadata from all PKI mounts
-    async fn list_certificates_all_mounts(&self) -> Result<Vec<CertificateMetadata>> {
+    async fn list_certificates_all_mounts(&self) -> Result<Partial<CertificateMetadata>> {
         let pki_mounts = self.client.list_pki_mounts().await?;
-        let mut all_certificates = Vec::new();
+        let mut all_certificates = Partial::new();
 
         for mount in pki_mounts {
-            let certs = self.list_certificates_single_mount(&mount).await?;
-            all_certificates.extend(certs);
+            // One unreadable mount used to abort the other nine.
+            match self.list_certificates_single_mount(&mount).await {
+                Ok(certs) => all_certificates.absorb(certs),
+                Err(e) => all_certificates.fail(Incomplete::record(&mount, e)),
+            }
         }
-
-        // Sort by not_after date, soonest expiry first
-        all_certificates.sort_by_key(|c| c.not_after);
 
         Ok(all_certificates)
     }
@@ -48,14 +57,14 @@ impl CertificateService {
     async fn list_certificates_single_mount(
         &self,
         pki_mount: &str,
-    ) -> Result<Vec<CertificateMetadata>> {
+    ) -> Result<Partial<CertificateMetadata>> {
         tracing::debug!("Listing certificates for PKI mount: {}", pki_mount);
 
         // Get list of certificate serials from Vault
         let serials = self.client.list_certificates(pki_mount).await?;
         tracing::debug!("Found {} certificates in Vault", serials.len());
 
-        let mut results = Vec::new();
+        let mut results = Partial::new();
         let mut to_fetch = Vec::new();
 
         // Check cache for each certificate
@@ -77,26 +86,22 @@ impl CertificateService {
             for serial in to_fetch.into_iter() {
                 match self.fetch_certificate_metadata(pki_mount, &serial).await {
                     Ok(metadata) => fetched_metadata.push(metadata),
-                    Err(e) => {
-                        tracing::warn!("Failed to fetch metadata for {}: {}", serial, e);
-                        // Continue with other certificates instead of failing completely
-                    }
+                    Err(e) => results.fail(Incomplete::record(serial.to_string(), e)),
                 }
             }
 
             // One rewrite of the mount's cache file for the whole batch,
-            // instead of update_entry's per-certificate rewrite (O(n^2) file
-            // writes on a cold cache).
+            // instead of a per-certificate rewrite (O(n^2) file writes on a
+            // cold cache).
             results.extend(fetched_metadata.iter().cloned());
+
+            // A failed cache write leaves the answer complete; only the next
+            // run is slower.
             if let Err(e) = self.cache.bulk_update(pki_mount, fetched_metadata) {
                 tracing::warn!("Failed to cache metadata batch for {}: {}", pki_mount, e);
             }
         }
 
-        // Sort by not_after date, soonest expiry first
-        results.sort_by_key(|c| c.not_after);
-
-        tracing::info!("Retrieved {} certificate metadata entries", results.len());
         Ok(results)
     }
 
@@ -135,7 +140,7 @@ impl CertificateService {
     }
 
     /// Get cache statistics
-    pub fn get_cache_stats(&self) -> Result<HashMap<String, usize>> {
+    pub fn get_cache_stats(&self) -> Result<Partial<(String, String)>> {
         self.cache.get_stats()
     }
 }

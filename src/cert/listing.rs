@@ -111,10 +111,19 @@ impl CertificateListingService {
         pki_mount: Option<&str>,
         columns: Option<String>,
         filter: &CertListFilter,
+        allow_partial: bool,
         output: &OutputFormat,
     ) -> Result<bool> {
         let cert_service = CertificateService::new().await?;
-        Self::list_vault_certificates(&cert_service, pki_mount, columns, filter, output).await
+        Self::list_vault_certificates(
+            &cert_service,
+            pki_mount,
+            columns,
+            filter,
+            allow_partial,
+            output,
+        )
+        .await
     }
 
     /// List certificates from Vault with column formatting. Returns whether at
@@ -124,6 +133,7 @@ impl CertificateListingService {
         pki_mount: Option<&str>,
         columns: Option<String>,
         filter: &CertListFilter,
+        allow_partial: bool,
         output: &OutputFormat,
     ) -> Result<bool> {
         if output.json && columns.is_some() {
@@ -134,7 +144,8 @@ impl CertificateListingService {
 
         let certificates = cert_service
             .list_certificates_with_metadata(pki_mount)
-            .await?;
+            .await?
+            .resolve(allow_partial)?;
 
         // Already sorted ascending by not_after (soonest expiry first) by
         // the service layer; filtering with retain-style semantics preserves it.

@@ -1,6 +1,7 @@
 use crate::cert::metadata::CertificateMetadata;
 use crate::cert::SerialNumber;
 use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::partial::{Incomplete, Partial};
 use crate::utils::paths::VaultCliPaths;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -190,19 +191,33 @@ impl CertificateCache {
         Ok(cleared_count)
     }
 
-    /// Get cache statistics
-    pub fn get_stats(&self) -> Result<HashMap<String, usize>> {
-        let mut stats = HashMap::new();
+    /// Per-mount entry counts.
+    ///
+    /// A mount whose file will not load keeps its row with no count: the name
+    /// came from the filename and read fine. Failing to read the directory at
+    /// all is different — that is not a partial answer, it is none, so it
+    /// propagates rather than reporting an empty cache.
+    pub fn get_stats(&self) -> Result<Partial<(String, String)>> {
+        let mut stats = Partial::new();
 
-        if let Ok(entries) = fs::read_dir(&self.cache_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                    if let Some(mount_name) = path.file_stem().and_then(|s| s.to_str()) {
-                        if let Ok(cache) = self.load_cache(mount_name) {
-                            stats.insert(mount_name.to_string(), cache.len());
-                        }
-                    }
+        if !self.cache_dir.exists() {
+            return Ok(stats);
+        }
+
+        for entry in fs::read_dir(&self.cache_dir)? {
+            let path = entry?.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(mount) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+
+            match self.load_cache(mount) {
+                Ok(cache) => stats.push((mount.to_string(), cache.len().to_string())),
+                Err(e) => {
+                    stats.fail(Incomplete::unread_field(mount, "entry count", e));
+                    stats.push((mount.to_string(), String::new()));
                 }
             }
         }
