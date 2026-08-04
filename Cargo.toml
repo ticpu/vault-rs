@@ -50,3 +50,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # DNS resolution
 hickory-resolver = "0.26"
 ordermap = "0.5.8"
+rustls-webpki = { version = "0.103", default-features = false, features = ["std", "aws-lc-rs"] }
+rustls-pki-types = "1"

@@ -14,6 +14,7 @@ pub mod serial;
 pub mod service;
 pub mod show;
 pub mod sign;
+pub mod verify;
 
 pub use ca_info::show_ca_info;
 pub use cache::CertificateCache;
@@ -31,3 +32,4 @@ pub use serial::SerialNumber;
 pub use service::CertificateService;
 pub use show::show_certificate;
 pub use sign::{sign_certificate_from_csr, CsrSignRequest};
+pub use verify::{verify_certificate, Purpose, VerifyRequest};

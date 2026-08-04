@@ -274,6 +274,22 @@ pub enum CertCommands {
         #[arg(long = "pki-mount", short = 'm', value_hint = clap::ValueHint::Other)]
         pki_mount: Option<String>,
     },
+    /// Verify a certificate against the CA a relying party actually loads:
+    /// chain, anchor match, purpose and expiry. Non-zero exit if any check fails
+    Verify {
+        /// Certificate file to verify (a leaf, or a bundle whose first entry is the leaf)
+        #[arg(value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+        certificate_file: String,
+        /// CA the relying party loads. The anchor that decides acceptance
+        #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+        against_ca: Option<String>,
+        /// Verify against this mount's CA instead of a file
+        #[arg(long = "pki-mount", short = 'm', conflicts_with = "against_ca", value_hint = clap::ValueHint::Other)]
+        pki_mount: Option<String>,
+        /// Require the certificate be usable for this purpose
+        #[arg(long, value_enum)]
+        purpose: Option<VerifyPurpose>,
+    },
     /// Create new certificate
     Create {
         /// PKI mount
@@ -499,6 +515,12 @@ pub enum CompletionHelperCommands {
 pub enum CryptoType {
     Rsa,
     Ec,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum VerifyPurpose {
+    ClientAuth,
+    ServerAuth,
 }
 
 impl CryptoType {

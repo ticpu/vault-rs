@@ -149,6 +149,35 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
 
             show_ca_info(&client, &mount, output).await
         }
+        CertCommands::Verify {
+            certificate_file,
+            against_ca,
+            pki_mount,
+            purpose,
+        } => {
+            use crate::cert::{verify_certificate, Purpose, VerifyRequest};
+
+            let request = VerifyRequest {
+                certificate_file,
+                against_ca,
+                pki_mount,
+                purpose: purpose.map(|p| match p {
+                    VerifyPurpose::ClientAuth => Purpose::ClientAuth,
+                    VerifyPurpose::ServerAuth => Purpose::ServerAuth,
+                }),
+            };
+
+            // A failed check is a verdict, not a malfunction: report it on the
+            // exit code without the error formatting a fault would get.
+            match verify_certificate(&client, request, output).await {
+                Ok(true) => Ok(()),
+                Ok(false) => std::process::exit(1),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(2);
+                }
+            }
+        }
         CertCommands::ListRoles { pki_mount } => {
             // List available roles in PKI mount - UNIX friendly output
             match client.list_roles(&pki_mount).await {
