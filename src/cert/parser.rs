@@ -216,3 +216,78 @@ impl CertificateParser {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> CertificateMetadata {
+        let pem = include_testdata(name);
+        CertificateParser::parse_pem(&pem, "test-mount").expect("fixture should parse")
+    }
+
+    fn include_testdata(name: &str) -> String {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/cert/testdata/");
+        std::fs::read_to_string(format!("{path}{name}.pem"))
+            .unwrap_or_else(|e| panic!("missing fixture {name}.pem: {e}"))
+    }
+
+    #[test]
+    fn client_auth_eku_is_read() {
+        assert_eq!(fixture("eku-client").extended_key_usage, ["ClientAuth"]);
+    }
+
+    #[test]
+    fn server_auth_eku_is_read() {
+        assert_eq!(fixture("eku-server").extended_key_usage, ["ServerAuth"]);
+    }
+
+    #[test]
+    fn multiple_ekus_are_read() {
+        assert_eq!(
+            fixture("eku-client-server").extended_key_usage,
+            ["ServerAuth", "ClientAuth"]
+        );
+    }
+
+    /// The certificate carries digitalSignature + keyEncipherment + a SAN, which
+    /// the removed heuristic reported as "Server". Absent must stay absent.
+    #[test]
+    fn absent_eku_stays_empty() {
+        let cert = fixture("eku-none");
+        assert!(cert.extended_key_usage.is_empty());
+        assert_eq!(cert.key_usage, ["DigitalSignature", "KeyEncipherment"]);
+        assert!(!cert.sans.is_empty());
+    }
+
+    #[test]
+    fn unrecognised_eku_keeps_its_oid() {
+        assert_eq!(
+            fixture("eku-unknown").extended_key_usage,
+            ["1.3.6.1.4.1.99999.1"]
+        );
+    }
+
+    #[test]
+    fn ca_certificate_is_flagged() {
+        assert!(fixture("ca-root").is_ca);
+        assert!(!fixture("leaf-client").is_ca);
+    }
+
+    #[test]
+    fn subject_and_issuer_come_from_the_certificate() {
+        let leaf = fixture("leaf-client");
+        assert_eq!(leaf.cn, "leaf-client");
+        assert_eq!(leaf.issuer, "Example Intermediate CA");
+    }
+
+    #[test]
+    fn sans_are_extracted() {
+        assert_eq!(fixture("eku-client").sans, ["eku-client.example.test"]);
+    }
+
+    #[test]
+    fn non_certificate_input_is_rejected() {
+        assert!(CertificateParser::parse_pem("not a certificate", "m").is_err());
+    }
+}
