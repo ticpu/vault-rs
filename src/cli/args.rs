@@ -304,7 +304,7 @@ pub enum CertCommands {
         /// PKI mount (for CN lookups, optional)
         #[arg(long)]
         pki_mount: Option<String>,
-        /// Export formats
+        /// Export format: pem, der, key, p12, chain, or all
         #[arg(long, default_value = "pem")]
         format: ExportFormat,
         /// Output directory (default: stdout for PEM format)
@@ -343,7 +343,7 @@ pub enum CertCommands {
     ExportBySerial {
         /// Certificate serial number
         serial: String,
-        /// Export formats
+        /// Export format: pem, der, key, p12, chain, or all
         #[arg(long, default_value = "all")]
         format: ExportFormat,
         /// Output directory
@@ -471,7 +471,7 @@ impl CryptoType {
 #[derive(ValueEnum, Clone, Debug)]
 pub enum ExportFormat {
     Pem,
-    Crt,
+    Der,
     Key,
     P12,
     Chain,

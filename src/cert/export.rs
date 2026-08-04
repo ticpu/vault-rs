@@ -4,10 +4,13 @@ use crate::storage::local::LocalStorage;
 use crate::storage::CertificateStorage;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::pem::{PemCertificate, PemCertificateBundle, PemCertificateChain, PemPrivateKey};
-use crate::utils::{parse_certificate_chain, write_output_or_print, write_to_file};
+use crate::utils::{
+    parse_certificate_chain, write_output_or_print, write_output_or_print_bytes, write_to_file,
+};
 use crate::vault::client::VaultClient;
 use std::fs;
 use std::path::Path;
+use x509_parser::pem::parse_x509_pem;
 
 pub struct ExportCertificateRequest {
     pub pem_data: String,
@@ -182,16 +185,24 @@ async fn export_pem_certificate(
     }
 }
 
-/// Certificate only to .crt file
-async fn export_crt_certificate(
+/// Convert PEM certificate data to raw DER bytes
+fn pem_to_der(pem_data: &str) -> Result<Vec<u8>> {
+    let (_, pem) = parse_x509_pem(pem_data.as_bytes()).map_err(|e| {
+        VaultCliError::CertParsing(format!("Failed to parse PEM for DER export: {e}"))
+    })?;
+    Ok(pem.contents)
+}
+
+/// Certificate only, DER-encoded (binary)
+async fn export_der_certificate(
     request: &ExportCertificateRequest,
     certificate: PemCertificate,
 ) -> Result<()> {
-    let dir = request.output_dir.as_deref().unwrap_or(".");
-    write_to_file(
-        dir,
-        &format!("{}.crt", sanitize_filename(&request.identifier)),
-        certificate.pem_data(),
+    let der = pem_to_der(certificate.pem_data())?;
+    write_output_or_print_bytes(
+        request.output_dir.as_deref(),
+        &format!("{}.der", sanitize_filename(&request.identifier)),
+        &der,
     )
 }
 
@@ -268,7 +279,7 @@ pub async fn export_certificate(
 
     match request.format {
         ExportFormat::Pem => export_pem_certificate(&request, certificate).await,
-        ExportFormat::Crt => export_crt_certificate(&request, certificate).await,
+        ExportFormat::Der => export_der_certificate(&request, certificate).await,
         ExportFormat::Chain => export_certificate_chain(client, &request, certificate).await,
         ExportFormat::Key => export_key(client, &request).await,
         ExportFormat::P12 => export_p12(client, &request).await,
@@ -294,4 +305,31 @@ async fn get_ca_chain_safe(client: &VaultClient, mount: &str) -> String {
 /// Sanitize filename by replacing problematic characters
 fn sanitize_filename(name: &str) -> String {
     name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use x509_parser::prelude::{FromDer, X509Certificate};
+
+    fn testdata(name: &str) -> String {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/cert/testdata/");
+        std::fs::read_to_string(format!("{path}{name}.pem"))
+            .unwrap_or_else(|e| panic!("missing fixture {name}.pem: {e}"))
+    }
+
+    #[test]
+    fn der_export_is_valid_der_matching_the_pem_subject() {
+        let pem_text = testdata("leaf-client");
+        let der = pem_to_der(&pem_text).expect("PEM fixture should convert to DER");
+
+        assert_eq!(der[0], 0x30, "DER certificates are a SEQUENCE (tag 0x30)");
+
+        let (_, from_der) = X509Certificate::from_der(&der).expect("DER should reparse");
+        let (_, pem) = parse_x509_pem(pem_text.as_bytes()).expect("fixture should parse as PEM");
+        let (_, from_pem) =
+            X509Certificate::from_der(&pem.contents).expect("PEM contents should parse");
+
+        assert_eq!(from_der.subject(), from_pem.subject());
+    }
 }

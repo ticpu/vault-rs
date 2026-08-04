@@ -89,8 +89,8 @@ pub fn create_p12_file(
     Ok(())
 }
 
-/// Write data to file, creating directories as needed
-pub fn write_to_file(dir: &str, filename: &str, data: &str) -> Result<()> {
+/// Write bytes to file, creating directories as needed
+fn write_bytes_to_file(dir: &str, filename: &str, data: &[u8]) -> Result<()> {
     let path = Path::new(dir);
     fs::create_dir_all(path)?;
 
@@ -99,6 +99,16 @@ pub fn write_to_file(dir: &str, filename: &str, data: &str) -> Result<()> {
 
     eprintln!("Certificate exported to: {}", file_path.display());
     Ok(())
+}
+
+/// Write text data to file, creating directories as needed
+pub fn write_to_file(dir: &str, filename: &str, data: &str) -> Result<()> {
+    write_bytes_to_file(dir, filename, data.as_bytes())
+}
+
+/// Write binary data to file, creating directories as needed
+pub fn write_to_file_bytes(dir: &str, filename: &str, data: &[u8]) -> Result<()> {
+    write_bytes_to_file(dir, filename, data)
 }
 
 /// Auto-detect crypto type for a PKI mount or use provided type
@@ -149,6 +159,21 @@ pub fn write_output_or_print(
         write_to_file(dir, filename, content)?;
     } else {
         println!("{content}");
+    }
+    Ok(())
+}
+
+/// Write binary content to file or stdout based on output directory
+pub fn write_output_or_print_bytes(
+    output_dir: Option<&str>,
+    filename: &str,
+    content: &[u8],
+) -> Result<()> {
+    if let Some(dir) = output_dir {
+        write_to_file_bytes(dir, filename, content)?;
+    } else {
+        use std::io::Write;
+        std::io::stdout().write_all(content)?;
     }
     Ok(())
 }
