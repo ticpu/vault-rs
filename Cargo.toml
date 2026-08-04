@@ -2,8 +2,9 @@
 name = "vault-rs"
 version = "1.0.0"
 edition = "2021"
-authors = ["Vault CLI Team"]
+authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "A secure Vault PKI management tool for sysadmins"
+license = "GPL-3.0-only"
 
 [[bin]]
 name = "vault-rs"
