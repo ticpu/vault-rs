@@ -58,15 +58,14 @@ async fn get_certificate_data_from_storage(
 }
 
 /// Build PEM certificate chain from CA chain PEM data
-fn build_ca_chain(ca_chain_pem: &str) -> PemCertificateChain {
+fn build_ca_chain(ca_chain_pem: &str) -> Result<PemCertificateChain> {
     let mut ca_chain = PemCertificateChain::new();
     if !ca_chain_pem.is_empty() {
-        let ca_certs = parse_certificate_chain(ca_chain_pem);
-        for ca_cert in ca_certs {
+        for ca_cert in parse_certificate_chain(ca_chain_pem)? {
             ca_chain.add_certificate(ca_cert);
         }
     }
-    ca_chain
+    Ok(ca_chain)
 }
 
 /// Get certificate bundle from local storage
@@ -89,7 +88,7 @@ async fn get_certificate_bundle_from_storage(
 
     let pem_key = PemPrivateKey::new(private_key);
     let pem_cert = PemCertificate::new(certificate_pem);
-    let ca_chain = build_ca_chain(&ca_chain_pem);
+    let ca_chain = build_ca_chain(&ca_chain_pem)?;
 
     Ok((Some(pem_key), pem_cert, ca_chain))
 }
@@ -122,7 +121,7 @@ async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) ->
 
     let private_key = PemPrivateKey::new(private_key);
     let certificate = PemCertificate::new(certificate_pem);
-    let ca_chain = build_ca_chain(&ca_chain_pem);
+    let ca_chain = build_ca_chain(&ca_chain_pem)?;
 
     let dir = request.output_dir.as_deref().unwrap_or(".");
     let p12_filename = format!("{}.p12", sanitize_filename(&request.identifier));
@@ -227,7 +226,7 @@ async fn export_certificate_chain(
     include_root: bool,
 ) -> Result<()> {
     let ca_chain_pem = client.get_ca_chain(&request.mount).await?;
-    let ca_chain = build_ca_chain(&ca_chain_pem);
+    let ca_chain = build_ca_chain(&ca_chain_pem)?;
     if ca_chain.certificates().is_empty() {
         return Err(VaultCliError::InvalidInput(format!(
             "Mount '{}' has no CA chain configured",
@@ -316,7 +315,7 @@ pub async fn export_certificate(
     request: ExportCertificateRequest,
 ) -> Result<()> {
     // Parse input PEM data to get the first certificate (leaf certificate)
-    let parsed_certs = parse_certificate_chain(&request.pem_data);
+    let parsed_certs = parse_certificate_chain(&request.pem_data)?;
     let certificate = if let Some(first_cert) = parsed_certs.first() {
         first_cert.clone()
     } else {
@@ -390,6 +389,7 @@ mod tests {
         // without_root() must run on the CA chain before the leaf is added;
         // otherwise exporting a self-signed root as the leaf filters it too.
         let ca_chain = build_ca_chain(&root_pem)
+            .expect("fixture parses")
             .without_root()
             .expect("self-signed check should succeed");
 

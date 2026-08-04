@@ -17,7 +17,7 @@ use std::path::PathBuf;
 /// looks stale, and the test suite cannot see it, because fixtures go through
 /// the parser and never through the cache. This number is what makes such a fix
 /// self-invalidating instead of dependent on someone being told to clear it.
-const CACHE_SCHEMA_VERSION: u32 = 1;
+const CACHE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CacheEntry {

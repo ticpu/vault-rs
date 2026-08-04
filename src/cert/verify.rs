@@ -101,7 +101,7 @@ pub async fn verify_certificate(
     })?;
 
     let anchor_pem = load_anchor(client, &request).await?;
-    let bundle = PemCertificateChain::from_pem(&leaf_pem);
+    let bundle = PemCertificateChain::from_pem(&leaf_pem)?;
     let (leaf_pem_text, intermediate_pems) = split_leaf(&bundle, &request.certificate_file)?;
 
     let leaf_der = to_der(&leaf_pem_text, "certificate")?;
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn a_fullchain_file_splits_into_leaf_and_intermediates() {
-        let bundle = PemCertificateChain::from_pem(&testdata("chain-with-root"));
+        let bundle = PemCertificateChain::from_pem(&testdata("chain-with-root")).unwrap();
         let (leaf, rest) = split_leaf(&bundle, "chain-with-root.pem").unwrap();
         assert!(leaf.contains("BEGIN CERTIFICATE"));
         assert_eq!(rest.len(), 2);

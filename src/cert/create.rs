@@ -150,7 +150,7 @@ pub async fn create_certificate(
         let pem_key = PemPrivateKey::new(private_key.to_string());
         let pem_cert = PemCertificate::new(certificate.to_string());
         let pem_issuing_ca = PemCertificate::new(issuing_ca.to_string());
-        let ca_chain_with_root = PemCertificateChain::from_pem(&ca_chain);
+        let ca_chain_with_root = PemCertificateChain::from_pem(&ca_chain)?;
         let ca_chain_no_root = ca_chain_with_root.without_root()?;
 
         // Write certificate files

@@ -75,10 +75,10 @@ pub fn parse_ca_info(pem_data: &str) -> Result<CaCertInfo> {
     let (_, cert) = X509Certificate::from_der(&pem.contents)
         .map_err(|e| VaultCliError::CertParsing(format!("DER parsing error: {e}")))?;
 
-    let not_before = DateTime::from_timestamp(cert.validity().not_before.timestamp(), 0)
-        .unwrap_or_else(Utc::now);
+    let not_before =
+        crate::cert::parser::timestamp(cert.validity().not_before.timestamp(), "notBefore")?;
     let not_after =
-        DateTime::from_timestamp(cert.validity().not_after.timestamp(), 0).unwrap_or_else(Utc::now);
+        crate::cert::parser::timestamp(cert.validity().not_after.timestamp(), "notAfter")?;
 
     Ok(CaCertInfo {
         subject: cert.subject().to_string(),

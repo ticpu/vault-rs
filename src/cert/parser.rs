@@ -12,6 +12,32 @@ const KEY_USAGE_OID: oid::Oid = oid!(2.5.29 .15);
 const EXTENDED_KEY_USAGE_OID: oid::Oid = oid!(2.5.29 .37);
 const BASIC_CONSTRAINTS_OID: oid::Oid = oid!(2.5.29 .19);
 
+/// A UNIX timestamp as a date, or an error naming the field.
+///
+/// The alternative every call site used was `unwrap_or_else(Utc::now)`, which
+/// puts the current time where a reading belongs — indistinguishable from a
+/// certificate that really does expire now.
+pub(crate) fn timestamp(seconds: i64, field: &str) -> Result<DateTime<Utc>> {
+    DateTime::from_timestamp(seconds, 0).ok_or_else(|| {
+        VaultCliError::CertParsing(format!("{field} is not a representable date: {seconds}"))
+    })
+}
+
+/// A distinguished name's common name, absent or unreadable reported as such.
+///
+/// Both used to collapse into the literal `Unknown`, so a CN whose encoding
+/// this parser cannot decode printed identically to one that says "Unknown"
+/// and to one that has none at all.
+fn common_name(name: &x509_parser::x509::X509Name, which: &str) -> Result<String> {
+    let Some(attribute) = name.iter_common_name().next() else {
+        return Ok(format!("(no {which} CN)"));
+    };
+
+    attribute.as_str().map(str::to_string).map_err(|e| {
+        VaultCliError::CertParsing(format!("{which} CN is present but not readable: {e}"))
+    })
+}
+
 pub struct CertificateParser;
 
 impl CertificateParser {
@@ -63,29 +89,15 @@ impl CertificateParser {
         // Extract serial number - normalize to continuous hex format
         let serial = SerialNumber::new(&hex::encode(cert.serial.to_bytes_be()));
 
-        // Extract subject CN
-        let cn = cert
-            .subject()
-            .iter_common_name()
-            .next()
-            .and_then(|cn| cn.as_str().ok())
-            .unwrap_or("Unknown")
-            .to_string();
-
-        // Extract issuer
-        let issuer = cert
-            .issuer()
-            .iter_common_name()
-            .next()
-            .and_then(|cn| cn.as_str().ok())
-            .unwrap_or("Unknown")
-            .to_string();
+        let cn = common_name(cert.subject(), "subject")?;
+        let issuer = common_name(cert.issuer(), "issuer")?;
 
         // Extract validity dates
-        let not_before = DateTime::from_timestamp(cert.validity().not_before.timestamp(), 0)
-            .unwrap_or_else(Utc::now);
-        let not_after = DateTime::from_timestamp(cert.validity().not_after.timestamp(), 0)
-            .unwrap_or_else(Utc::now);
+        // Rendering an unrepresentable validity as the current time made a
+        // certificate read as expiring now, which --expiring-within reports as
+        // a match, and the cache then served that conclusion from disk.
+        let not_before = timestamp(cert.validity().not_before.timestamp(), "notBefore")?;
+        let not_after = timestamp(cert.validity().not_after.timestamp(), "notAfter")?;
 
         Ok(CertificateMetadata {
             serial,

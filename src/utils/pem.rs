@@ -133,10 +133,10 @@ impl PemCertificateChain {
 
     /// Create a chain from one blob holding several concatenated certificates,
     /// which is how Vault returns `ca_chain`.
-    pub fn from_pem(pem_data: &str) -> Self {
-        Self {
-            certificates: parse_certificate_chain(pem_data),
-        }
+    pub fn from_pem(pem_data: &str) -> Result<Self> {
+        Ok(Self {
+            certificates: parse_certificate_chain(pem_data)?,
+        })
     }
 
     /// Add a certificate to the chain
@@ -275,14 +275,24 @@ fn normalize_pem(pem_data: &str) -> String {
     }
 }
 
-/// Parse multiple certificates from a PEM string
-pub fn parse_certificate_chain(pem_data: &str) -> Vec<PemCertificate> {
+/// Parse multiple certificates from a PEM string.
+///
+/// A block that does not end, or does not parse, is an error rather than a
+/// shorter chain: a truncated file used to come back one certificate light,
+/// and the caller had no way to tell that from a chain of that length.
+pub fn parse_certificate_chain(pem_data: &str) -> Result<Vec<PemCertificate>> {
     let mut certificates = Vec::new();
     let mut current_cert = String::new();
     let mut in_cert = false;
 
     for line in pem_data.lines() {
         if line.starts_with("-----BEGIN CERTIFICATE-----") {
+            if in_cert {
+                return Err(VaultCliError::CertParsing(format!(
+                    "PEM block {} begins before the previous one ends",
+                    certificates.len() + 1
+                )));
+            }
             in_cert = true;
             current_cert.clear();
             current_cert.push_str(line);
@@ -290,6 +300,14 @@ pub fn parse_certificate_chain(pem_data: &str) -> Vec<PemCertificate> {
         } else if line.starts_with("-----END CERTIFICATE-----") {
             current_cert.push_str(line);
             current_cert.push('\n');
+
+            parse_x509_pem(current_cert.as_bytes()).map_err(|e| {
+                VaultCliError::CertParsing(format!(
+                    "PEM block {} does not parse: {e}",
+                    certificates.len() + 1
+                ))
+            })?;
+
             certificates.push(PemCertificate::new(current_cert.clone()));
             current_cert.clear();
             in_cert = false;
@@ -299,7 +317,14 @@ pub fn parse_certificate_chain(pem_data: &str) -> Vec<PemCertificate> {
         }
     }
 
-    certificates
+    if in_cert {
+        return Err(VaultCliError::CertParsing(format!(
+            "PEM block {} has no END CERTIFICATE line",
+            certificates.len() + 1
+        )));
+    }
+
+    Ok(certificates)
 }
 
 #[cfg(test)]
@@ -345,8 +370,27 @@ mod tests {
         // separating newline glue END/BEGIN markers onto one line.
         assert!(!combined.contains("----------"));
 
-        let parsed = parse_certificate_chain(&combined);
+        let parsed = parse_certificate_chain(&combined).expect("fixtures parse");
         assert_eq!(parsed.len(), 2);
+    }
+
+    /// A truncated file used to come back one certificate short, which the
+    /// caller could not tell from a chain of that length.
+    #[test]
+    fn a_truncated_block_is_an_error_not_a_shorter_chain() {
+        let mut truncated = testdata("chain-no-root");
+        truncated.truncate(truncated.len() - 40);
+
+        let err = parse_certificate_chain(&truncated)
+            .expect_err("a block with no END line is not a chain")
+            .to_string();
+        assert!(err.contains("END CERTIFICATE"), "{err}");
+    }
+
+    #[test]
+    fn a_block_that_does_not_parse_is_an_error() {
+        let corrupt = "-----BEGIN CERTIFICATE-----\nnot base64 at all\n-----END CERTIFICATE-----\n";
+        assert!(parse_certificate_chain(corrupt).is_err());
     }
 
     #[test]
@@ -358,7 +402,7 @@ mod tests {
 
     fn chain_from_fixture(name: &str) -> PemCertificateChain {
         let mut chain = PemCertificateChain::new();
-        for cert in parse_certificate_chain(&testdata(name)) {
+        for cert in parse_certificate_chain(&testdata(name)).expect("fixture parses") {
             chain.add_certificate(cert);
         }
         chain

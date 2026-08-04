@@ -119,7 +119,8 @@ impl CertificateService {
         // Set revocation time from Vault response
         metadata.revocation_time = cert_data
             .revocation_time
-            .map(|t| chrono::DateTime::from_timestamp(t, 0).unwrap_or_else(chrono::Utc::now));
+            .map(|t| crate::cert::parser::timestamp(t, "revocation_time"))
+            .transpose()?;
 
         tracing::debug!(
             "Parsed metadata for CN: {} (serial: {})",

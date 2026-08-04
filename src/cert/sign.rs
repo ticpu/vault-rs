@@ -169,7 +169,7 @@ pub async fn sign_certificate_from_csr(
         // Write certificate files (no private key for CSR signing)
         let pem_cert = PemCertificate::new(certificate.to_string());
         let pem_issuing_ca = PemCertificate::new(issuing_ca.to_string());
-        let ca_chain_with_root = PemCertificateChain::from_pem(&ca_chain);
+        let ca_chain_with_root = PemCertificateChain::from_pem(&ca_chain)?;
         let ca_chain_no_root = ca_chain_with_root.without_root()?;
         fs::write(
             export_path.join(format!("{}.crt", request.cn)),

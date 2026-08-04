@@ -24,12 +24,15 @@ pub fn parse_csr_pem(pem_data: &str) -> Result<CsrInfo> {
 
     let info = &csr.certification_request_info;
 
-    let subject_cn = info
-        .subject
-        .iter_common_name()
-        .next()
-        .and_then(|cn| cn.as_str().ok())
-        .map(str::to_string);
+    // Present-but-unreadable is not absent: reporting "CSR has no CN" for an
+    // encoding this parser cannot decode sends the requester to fix the wrong
+    // thing.
+    let subject_cn = match info.subject.iter_common_name().next() {
+        Some(attribute) => Some(attribute.as_str().map(str::to_string).map_err(|e| {
+            VaultCliError::CertParsing(format!("CSR CN is present but not readable: {e}"))
+        })?),
+        None => None,
+    };
 
     let sans = csr
         .requested_extensions()
