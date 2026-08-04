@@ -340,7 +340,20 @@ pub async fn export_certificate(
 
 /// Sanitize filename by replacing problematic characters
 fn sanitize_filename(name: &str) -> String {
-    name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+    let mut result = String::with_capacity(name.len());
+    let mut in_run = false;
+    for c in name.chars() {
+        if c.is_whitespace() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+            if !in_run {
+                result.push('_');
+                in_run = true;
+            }
+        } else {
+            result.push(c);
+            in_run = false;
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -392,6 +405,16 @@ mod tests {
             "root is self-signed and dropped from the CA chain, leaf remains"
         );
         assert_eq!(chain.certificates()[0].pem_data(), leaf.pem_data());
+    }
+
+    #[test]
+    fn sanitize_filename_replaces_and_collapses_whitespace() {
+        assert_eq!(sanitize_filename("CC Root CA E1"), "CC_Root_CA_E1");
+        assert_eq!(sanitize_filename("CC  Root:CA"), "CC_Root_CA");
+        assert_eq!(
+            sanitize_filename("a/b\\c*d?e\"f<g>h|i"),
+            "a_b_c_d_e_f_g_h_i"
+        );
     }
 
     /// A local store with no matching record makes `get_certificate_bundle_from_storage`
