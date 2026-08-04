@@ -127,34 +127,29 @@ fn eku_field(role: &RoleConfig) -> IdentityField {
     )
 }
 
-/// `use_csr_sans` only governs the CSR's own SAN extension: `--alt-names` and
-/// `--ip-sans` are separate request parameters Vault always honors.
+/// Three independent sources, governed by different role flags: the CSR's own
+/// SAN extension (`use_csr_sans`), the common name folded in as a DNS SAN
+/// (`exclude_cn_from_sans`), and the `--alt-names`/`--ip-sans` request
+/// parameters, which Vault honors regardless of either flag.
 ///
-/// The CN-folded-in-as-a-DNS-SAN entry is the one line here derived from Vault's
-/// documented behaviour rather than from configuration this tool read, and it
-/// holds only for a hostname-shaped CN. It says "expected" for that reason;
-/// every other annotation names a field that was actually read.
+/// The folded-in CN is the one entry not derived from configuration read here.
+/// Vault does not report `exclude_cn_from_sans` on a role read — it is accepted
+/// on write and never echoed — so whether the CN becomes a SAN cannot be known,
+/// only predicted from the documented default. The annotation says so; every
+/// other one names a field that was actually read.
 fn san_field(input: &PlanInput, cn: &EffectiveCn) -> IdentityField {
     let mut entries = Vec::new();
+    let csr_sans = input.csr.map(|csr| csr.sans.as_slice()).unwrap_or(&[]);
 
     if input.role.use_csr_sans {
-        if let Some(csr) = input.csr {
-            for san in &csr.sans {
-                entries.push((san.clone(), "from CSR (role use_csr_sans=true)".to_string()));
-            }
+        for san in csr_sans {
+            entries.push((san.clone(), "from CSR (role use_csr_sans=true)".to_string()));
         }
-    } else if input.csr.is_some() {
-        entries.push((
-            format!("DNS:{}", cn.value),
-            "expected from Vault; CSR SANs dropped, use_csr_sans=false".to_string(),
-        ));
-    } else {
-        entries.push((
-            format!("DNS:{}", cn.value),
-            "expected from Vault".to_string(),
-        ));
     }
-
+    entries.push((
+        format!("DNS:{}", cn.value),
+        "expected from Vault; suppressed if the role sets exclude_cn_from_sans, which it does not report".to_string(),
+    ));
     for name in input.alt_names_arg {
         entries.push((format!("DNS:{name}"), "argument --alt-names".to_string()));
     }
@@ -162,7 +157,18 @@ fn san_field(input: &PlanInput, cn: &EffectiveCn) -> IdentityField {
         entries.push((format!("IP:{ip}"), "argument --ip-sans".to_string()));
     }
 
-    IdentityField::from_sourced_values("san", entries, Some("no SANs will be set"))
+    let mut field = IdentityField::from_sourced_values("san", entries, Some("no SANs will be set"));
+
+    // Naming what will be dropped is the point of the rehearsal: the requester
+    // cannot fix a discarded SAN after the fact, it needs a new CSR.
+    if !input.role.use_csr_sans && !csr_sans.is_empty() {
+        field.details.push((
+            csr_sans.join(", "),
+            "dropped: role use_csr_sans=false".to_string(),
+        ));
+    }
+
+    field
 }
 
 fn validity_field(input: &PlanInput) -> IdentityField {
@@ -333,11 +339,40 @@ mod tests {
         let fields = build_plan(&input);
         let san = field(&fields, "san");
         assert_eq!(san.value, "DNS:partner-app");
-        assert!(san
-            .annotation
-            .as_ref()
-            .unwrap()
-            .contains("CSR SANs dropped, use_csr_sans=false"));
+        // What the requester loses is named, and named as a drop rather than
+        // listed among the values that will be set.
+        assert!(
+            san.details
+                .iter()
+                .any(|(values, note)| values.contains("partner-app.example.test")
+                    && note.contains("use_csr_sans=false")),
+            "{:?}",
+            san.details
+        );
+    }
+
+    /// The old wording claimed CSR SANs were dropped even for a CSR that
+    /// carried none, which is a drop that never happened.
+    #[test]
+    fn nothing_is_reported_dropped_when_the_csr_has_no_sans() {
+        let role = csr_signing_role();
+        let mut csr = csr_with_cn("partner-app");
+        csr.sans.clear();
+        let input = PlanInput {
+            role: &role,
+            cn_arg: "partner-app",
+            crypto_arg: None,
+            alt_names_arg: &[],
+            ip_sans_arg: &[],
+            ttl_arg: None,
+            csr: Some(&csr),
+            issuer_cn: "Example Issuing CA",
+        };
+
+        let san = &build_plan(&input);
+        let san = field(san, "san");
+        assert_eq!(san.value, "DNS:partner-app");
+        assert!(san.details.is_empty(), "{:?}", san.details);
     }
 
     #[test]
@@ -380,7 +415,8 @@ mod tests {
         assert!(san.value.contains("DNS:partner-app"));
         // Two distinct sources: broken down, not collapsed into one annotation.
         assert!(san.annotation.is_none());
-        assert_eq!(san.details.len(), 2);
+        // Both sources, plus the note for what the role discards.
+        assert_eq!(san.details.len(), 3, "{:?}", san.details);
     }
 
     #[test]

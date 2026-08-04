@@ -216,25 +216,28 @@ impl CertificateStorageHelper {
         use crate::storage::{CertificateData, LocalStorage, StorageCertificateMetadata};
         use chrono::Utc;
 
-        // The real expiry, read off the certificate being stored: `storage
-        // list --expired`/`--expires-soon` filter on this field.
-        let not_after = CertificateParser::parse_pem(certificate_pem, pki_mount)?.not_after;
+        // Filed under the identity the CA actually issued, not the one that was
+        // asked for: a role with use_csr_common_name leaves the CN argument
+        // inert, and storing that name puts the certificate under a CN no
+        // lookup will ever match. Expiry likewise comes off the certificate —
+        // `storage list --expired`/`--expires-soon` filter on it.
+        let issued = CertificateParser::parse_pem(certificate_pem, pki_mount)?;
 
         let storage = LocalStorage::new().await?;
         let metadata = StorageCertificateMetadata {
             serial: self.serial.replace(':', "").to_lowercase(),
-            cn: self.cn.clone(),
+            cn: issued.cn.clone(),
             role: self.role.clone(),
             crypto: self.crypto.clone(),
             created: Utc::now(),
-            expires: not_after,
+            expires: issued.not_after,
             status: CertStatus::Active,
-            sans: self.sans.clone(),
+            sans: issued.sans.clone(),
         };
 
         let cert_data = CertificateData {
             pki_mount,
-            cn: &self.cn,
+            cn: &issued.cn,
             certificate_pem,
             private_key_pem: private_key_pem.unwrap_or(""),
             ca_chain_pem,

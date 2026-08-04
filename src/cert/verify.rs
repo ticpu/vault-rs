@@ -89,7 +89,7 @@ impl Check {
 
 /// Returns whether every check passed; the caller maps that to an exit code.
 pub async fn verify_certificate(
-    client: &VaultClient,
+    client: Option<&VaultClient>,
     request: VerifyRequest,
     output: &OutputFormat,
 ) -> Result<bool> {
@@ -139,11 +139,16 @@ pub async fn verify_certificate(
 /// The anchor is whatever the relying party loads. A mount is the same choice
 /// made in advance, so it is offered, but never as a silent default: without
 /// either the command has nothing to verify against.
-async fn load_anchor(client: &VaultClient, request: &VerifyRequest) -> Result<String> {
+async fn load_anchor(client: Option<&VaultClient>, request: &VerifyRequest) -> Result<String> {
     match (&request.against_ca, &request.pki_mount) {
         (Some(path), _) => std::fs::read_to_string(path)
             .map_err(|e| VaultCliError::Storage(format!("Failed to read CA '{path}': {e}"))),
-        (None, Some(mount)) => client.get_ca_certificate(mount).await,
+        (None, Some(mount)) => match client {
+            Some(client) => client.get_ca_certificate(mount).await,
+            None => Err(VaultCliError::Config(
+                "a mount was given but no Vault client was built".to_string(),
+            )),
+        },
         (None, None) => Err(VaultCliError::InvalidInput(
             "one of --against-ca or --pki-mount is required: verification needs an anchor"
                 .to_string(),
@@ -242,11 +247,15 @@ fn check_anchor(leaf_pem: &str, anchor_pem: &str, intermediate_pems: &[String]) 
     let leaf = parse_ca_info(leaf_pem)?;
     let anchor = parse_ca_info(anchor_pem)?;
 
+    // Not a failure: RFC 5280 does not require an authority key identifier, and
+    // one given as issuer-and-serial carries no key id to compare. The chain
+    // check verifies signatures either way, so treating absence as a failure
+    // would reject certificates every relying party accepts.
     let Some(aki) = leaf.authority_key_identifier else {
         return Ok(Check::new(
             "anchor",
-            false,
-            "certificate carries no authority key identifier",
+            true,
+            "no authority key identifier to match; chain check governs",
         ));
     };
 

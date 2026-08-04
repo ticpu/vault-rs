@@ -158,7 +158,6 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             use crate::cert::{verify_certificate, Purpose, VerifyRequest};
 
-            let client = VaultClient::new().await?;
             let request = VerifyRequest {
                 certificate_file,
                 against_ca,
@@ -169,9 +168,23 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 }),
             };
 
+            // Vault is contacted only to fetch a mount's CA. Verifying against
+            // a file must keep working while Vault is down, which is when an
+            // operator reaches for a local anchor; and a connection failure has
+            // to reach the exit-2 arm below rather than propagate as exit 1,
+            // where it would be indistinguishable from a failed check.
+            let verdict = async {
+                let client = match request.pki_mount {
+                    Some(_) => Some(VaultClient::new().await?),
+                    None => None,
+                };
+                verify_certificate(client.as_ref(), request, output).await
+            }
+            .await;
+
             // A failed check is a verdict, not a malfunction: report it on the
             // exit code without the error formatting a fault would get.
-            match verify_certificate(&client, request, output).await {
+            match verdict {
                 Ok(true) => Ok(()),
                 Ok(false) => std::process::exit(1),
                 Err(e) => {

@@ -170,9 +170,12 @@ impl VaultClient {
         }
     }
 
-    /// Get the (single) CA certificate for a PKI mount (returns raw PEM data)
+    /// Get the (single) CA certificate for a PKI mount (returns raw PEM data).
+    ///
+    /// `/ca/pem`, not `/cert/ca`: the latter wraps the certificate in a JSON
+    /// envelope, so reading it as text yields a body no PEM parser accepts.
     pub async fn get_ca_certificate(&self, pki_mount: &str) -> Result<String> {
-        let url = format!("{}/v1/{}/cert/ca", self.vault_addr, pki_mount);
+        let url = format!("{}/v1/{}/ca/pem", self.vault_addr, pki_mount);
         let response = self
             .client
             .get(&url)
