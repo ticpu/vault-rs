@@ -9,7 +9,9 @@ use crate::vault::pki::RoleConfig;
 
 pub struct PlanInput<'a> {
     pub role: &'a RoleConfig,
-    pub cn_arg: &'a str,
+    /// `None` when the command has no CN argument, so there is no invocation
+    /// to compare the role against and none to attribute a value to.
+    pub cn_arg: Option<&'a str>,
     pub crypto_arg: Option<&'a str>,
     pub alt_names_arg: &'a [String],
     pub ip_sans_arg: &'a [String],
@@ -64,17 +66,29 @@ fn effective_cn(input: &PlanInput) -> EffectiveCn {
                 .subject_cn
                 .clone()
                 .unwrap_or_else(|| "(CSR has no CN)".to_string()),
-            note: format!(
-                "from CSR (role use_csr_common_name=true; argument \"{}\" unused)",
-                input.cn_arg
-            ),
+            note: match input.cn_arg {
+                Some(arg) => {
+                    format!("from CSR (role use_csr_common_name=true; argument \"{arg}\" unused)")
+                }
+                None => "from CSR (role use_csr_common_name=true)".to_string(),
+            },
         },
-        Some(_) => EffectiveCn {
-            value: input.cn_arg.to_string(),
-            note: "from argument (role use_csr_common_name=false)".to_string(),
+        // The argument supplies the value here, not just the annotation, so
+        // without one there is nothing to report: naming a CN would invent it.
+        Some(_) => match input.cn_arg {
+            Some(arg) => EffectiveCn {
+                value: arg.to_string(),
+                note: "from argument (role use_csr_common_name=false)".to_string(),
+            },
+            None => EffectiveCn {
+                value: "(not determined until sign time)".to_string(),
+                note: "role use_csr_common_name=false, so the CN comes from whatever \
+                       cert sign is given"
+                    .to_string(),
+            },
         },
         None => EffectiveCn {
-            value: input.cn_arg.to_string(),
+            value: input.cn_arg.unwrap_or_default().to_string(),
             note: "from argument".to_string(),
         },
     }
@@ -291,13 +305,74 @@ mod tests {
             .unwrap_or_else(|| panic!("no {label} field"))
     }
 
+    /// `inspect-csr` has no CN argument, so the plan must not mention one.
+    /// It used to be handed the CSR's own CN and report it as an unused
+    /// argument — naming an argument that does not exist, with the value it
+    /// had just attributed to the CSR.
+    #[test]
+    fn without_an_argument_the_plan_claims_none() {
+        let role = csr_signing_role();
+        let csr = csr_with_cn("partner-app");
+        let input = PlanInput {
+            role: &role,
+            cn_arg: None,
+            crypto_arg: None,
+            alt_names_arg: &[],
+            ip_sans_arg: &[],
+            ttl_arg: None,
+            csr: Some(&csr),
+            issuer_cn: "Example Issuing CA",
+        };
+
+        let fields = build_plan(&input);
+        let subject = field(&fields, "subject");
+        assert!(subject.value.ends_with("CN=partner-app"));
+        for (_, note) in &subject.details {
+            assert!(!note.contains("argument"), "{note}");
+        }
+    }
+
+    /// With `use_csr_common_name=false` the argument supplies the value, not
+    /// just the annotation, so absent one there is no CN to report. Rendering
+    /// an empty `CN=` annotated "from argument" would be a fabricated reading.
+    #[test]
+    fn without_an_argument_a_role_that_needs_one_reports_no_cn() {
+        let role = RoleConfig {
+            use_csr_common_name: false,
+            ..csr_signing_role()
+        };
+        let csr = csr_with_cn("partner-app");
+        let input = PlanInput {
+            role: &role,
+            cn_arg: None,
+            crypto_arg: None,
+            alt_names_arg: &[],
+            ip_sans_arg: &[],
+            ttl_arg: None,
+            csr: Some(&csr),
+            issuer_cn: "Example Issuing CA",
+        };
+
+        let fields = build_plan(&input);
+        let subject = field(&fields, "subject");
+        assert!(!subject.value.contains("CN=,"), "{}", subject.value);
+        assert!(!subject.value.ends_with("CN="), "{}", subject.value);
+        let cn_note = &subject
+            .details
+            .iter()
+            .find(|(k, _)| k == "CN")
+            .expect("CN detail")
+            .1;
+        assert!(!cn_note.contains("from argument"), "{cn_note}");
+    }
+
     #[test]
     fn inert_cn_argument_is_named_as_such() {
         let role = csr_signing_role();
         let csr = csr_with_cn("partner-app");
         let input = PlanInput {
             role: &role,
-            cn_arg: "wrong-cn",
+            cn_arg: Some("wrong-cn"),
             crypto_arg: None,
             alt_names_arg: &[],
             ip_sans_arg: &[],
@@ -327,7 +402,7 @@ mod tests {
         let csr = csr_with_cn("partner-app");
         let input = PlanInput {
             role: &role,
-            cn_arg: "partner-app",
+            cn_arg: Some("partner-app"),
             crypto_arg: None,
             alt_names_arg: &[],
             ip_sans_arg: &[],
@@ -360,7 +435,7 @@ mod tests {
         csr.sans.clear();
         let input = PlanInput {
             role: &role,
-            cn_arg: "partner-app",
+            cn_arg: Some("partner-app"),
             crypto_arg: None,
             alt_names_arg: &[],
             ip_sans_arg: &[],
@@ -400,7 +475,7 @@ mod tests {
         let alt_names = vec!["extra.example.test".to_string()];
         let input = PlanInput {
             role: &role,
-            cn_arg: "partner-app",
+            cn_arg: Some("partner-app"),
             crypto_arg: None,
             alt_names_arg: &alt_names,
             ip_sans_arg: &[],
@@ -426,7 +501,7 @@ mod tests {
         role.key_bits = 256;
         let input = PlanInput {
             role: &role,
-            cn_arg: "host.example.test",
+            cn_arg: Some("host.example.test"),
             crypto_arg: Some("rsa"),
             alt_names_arg: &[],
             ip_sans_arg: &[],
@@ -449,7 +524,7 @@ mod tests {
         let csr = csr_with_cn("partner-app");
         let input = PlanInput {
             role,
-            cn_arg: "partner-app",
+            cn_arg: Some("partner-app"),
             crypto_arg: None,
             alt_names_arg: &[],
             ip_sans_arg: &[],

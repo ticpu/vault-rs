@@ -42,11 +42,12 @@ pub async fn inspect_csr(client: Option<&VaultClient>, request: InspectCsrReques
     let issuer_pem = client.get_ca_certificate(mount).await?;
     let issuer_cn = CertificateParser::parse_pem(&issuer_pem, mount)?.cn;
 
-    // No separate --cn: the CSR's own subject is the closest thing to "the
-    // invocation" this command has, so it plays that role in the plan too.
+    // This command has no CN argument at all, so there is no invocation to
+    // compare the role against: passing the CSR's own CN as one made the plan
+    // report an argument that does not exist as unused.
     let plan_input = PlanInput {
         role: &role_config,
-        cn_arg: csr_info.subject_cn.as_deref().unwrap_or(""),
+        cn_arg: None,
         crypto_arg: None,
         alt_names_arg: &[],
         ip_sans_arg: &[],

@@ -87,7 +87,7 @@ pub async fn sign_certificate_from_csr(
 
     let plan_input = PlanInput {
         role: &role_config,
-        cn_arg: &request.cn,
+        cn_arg: Some(&request.cn),
         crypto_arg: request.crypto.as_ref().map(|c| c.as_str()),
         alt_names_arg: alt_names_vec.as_deref().unwrap_or(&[]),
         ip_sans_arg: ip_sans_vec.as_deref().unwrap_or(&[]),
