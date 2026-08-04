@@ -21,6 +21,7 @@ const CACHE_SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CacheEntry {
     pub metadata: CertificateMetadata,
+    /// Written on every insert; nothing reads it.
     pub last_verified: chrono::DateTime<chrono::Utc>,
 }
 
@@ -143,26 +144,6 @@ impl CertificateCache {
         Ok(())
     }
 
-    /// Update cache entry for a certificate
-    pub fn update_entry(
-        &self,
-        pki_mount: &str,
-        serial: &SerialNumber,
-        metadata: CertificateMetadata,
-    ) -> Result<()> {
-        let mut cache = self.load_cache(pki_mount)?;
-
-        cache.insert(
-            serial.clone(),
-            CacheEntry {
-                metadata,
-                last_verified: chrono::Utc::now(),
-            },
-        );
-
-        self.save_cache(pki_mount, &cache)
-    }
-
     /// Get certificate metadata from cache
     pub fn get_metadata(
         &self,
@@ -172,20 +153,6 @@ impl CertificateCache {
         let cache = self.load_cache(pki_mount)?;
 
         Ok(cache.get(serial).map(|entry| entry.metadata.clone()))
-    }
-
-    /// Get all cached certificates for a PKI mount
-    pub fn get_all_metadata(&self, pki_mount: &str) -> Result<Vec<CertificateMetadata>> {
-        let cache = self.load_cache(pki_mount)?;
-
-        Ok(cache.into_values().map(|entry| entry.metadata).collect())
-    }
-
-    /// Remove certificate from cache
-    pub fn remove_entry(&self, pki_mount: &str, serial: &SerialNumber) -> Result<()> {
-        let mut cache = self.load_cache(pki_mount)?;
-        cache.remove(serial);
-        self.save_cache(pki_mount, &cache)
     }
 
     /// Clear entire cache for a PKI mount
@@ -241,12 +208,6 @@ impl CertificateCache {
         }
 
         Ok(stats)
-    }
-
-    /// Check if cache entry needs refresh (certificates are immutable, so only check if missing)
-    pub fn needs_refresh(&self, pki_mount: &str, serial: &SerialNumber) -> Result<bool> {
-        let cache = self.load_cache(pki_mount)?;
-        Ok(!cache.contains_key(serial))
     }
 
     /// Bulk update cache with multiple certificates
@@ -309,7 +270,7 @@ mod tests {
         let serial = SerialNumber::new("0a0b");
 
         cache
-            .update_entry("mount", &serial, metadata(&["ClientAuth"]))
+            .bulk_update("mount", vec![metadata(&["ClientAuth"])])
             .unwrap();
 
         let read = cache.get_metadata("mount", &serial).unwrap().unwrap();
@@ -323,10 +284,9 @@ mod tests {
     fn a_file_from_an_older_schema_is_discarded() {
         let dir = scratch("older-schema");
         let cache = CertificateCache::with_dir(dir.clone()).unwrap();
-        let serial = SerialNumber::new("0a0b");
 
         cache
-            .update_entry("mount", &serial, metadata(&["ClientAuth"]))
+            .bulk_update("mount", vec![metadata(&["ClientAuth"])])
             .unwrap();
 
         let path = dir.join("mount.json");

@@ -124,35 +124,6 @@ impl CertificateService {
         Ok(metadata)
     }
 
-    /// Sync cache with Vault for a PKI mount
-    pub async fn sync_cache(&self, pki_mount: &str) -> Result<usize> {
-        tracing::info!("Syncing cache for PKI mount: {}", pki_mount);
-
-        let serials = self.client.list_certificates(pki_mount).await?;
-        let mut synced_count = 0;
-
-        for serial in serials.into_iter() {
-            if self.cache.needs_refresh(pki_mount, &serial)? {
-                match self.fetch_certificate_metadata(pki_mount, &serial).await {
-                    Ok(metadata) => {
-                        self.cache.update_entry(pki_mount, &serial, metadata)?;
-                        synced_count += 1;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to sync certificate {}: {}", serial, e);
-                    }
-                }
-            }
-        }
-
-        tracing::info!(
-            "Synced {} certificates for PKI mount: {}",
-            synced_count,
-            pki_mount
-        );
-        Ok(synced_count)
-    }
-
     /// Clear cache for a PKI mount
     pub fn clear_cache(&self, pki_mount: &str) -> Result<()> {
         self.cache.clear_cache(pki_mount)
@@ -166,26 +137,5 @@ impl CertificateService {
     /// Get cache statistics
     pub fn get_cache_stats(&self) -> Result<HashMap<String, usize>> {
         self.cache.get_stats()
-    }
-
-    /// Rebuild cache from Vault
-    pub async fn rebuild_cache(&self, pki_mount: Option<&str>) -> Result<usize> {
-        let mut total_rebuilt = 0;
-
-        if let Some(mount) = pki_mount {
-            // Rebuild specific mount
-            self.clear_cache(mount)?;
-            total_rebuilt += self.sync_cache(mount).await?;
-        } else {
-            // Rebuild all PKI mounts
-            let pki_mounts = self.client.list_pki_mounts().await?;
-
-            for mount in pki_mounts {
-                self.clear_cache(&mount)?;
-                total_rebuilt += self.sync_cache(&mount).await?;
-            }
-        }
-
-        Ok(total_rebuilt)
     }
 }
