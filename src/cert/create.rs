@@ -1,6 +1,6 @@
 use crate::cli::args::CryptoType;
 use crate::utils::errors::{Result, VaultCliError};
-use crate::utils::pem::{PemCertificate, PemPrivateKey};
+use crate::utils::pem::{PemCertificate, PemCertificateChain, PemPrivateKey};
 use crate::utils::{parse_comma_separated, resolve_crypto_type, validate_role_exists};
 use crate::vault::client::{IssueCertificateRequest, VaultClient};
 use std::fs;
@@ -112,7 +112,8 @@ pub async fn create_certificate(
         let pem_key = PemPrivateKey::new(private_key.to_string());
         let pem_cert = PemCertificate::new(certificate.to_string());
         let pem_issuing_ca = PemCertificate::new(issuing_ca.to_string());
-        let pem_chain = PemCertificate::new(ca_chain);
+        let ca_chain_with_root = PemCertificateChain::from_pem(&ca_chain);
+        let ca_chain_no_root = ca_chain_with_root.without_root()?;
 
         // Write certificate files
         fs::write(
@@ -133,7 +134,11 @@ pub async fn create_certificate(
         )?;
         fs::write(
             export_path.join(format!("{}_chain.crt", request.pki)),
-            pem_chain.pem_data(),
+            ca_chain_no_root.pem_data(),
+        )?;
+        fs::write(
+            export_path.join(format!("{}_chain-with-root.crt", request.pki)),
+            ca_chain_with_root.pem_data(),
         )?;
 
         // Create P12 file using OpenSSL (like vlt.sh)

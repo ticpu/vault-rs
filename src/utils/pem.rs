@@ -131,6 +131,14 @@ impl PemCertificateChain {
         Self { certificates }
     }
 
+    /// Create a chain from one blob holding several concatenated certificates,
+    /// which is how Vault returns `ca_chain`.
+    pub fn from_pem(pem_data: &str) -> Self {
+        Self {
+            certificates: parse_certificate_chain(pem_data),
+        }
+    }
+
     /// Add a certificate to the chain
     pub fn add_certificate(&mut self, cert: PemCertificate) {
         self.certificates.push(cert);
