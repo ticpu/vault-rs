@@ -1,6 +1,7 @@
 use crate::cli::args::{Cli, CompletionCommands, CompletionHelperCommands};
 use crate::utils::errors::Result;
 use crate::utils::output::OutputFormat;
+use crate::utils::PROGRAM_NAME;
 use crate::vault::client::VaultClient;
 use clap::CommandFactory;
 use clap_complete::{generate, Shell};
@@ -9,16 +10,22 @@ use std::io;
 pub fn handle_completion_command(command: &CompletionCommands, _cli: &Cli) -> Result<()> {
     let shell = command.shell();
     let mut cmd = Cli::command();
-    let app_name = "vault-rs";
 
     // For bash, add our custom completion enhancement first
     if matches!(shell, Shell::Bash) {
-        println!("# Enhanced completion for vault-rs PKI mounts and roles");
+        // clap_complete's bash generator mangles a hyphenated bin name two
+        // different ways (`vault__rs__subcmd__cert` when dispatching,
+        // `vault__subcmd__rs__subcmd__cert` when looking up), so no subcommand
+        // case ever matches. Generate under an underscore name, register the
+        // real one below.
+        let bash_name = PROGRAM_NAME.replace('-', "_");
+
+        println!("# Enhanced completion for {PROGRAM_NAME} PKI mounts and roles");
         print!(
             r#"
 _vault_rs_complete_pki_mounts() {{
     local mounts
-    mounts=$(vault-rs completion-helper pki-mounts 2>/dev/null)
+    mounts=$({PROGRAM_NAME} completion-helper pki-mounts 2>/dev/null)
     COMPREPLY=($(compgen -W "$mounts" -- "${{cur}}"))
 }}
 
@@ -39,14 +46,14 @@ _vault_rs_complete_roles() {{
     done
     
     if [[ -n "$pki_mount" ]]; then
-        roles=$(vault-rs completion-helper roles "$pki_mount" 2>/dev/null)
+        roles=$({PROGRAM_NAME} completion-helper roles "$pki_mount" 2>/dev/null)
         COMPREPLY=($(compgen -W "$roles" -- "${{cur}}"))
     fi
 }}
 
 _vault_rs_complete_columns() {{
     local columns
-    columns=$(vault-rs completion-helper columns 2>/dev/null)
+    columns=$({PROGRAM_NAME} completion-helper columns 2>/dev/null)
     
     # Handle comma-separated values and + prefix
     local current_word="${{cur}}"
@@ -106,21 +113,21 @@ _vault_rs_override() {{
     esac
     
     # Fall back to the original completion
-    _vault-rs "$@"
+    _{bash_name} "$@"
 }}
 
 "#
         );
 
         // Generate the base completion
-        generate(shell, &mut cmd, app_name, &mut io::stdout());
+        generate(shell, &mut cmd, &bash_name, &mut io::stdout());
 
         println!();
         println!("# Override the completion function");
-        println!("complete -F _vault_rs_override vault-rs");
+        println!("complete -F _vault_rs_override {PROGRAM_NAME}");
     } else {
         // For non-bash shells, just generate the standard completion
-        generate(shell, &mut cmd, app_name, &mut io::stdout());
+        generate(shell, &mut cmd, PROGRAM_NAME, &mut io::stdout());
     }
 
     Ok(())
