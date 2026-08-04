@@ -128,8 +128,12 @@ fn eku_field(role: &RoleConfig) -> IdentityField {
 }
 
 /// `use_csr_sans` only governs the CSR's own SAN extension: `--alt-names` and
-/// `--ip-sans` are separate request parameters Vault always honors, and Vault
-/// folds a hostname-shaped CN in as a DNS SAN regardless of `use_csr_sans`.
+/// `--ip-sans` are separate request parameters Vault always honors.
+///
+/// The CN-folded-in-as-a-DNS-SAN entry is the one line here derived from Vault's
+/// documented behaviour rather than from configuration this tool read, and it
+/// holds only for a hostname-shaped CN. It says "expected" for that reason;
+/// every other annotation names a field that was actually read.
 fn san_field(input: &PlanInput, cn: &EffectiveCn) -> IdentityField {
     let mut entries = Vec::new();
 
@@ -142,10 +146,13 @@ fn san_field(input: &PlanInput, cn: &EffectiveCn) -> IdentityField {
     } else if input.csr.is_some() {
         entries.push((
             format!("DNS:{}", cn.value),
-            "added by Vault; CSR SANs dropped, use_csr_sans=false".to_string(),
+            "expected from Vault; CSR SANs dropped, use_csr_sans=false".to_string(),
         ));
     } else {
-        entries.push((format!("DNS:{}", cn.value), "added by Vault".to_string()));
+        entries.push((
+            format!("DNS:{}", cn.value),
+            "expected from Vault".to_string(),
+        ));
     }
 
     for name in input.alt_names_arg {
