@@ -124,13 +124,6 @@ impl PemCertificateChain {
         }
     }
 
-    /// Create a chain from multiple PEM certificate strings
-    pub fn from_pem_strings(pem_strings: Vec<String>) -> Self {
-        let certificates = pem_strings.into_iter().map(PemCertificate::new).collect();
-
-        Self { certificates }
-    }
-
     /// Create a chain from one blob holding several concatenated certificates,
     /// which is how Vault returns `ca_chain`.
     pub fn from_pem(pem_data: &str) -> Result<Self> {

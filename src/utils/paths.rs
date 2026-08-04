@@ -70,11 +70,6 @@ impl VaultCliPaths {
         Ok(Self::runtime_dir()?.join("token"))
     }
 
-    /// Get the audit log path: ~/.local/share/vault-rs/audit.log
-    pub fn audit_log() -> Result<PathBuf> {
-        Ok(Self::data_dir()?.join("audit.log"))
-    }
-
     /// Get the master index path: ~/.local/share/vault-rs/cache/index.yaml.enc
     pub fn master_index() -> Result<PathBuf> {
         Ok(Self::cache_dir()?.join("index.yaml.enc"))

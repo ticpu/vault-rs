@@ -55,19 +55,6 @@ impl MountsResponse {
             .collect()
     }
 
-    pub fn kv_mounts(&self) -> Vec<String> {
-        self.data
-            .iter()
-            .filter_map(|(path, info)| {
-                if info.is_kv() {
-                    Some(path.trim_end_matches('/').to_string())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
     pub fn as_table_data(&self) -> Vec<Vec<String>> {
         let mut mount_list: Vec<_> = self.data.iter().collect();
         mount_list.sort_by_key(|(path, _)| *path);

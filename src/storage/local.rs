@@ -315,29 +315,6 @@ impl LocalStorage {
         Ok(())
     }
 
-    /// Remove specific certificate by serial from local storage
-    pub async fn remove_certificate_by_serial(
-        &self,
-        pki_mount: &str,
-        cn: &str,
-        serial: &str,
-    ) -> Result<()> {
-        let cert_dir = VaultCliPaths::cert_storage_dir(pki_mount, cn, serial)?;
-
-        if cert_dir.exists() {
-            fs::remove_dir_all(&cert_dir)?;
-            tracing::info!("Removed certificate directory: {}", cert_dir.display());
-        }
-
-        // Update master index
-        let mut index = self.get_master_index().await?;
-        if index.remove_certificate(serial) {
-            self.store_master_index(&index).await?;
-        }
-
-        Ok(())
-    }
-
     /// Get master index
     async fn get_master_index(&self) -> Result<MasterIndex> {
         let index_file = VaultCliPaths::master_index()?;
@@ -409,30 +386,6 @@ impl LocalStorage {
         let mut hasher = Sha256::new();
         hasher.update(&data);
         Ok(hex::encode(hasher.finalize()))
-    }
-
-    /// Clean up expired certificates
-    pub async fn cleanup_expired(&self) -> Result<usize> {
-        let index = self.get_master_index().await?;
-        let expired_certs = index.get_expired().into_iter().cloned().collect::<Vec<_>>();
-        let mut removed_count = 0;
-
-        for cert in expired_certs {
-            if let Err(e) = self
-                .remove_certificate(&cert.pki_mount, &cert.meta.cn)
-                .await
-            {
-                tracing::warn!(
-                    "Failed to remove expired certificate {}: {}",
-                    cert.meta.cn,
-                    e
-                );
-            } else {
-                removed_count += 1;
-            }
-        }
-
-        Ok(removed_count)
     }
 
     /// Find certificate by serial number
