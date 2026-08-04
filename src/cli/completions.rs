@@ -146,11 +146,14 @@ pub async fn handle_completion_helper_command(
 
     match command {
         CompletionHelperCommands::PkiMounts => {
+            // discard-ok: a completion helper must not emit anything on failure;
+            // an error would land in the user's command line
             if let Ok(pki_mounts) = client.list_pki_mounts().await {
                 output.print_list(&pki_mounts);
             }
         }
         CompletionHelperCommands::Roles { pki_mount } => {
+            // discard-ok: as above, no output rather than an error in the prompt
             if let Ok(roles) = client.list_roles(pki_mount).await {
                 output.print_list(&roles);
             }

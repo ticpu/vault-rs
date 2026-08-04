@@ -14,10 +14,10 @@ pub async fn exec_vault_command(
     let token = auth.get_token().await?;
 
     // Find the vault executable
-    let vault_exe = which::which("vault").map_err(|_| {
-        VaultCliError::Config(
-            "vault command not found in PATH. Please install HashiCorp Vault CLI.".to_string(),
-        )
+    let vault_exe = which::which("vault").map_err(|e| {
+        VaultCliError::Config(format!(
+            "vault command not found in PATH ({e}). Install the HashiCorp Vault CLI."
+        ))
     })?;
 
     // Build command arguments

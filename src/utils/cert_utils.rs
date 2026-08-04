@@ -74,10 +74,13 @@ pub fn create_p12_file(
         .output()
         .map_err(|e| VaultCliError::Storage(format!("Failed to run openssl: {e}")))?;
 
-    // Clean up temporary files
-    let _ = fs::remove_file(&key_file);
-    let _ = fs::remove_file(&cert_file);
-    let _ = fs::remove_file(&ca_file);
+    // Best-effort cleanup: the P12 is already written, so a leftover file is
+    // worth reporting but not worth failing over.
+    for path in [&key_file, &cert_file, &ca_file] {
+        if let Err(e) = fs::remove_file(path) {
+            tracing::warn!("Failed to remove temporary file {}: {e}", path.display());
+        }
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

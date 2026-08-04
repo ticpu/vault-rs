@@ -32,6 +32,8 @@ async fn show_cache_status(
 
     let total: usize = stats
         .iter()
+        // discard-ok: a mount whose count could not be read is empty here, and
+        // must not contribute a number to the total
         .filter_map(|(_, count)| count.parse::<usize>().ok())
         .sum();
     eprintln!("{} PKI mounts cached, {total} certificates", stats.len());

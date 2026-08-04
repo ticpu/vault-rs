@@ -14,6 +14,7 @@ struct CachedVaultAddr {
 
 pub async fn get_vault_addr() -> Result<String> {
     // First try environment variable
+    // discard-ok: an unset variable is the case this branch exists for
     if let Ok(vault_addr) = env::var("VAULT_ADDR") {
         return Ok(vault_addr);
     }
@@ -26,6 +27,7 @@ pub async fn get_vault_addr() -> Result<String> {
 /// Discover Vault server address using DNS SRV records with caching
 pub async fn discover_vault_addr() -> Result<String> {
     // Check cache first
+    // discard-ok: a cache miss or an expired entry falls through to discovery
     if let Ok(cached_addr) = get_cached_vault_addr() {
         tracing::debug!("Using cached Vault address: {cached_addr}");
         return Ok(cached_addr);

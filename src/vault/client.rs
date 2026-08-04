@@ -346,6 +346,8 @@ impl VaultClient {
             let error_text = response
                 .text()
                 .await
+                // discard-ok: building a message from an already-failed response;
+                // the status above is the signal, the body is a courtesy
                 .unwrap_or_else(|_| "Unknown error".to_string());
             Err(VaultCliError::Storage(format!(
                 "Vault API error: {error_text}"

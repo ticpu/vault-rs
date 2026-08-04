@@ -154,6 +154,7 @@ impl CertificateParser {
             GeneralName::DNSName(dns) => Some(dns.to_string()),
             GeneralName::IPAddress(ip) => match <[u8; 4]>::try_from(*ip) {
                 Ok(v4) => Some(std::net::Ipv4Addr::from(v4).to_string()),
+                // discard-ok: not 4 bytes, so try 16; neither is not an address
                 Err(_) => <[u8; 16]>::try_from(*ip)
                     .ok()
                     .map(|v6| std::net::Ipv6Addr::from(v6).to_string()),
@@ -229,6 +230,8 @@ impl CertificateParser {
                     .algorithm
                     .parameters
                     .as_ref()
+                    // discard-ok: an absent or unregistered curve OID reports as
+                    // plain "EC" below rather than naming a curve nobody read
                     .and_then(|p| p.as_oid().ok())
                     .and_then(|oid| oid2sn(&oid, oid_registry()).ok().map(str::to_string));
                 match curve {
@@ -237,6 +240,7 @@ impl CertificateParser {
                 }
             }
             Ok(_) => "unrecognised key type".to_string(),
+            // discard-ok: the value reports the failure rather than hiding it
             Err(_) => "unparseable key".to_string(),
         }
     }

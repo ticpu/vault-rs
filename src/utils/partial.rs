@@ -124,6 +124,7 @@ impl<T> Partial<T> {
             self.failures.len()
         );
         for failure in &self.failures {
+            // discard-ok: writing into a String is infallible
             let _ = writeln!(report, "  {}", failure.describe());
         }
         report.push_str("\nPass --allow-partial to work with what could be read.");

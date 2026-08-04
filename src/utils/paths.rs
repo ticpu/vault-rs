@@ -141,6 +141,7 @@ mod tests {
     fn scratch(name: &str) -> PathBuf {
         let dir =
             PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/target/paths-tests")).join(name);
+        // discard-ok: test scratch; the directory usually does not exist yet
         let _ = fs::remove_dir_all(&dir);
         dir
     }

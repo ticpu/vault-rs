@@ -28,6 +28,7 @@ async fn find_certificate_in_storage(
     identifier: &str,
 ) -> Result<Option<CertificateStorage>> {
     let certs = storage.list_certificates().await?;
+    // discard-ok: probe; an identifier that is not a serial is looked up by CN
     if let Ok(serial) = SerialNumber::parse(identifier) {
         let serial_colon = serial.as_colon_hex();
 

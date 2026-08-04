@@ -58,6 +58,7 @@ impl VaultAuth {
     /// Get Vault token from environment or stored token file
     pub async fn get_token(&self) -> Result<String> {
         // Check environment variable first
+        // discard-ok: an unset variable falls through to the stored token
         if let Ok(token) = env::var("VAULT_TOKEN") {
             if !token.is_empty() {
                 tracing::debug!("Found VAULT_TOKEN in environment");
@@ -97,6 +98,8 @@ impl VaultAuth {
             let error_text = response
                 .text()
                 .await
+                // discard-ok: building a message from an already-failed response;
+                // the status above is the signal, the body is a courtesy
                 .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(VaultCliError::Auth(format!(
                 "LDAP authentication failed: {status} - {error_text}"
@@ -142,6 +145,8 @@ impl VaultAuth {
             let error_text = response
                 .text()
                 .await
+                // discard-ok: building a message from an already-failed response;
+                // the status above is the signal, the body is a courtesy
                 .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(VaultCliError::Auth(format!(
                 "Userpass authentication failed: {status} - {error_text}"
@@ -183,6 +188,8 @@ impl VaultAuth {
             let error_text = response
                 .text()
                 .await
+                // discard-ok: building a message from an already-failed response;
+                // the status above is the signal, the body is a courtesy
                 .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(VaultCliError::Auth(format!(
                 "Token renewal failed: {status} - {error_text}"

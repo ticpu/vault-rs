@@ -19,6 +19,7 @@ pub async fn find_certificate_by_identifier(
         client.list_pki_mounts().await?
     };
 
+    // discard-ok: probe; an identifier that is not a serial is looked up by CN
     if let Ok(serial) = serial {
         // Try to find certificate by serial across all PKI mounts
         for mount in &pki_mounts {
