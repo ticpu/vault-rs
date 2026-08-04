@@ -304,7 +304,7 @@ pub enum CertCommands {
         /// PKI mount (for CN lookups, optional)
         #[arg(long)]
         pki_mount: Option<String>,
-        /// Export format: pem, der, key, p12, chain, or all
+        /// Export format: pem, der, key, p12, chain, chain-with-root, or all
         #[arg(long, default_value = "pem")]
         format: ExportFormat,
         /// Output directory (default: stdout for PEM format)
@@ -343,7 +343,7 @@ pub enum CertCommands {
     ExportBySerial {
         /// Certificate serial number
         serial: String,
-        /// Export format: pem, der, key, p12, chain, or all
+        /// Export format: pem, der, key, p12, chain, chain-with-root, or all
         #[arg(long, default_value = "all")]
         format: ExportFormat,
         /// Output directory
@@ -474,6 +474,9 @@ pub enum ExportFormat {
     Der,
     Key,
     P12,
+    /// Leaf + intermediates, self-signed root dropped (safe for external handoff)
     Chain,
+    /// Leaf + intermediates + root, for internal trust configuration
+    ChainWithRoot,
     All,
 }

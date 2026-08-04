@@ -1,6 +1,8 @@
 use crate::utils::errors::{Result, VaultCliError};
 use std::io::Write;
 use std::process::{Command, Stdio};
+use x509_parser::pem::parse_x509_pem;
+use x509_parser::prelude::*;
 
 /// Represents a PEM-encoded certificate that can generate OpenSSL text output
 #[derive(Debug, Clone)]
@@ -160,6 +162,32 @@ impl PemCertificateChain {
             .collect::<Vec<_>>()
             .join("")
     }
+
+    /// This chain with self-signed roots dropped, for handoff outside this trust
+    /// boundary (see docs/design-rationale.md, "Chain artifacts separate internal
+    /// configuration from external handoff"). Scans every certificate; Vault's
+    /// `ca_chain` ordering is not guaranteed and the root may be absent entirely.
+    pub fn without_root(&self) -> Result<Self> {
+        let mut result = Self::new();
+        for cert in &self.certificates {
+            if !is_self_signed(cert)? {
+                result.add_certificate(cert.clone());
+            }
+        }
+        Ok(result)
+    }
+}
+
+/// True if a certificate's subject equals its issuer, i.e. a self-signed root.
+/// Compares the full raw DN, not `CertificateMetadata`'s CN-reduced subject/issuer,
+/// which misclassifies an intermediate sharing a CN with its root.
+pub fn is_self_signed(cert: &PemCertificate) -> Result<bool> {
+    let (_, pem) = parse_x509_pem(cert.pem_data().as_bytes())
+        .map_err(|e| VaultCliError::CertParsing(format!("Failed to parse PEM: {e}")))?;
+    let (_, x509) = X509Certificate::from_der(&pem.contents)
+        .map_err(|e| VaultCliError::CertParsing(format!("Failed to parse DER: {e}")))?;
+
+    Ok(x509.subject().as_raw() == x509.issuer().as_raw())
 }
 
 impl Default for PemCertificateChain {
@@ -311,5 +339,41 @@ mod tests {
 
         let parsed = parse_certificate_chain(&combined);
         assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn self_signed_detects_root_only() {
+        assert!(is_self_signed(&PemCertificate::new(testdata("ca-root"))).unwrap());
+        assert!(!is_self_signed(&PemCertificate::new(testdata("ca-intermediate"))).unwrap());
+        assert!(!is_self_signed(&PemCertificate::new(testdata("leaf-client"))).unwrap());
+    }
+
+    fn chain_from_fixture(name: &str) -> PemCertificateChain {
+        let mut chain = PemCertificateChain::new();
+        for cert in parse_certificate_chain(&testdata(name)) {
+            chain.add_certificate(cert);
+        }
+        chain
+    }
+
+    #[test]
+    fn without_root_drops_only_the_self_signed_certificate() {
+        let with_root = chain_from_fixture("chain-with-root");
+        assert_eq!(with_root.certificates().len(), 3);
+
+        let no_root = with_root.without_root().unwrap();
+        assert_eq!(no_root.certificates().len(), 2);
+        for cert in no_root.certificates() {
+            assert!(!is_self_signed(cert).unwrap());
+        }
+    }
+
+    #[test]
+    fn without_root_is_a_noop_when_root_is_absent() {
+        let no_root_chain = chain_from_fixture("chain-no-root");
+        assert_eq!(no_root_chain.certificates().len(), 2);
+
+        let filtered = no_root_chain.without_root().unwrap();
+        assert_eq!(filtered.certificates().len(), 2);
     }
 }

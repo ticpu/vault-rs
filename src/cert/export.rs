@@ -140,8 +140,8 @@ async fn export_all(
     // Try to get complete bundle from local storage first
     match get_certificate_bundle_from_storage(client, &request.identifier).await {
         Ok((private_key, cert_from_storage, ca_chain_from_storage)) => {
-            let bundle =
-                PemCertificateBundle::new(private_key, cert_from_storage, ca_chain_from_storage);
+            let ca_chain = ca_chain_from_storage.without_root()?;
+            let bundle = PemCertificateBundle::new(private_key, cert_from_storage, ca_chain);
             let output_content = bundle.output(request.text);
             write_output_or_print(
                 request.output_dir.as_deref(),
@@ -153,7 +153,7 @@ async fn export_all(
             // Fallback: export certificate and chain only (no private key)
             tracing::info!("Private key for '{}' not found in local storage, exporting certificate and chain only", request.identifier);
             let ca_chain_pem = get_ca_chain_safe(client, &request.mount).await;
-            let ca_chain = build_ca_chain(&ca_chain_pem);
+            let ca_chain = build_ca_chain(&ca_chain_pem).without_root()?;
             let bundle = PemCertificateBundle::new(None, certificate, ca_chain);
             let output_content = bundle.output(request.text);
             write_output_or_print(
@@ -206,11 +206,14 @@ async fn export_der_certificate(
     )
 }
 
-/// Get full certificate chain and create chain object
+/// Get full certificate chain and create chain object. `include_root` selects between
+/// `chain` (external handoff, root dropped) and `chain-with-root` (internal trust
+/// configuration) — see docs/design-rationale.md.
 async fn export_certificate_chain(
     client: &VaultClient,
     request: &ExportCertificateRequest,
     certificate: PemCertificate,
+    include_root: bool,
 ) -> Result<()> {
     let ca_chain_pem = get_ca_chain_safe(client, &request.mount).await;
     let mut chain = PemCertificateChain::new();
@@ -222,12 +225,23 @@ async fn export_certificate_chain(
         chain.add_certificate(cert.clone());
     }
 
+    let chain = if include_root {
+        chain
+    } else {
+        chain.without_root()?
+    };
+
     let output_content = chain.output(request.text);
+    let suffix = if include_root {
+        "chain-with-root"
+    } else {
+        "chain"
+    };
 
     if let Some(ref dir) = request.output_dir {
         write_to_file(
             dir,
-            &format!("{}_chain.pem", sanitize_filename(&request.identifier)),
+            &format!("{}_{suffix}.pem", sanitize_filename(&request.identifier)),
             &output_content,
         )
     } else {
@@ -280,7 +294,10 @@ pub async fn export_certificate(
     match request.format {
         ExportFormat::Pem => export_pem_certificate(&request, certificate).await,
         ExportFormat::Der => export_der_certificate(&request, certificate).await,
-        ExportFormat::Chain => export_certificate_chain(client, &request, certificate).await,
+        ExportFormat::Chain => export_certificate_chain(client, &request, certificate, false).await,
+        ExportFormat::ChainWithRoot => {
+            export_certificate_chain(client, &request, certificate, true).await
+        }
         ExportFormat::Key => export_key(client, &request).await,
         ExportFormat::P12 => export_p12(client, &request).await,
         ExportFormat::All => export_all(client, &request, certificate).await,
