@@ -161,8 +161,15 @@ async fn export_all(
         Err(_) => {
             // Fallback: export certificate and chain only (no private key)
             tracing::info!("Private key for '{}' not found in local storage, exporting certificate and chain only", request.identifier);
-            let ca_chain_pem = get_ca_chain_safe(client, &request.mount).await;
-            let ca_chain = build_ca_chain(&ca_chain_pem).without_root()?;
+            let ca_chain_pem = client.get_ca_chain(&request.mount).await?;
+            let ca_chain = build_ca_chain(&ca_chain_pem);
+            if ca_chain.certificates().is_empty() {
+                return Err(VaultCliError::InvalidInput(format!(
+                    "Mount '{}' has no CA chain configured",
+                    request.mount
+                )));
+            }
+            let ca_chain = ca_chain.without_root()?;
             let bundle = PemCertificateBundle::new(None, certificate, ca_chain);
             let output_content = bundle.output(request.text);
             write_output_or_print(
@@ -224,21 +231,44 @@ async fn export_certificate_chain(
     certificate: PemCertificate,
     include_root: bool,
 ) -> Result<()> {
-    let ca_chain_pem = get_ca_chain_safe(client, &request.mount).await;
+    let ca_chain_pem = client.get_ca_chain(&request.mount).await?;
+    let ca_chain = build_ca_chain(&ca_chain_pem);
+    if ca_chain.certificates().is_empty() {
+        return Err(VaultCliError::InvalidInput(format!(
+            "Mount '{}' has no CA chain configured",
+            request.mount
+        )));
+    }
+
+    // without_root() must apply to the CA chain only: applying it after the
+    // leaf is prepended filters a self-signed leaf too (e.g. exporting a root
+    // CA itself), silently writing an empty file.
+    let ca_chain = if include_root {
+        ca_chain
+    } else {
+        ca_chain.without_root()?
+    };
+
     let mut chain = PemCertificateChain::new();
     chain.add_certificate(certificate);
-
-    // Add CA certificates using shared utility
-    let ca_chain = build_ca_chain(&ca_chain_pem);
     for cert in ca_chain.certificates() {
         chain.add_certificate(cert.clone());
     }
 
-    let chain = if include_root {
-        chain
-    } else {
-        chain.without_root()?
-    };
+    if chain.certificates().len() <= 1 {
+        let msg = if include_root {
+            format!(
+                "Mount '{}' CA chain is empty; nothing to export besides the leaf. Use --format pem instead.",
+                request.mount
+            )
+        } else {
+            format!(
+                "Mount '{}' CA chain is only the self-signed root, which is dropped for external handoff, leaving nothing to export. Use --format pem for the leaf alone, or --format chain-with-root to include the root.",
+                request.mount
+            )
+        };
+        return Err(VaultCliError::InvalidInput(msg));
+    }
 
     let output_content = chain.output(request.text);
     let suffix = if include_root {
@@ -313,21 +343,6 @@ pub async fn export_certificate(
     }
 }
 
-/// Get CA chain with graceful error handling
-async fn get_ca_chain_safe(client: &VaultClient, mount: &str) -> String {
-    match client.get_ca_chain(mount).await {
-        Ok(chain) => chain,
-        Err(e) => {
-            tracing::warn!(
-                "Failed to get CA chain for '{}': {}, continuing without CA chain",
-                mount,
-                e
-            );
-            String::new()
-        }
-    }
-}
-
 /// Sanitize filename by replacing problematic characters
 fn sanitize_filename(name: &str) -> String {
     name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
@@ -357,5 +372,30 @@ mod tests {
             X509Certificate::from_der(&pem.contents).expect("PEM contents should parse");
 
         assert_eq!(from_der.subject(), from_pem.subject());
+    }
+
+    #[test]
+    fn certificate_chain_assembly_keeps_a_self_signed_leaf() {
+        let root_pem = testdata("ca-root");
+        let leaf = PemCertificate::new(root_pem.clone());
+
+        // without_root() must run on the CA chain before the leaf is added;
+        // otherwise exporting a self-signed root as the leaf filters it too.
+        let ca_chain = build_ca_chain(&root_pem)
+            .without_root()
+            .expect("self-signed check should succeed");
+
+        let mut chain = PemCertificateChain::new();
+        chain.add_certificate(leaf.clone());
+        for cert in ca_chain.certificates() {
+            chain.add_certificate(cert.clone());
+        }
+
+        assert_eq!(
+            chain.certificates().len(),
+            1,
+            "root is self-signed and dropped from the CA chain, leaf remains"
+        );
+        assert_eq!(chain.certificates()[0].pem_data(), leaf.pem_data());
     }
 }
