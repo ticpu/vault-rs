@@ -12,14 +12,6 @@ const KEY_USAGE_OID: oid::Oid = oid!(2.5.29 .15);
 const EXTENDED_KEY_USAGE_OID: oid::Oid = oid!(2.5.29 .37);
 const BASIC_CONSTRAINTS_OID: oid::Oid = oid!(2.5.29 .19);
 
-// Extended Key Usage OIDs
-const EKU_SERVER_AUTH: &str = "1.3.6.1.5.5.7.3.1";
-const EKU_CLIENT_AUTH: &str = "1.3.6.1.5.5.7.3.2";
-const EKU_CODE_SIGNING: &str = "1.3.6.1.5.5.7.3.3";
-const EKU_EMAIL_PROTECTION: &str = "1.3.6.1.5.5.7.3.4";
-const EKU_TIME_STAMPING: &str = "1.3.6.1.5.5.7.3.8";
-const EKU_OCSP_SIGNING: &str = "1.3.6.1.5.5.7.3.9";
-
 pub struct CertificateParser;
 
 impl CertificateParser {
@@ -95,125 +87,126 @@ impl CertificateParser {
         let not_after = DateTime::from_timestamp(cert.validity().not_after.timestamp(), 0)
             .unwrap_or_else(Utc::now);
 
-        // Extract SANs
-        let mut sans = Vec::new();
-        for ext in cert.extensions() {
-            if ext.oid == SUBJECT_ALT_NAME_OID {
-                if let Ok((_rem, san)) = SubjectAlternativeName::from_der(ext.value) {
-                    for name in &san.general_names {
-                        match name {
-                            GeneralName::DNSName(dns) => sans.push(dns.to_string()),
-                            GeneralName::IPAddress(ip) => {
-                                if ip.len() == 4 {
-                                    sans.push(format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]));
-                                } else if ip.len() == 16 {
-                                    let mut ipv6_parts = Vec::new();
-                                    for chunk in ip.chunks(2) {
-                                        ipv6_parts.push(format!(
-                                            "{:02x}{:02x}",
-                                            chunk[0],
-                                            chunk.get(1).unwrap_or(&0)
-                                        ));
-                                    }
-                                    sans.push(ipv6_parts.join(":"));
-                                }
-                            }
-                            _ => {} // Skip other name types for now
-                        }
-                    }
-                }
-                break;
-            }
-        }
-
-        // Extract key usage
-        let mut key_usage = Vec::new();
-        for ext in cert.extensions() {
-            if ext.oid == KEY_USAGE_OID {
-                if let Ok((_rem, ku)) = KeyUsage::from_der(ext.value) {
-                    if ku.digital_signature() {
-                        key_usage.push("DigitalSignature".to_string());
-                    }
-                    if ku.key_encipherment() {
-                        key_usage.push("KeyEncipherment".to_string());
-                    }
-                    if ku.key_cert_sign() {
-                        key_usage.push("KeyCertSign".to_string());
-                    }
-                    if ku.crl_sign() {
-                        key_usage.push("CRLSign".to_string());
-                    }
-                    if ku.data_encipherment() {
-                        key_usage.push("DataEncipherment".to_string());
-                    }
-                    if ku.key_agreement() {
-                        key_usage.push("KeyAgreement".to_string());
-                    }
-                    if ku.non_repudiation() {
-                        key_usage.push("NonRepudiation".to_string());
-                    }
-                    if ku.encipher_only() {
-                        key_usage.push("EncipherOnly".to_string());
-                    }
-                    if ku.decipher_only() {
-                        key_usage.push("DecipherOnly".to_string());
-                    }
-                }
-                break;
-            }
-        }
-
-        // Extract extended key usage
-        let mut extended_key_usage = Vec::new();
-        for ext in cert.extensions() {
-            if ext.oid == EXTENDED_KEY_USAGE_OID {
-                if let Ok((_rem, eku)) = ExtendedKeyUsage::from_der(ext.value) {
-                    for oid in &eku.other {
-                        // Convert common EKU OIDs to readable names
-                        match oid.to_string().as_str() {
-                            EKU_SERVER_AUTH => extended_key_usage.push("ServerAuth".to_string()),
-                            EKU_CLIENT_AUTH => extended_key_usage.push("ClientAuth".to_string()),
-                            EKU_CODE_SIGNING => extended_key_usage.push("CodeSigning".to_string()),
-                            EKU_EMAIL_PROTECTION => {
-                                extended_key_usage.push("EmailProtection".to_string())
-                            }
-                            EKU_TIME_STAMPING => {
-                                extended_key_usage.push("TimeStamping".to_string())
-                            }
-                            EKU_OCSP_SIGNING => extended_key_usage.push("OCSPSigning".to_string()),
-                            _ => extended_key_usage.push(oid.to_string()),
-                        }
-                    }
-                }
-                break;
-            }
-        }
-
-        // Check if this is a CA certificate
-        let mut is_ca = false;
-        for ext in cert.extensions() {
-            if ext.oid == BASIC_CONSTRAINTS_OID {
-                if let Ok((_rem, bc)) = BasicConstraints::from_der(ext.value) {
-                    is_ca = bc.ca;
-                }
-                break;
-            }
-        }
-
         Ok(CertificateMetadata {
             serial,
             cn,
             not_before,
             not_after,
-            sans,
-            key_usage,
-            extended_key_usage,
-            is_ca,
+            sans: Self::extract_sans(cert)?,
+            key_usage: Self::extract_key_usage(cert)?,
+            extended_key_usage: Self::extract_extended_key_usage(cert)?,
+            is_ca: Self::extract_is_ca(cert)?,
             issuer,
             pki_mount: pki_mount.to_string(),
             cached_at: Utc::now(),
             revocation_time: None, // Will be set by the service from Vault API response
         })
+    }
+
+    /// Raw DER of the first extension with this OID, or None if the certificate
+    /// does not carry it.
+    fn extension<'a>(cert: &'a X509Certificate, oid: &oid::Oid) -> Option<&'a [u8]> {
+        cert.extensions()
+            .iter()
+            .find(|ext| &ext.oid == oid)
+            .map(|ext| ext.value)
+    }
+
+    /// A present-but-unparseable extension aborts rather than reading as absent:
+    /// the two are indistinguishable downstream, and empty reads as "not set".
+    fn parse_extension<'a, T: FromDer<'a, X509Error>>(der: &'a [u8], name: &str) -> Result<T> {
+        T::from_der(der)
+            .map(|(_rem, parsed)| parsed)
+            .map_err(|e| VaultCliError::CertParsing(format!("malformed {name} extension: {e}")))
+    }
+
+    fn extract_sans(cert: &X509Certificate) -> Result<Vec<String>> {
+        let Some(der) = Self::extension(cert, &SUBJECT_ALT_NAME_OID) else {
+            return Ok(Vec::new());
+        };
+        let san: SubjectAlternativeName = Self::parse_extension(der, "subjectAltName")?;
+
+        Ok(san
+            .general_names
+            .iter()
+            .filter_map(Self::format_general_name)
+            .collect())
+    }
+
+    fn format_general_name(name: &GeneralName) -> Option<String> {
+        match name {
+            GeneralName::DNSName(dns) => Some(dns.to_string()),
+            GeneralName::IPAddress(ip) => match <[u8; 4]>::try_from(*ip) {
+                Ok(v4) => Some(std::net::Ipv4Addr::from(v4).to_string()),
+                Err(_) => <[u8; 16]>::try_from(*ip)
+                    .ok()
+                    .map(|v6| std::net::Ipv6Addr::from(v6).to_string()),
+            },
+            _ => None,
+        }
+    }
+
+    fn extract_key_usage(cert: &X509Certificate) -> Result<Vec<String>> {
+        let Some(der) = Self::extension(cert, &KEY_USAGE_OID) else {
+            return Ok(Vec::new());
+        };
+        let ku: KeyUsage = Self::parse_extension(der, "keyUsage")?;
+
+        let flags = [
+            (ku.digital_signature(), "DigitalSignature"),
+            (ku.non_repudiation(), "NonRepudiation"),
+            (ku.key_encipherment(), "KeyEncipherment"),
+            (ku.data_encipherment(), "DataEncipherment"),
+            (ku.key_agreement(), "KeyAgreement"),
+            (ku.key_cert_sign(), "KeyCertSign"),
+            (ku.crl_sign(), "CRLSign"),
+            (ku.encipher_only(), "EncipherOnly"),
+            (ku.decipher_only(), "DecipherOnly"),
+        ];
+
+        Ok(Self::set_flags(&flags))
+    }
+
+    /// x509-parser exposes the well-known usages as typed booleans and leaves
+    /// `other` for OIDs it did not recognise, so reading `other` alone yields
+    /// nothing for any certificate using standard EKUs.
+    fn extract_extended_key_usage(cert: &X509Certificate) -> Result<Vec<String>> {
+        let Some(der) = Self::extension(cert, &EXTENDED_KEY_USAGE_OID) else {
+            return Ok(Vec::new());
+        };
+        let eku: ExtendedKeyUsage = Self::parse_extension(der, "extendedKeyUsage")?;
+
+        let flags = [
+            (eku.any, "Any"),
+            (eku.server_auth, "ServerAuth"),
+            (eku.client_auth, "ClientAuth"),
+            (eku.code_signing, "CodeSigning"),
+            (eku.email_protection, "EmailProtection"),
+            (eku.time_stamping, "TimeStamping"),
+            (eku.ocsp_signing, "OCSPSigning"),
+        ];
+
+        let mut usages = Self::set_flags(&flags);
+        usages.extend(eku.other.iter().map(|oid| oid.to_string()));
+
+        Ok(usages)
+    }
+
+    fn set_flags(flags: &[(bool, &str)]) -> Vec<String> {
+        flags
+            .iter()
+            .filter(|(set, _)| *set)
+            .map(|(_, name)| (*name).to_string())
+            .collect()
+    }
+
+    fn extract_is_ca(cert: &X509Certificate) -> Result<bool> {
+        let Some(der) = Self::extension(cert, &BASIC_CONSTRAINTS_OID) else {
+            return Ok(false);
+        };
+        let bc: BasicConstraints = Self::parse_extension(der, "basicConstraints")?;
+
+        Ok(bc.ca)
     }
 }
 
