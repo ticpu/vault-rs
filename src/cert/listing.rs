@@ -126,6 +126,12 @@ impl CertificateListingService {
         filter: &CertListFilter,
         output: &OutputFormat,
     ) -> Result<bool> {
+        if output.json && columns.is_some() {
+            return Err(VaultCliError::InvalidInput(
+                "--columns has no effect with --json".to_string(),
+            ));
+        }
+
         let certificates = cert_service
             .list_certificates_with_metadata(pki_mount)
             .await?;
@@ -137,6 +143,13 @@ impl CertificateListingService {
             .filter(|c| filter.matches(c))
             .collect();
         let matched = !filtered.is_empty();
+
+        if output.json {
+            // The full record, not the display-truncated table cells: see
+            // OutputFormat::print_json.
+            output.print_json(&filtered)?;
+            return Ok(matched);
+        }
 
         if !matched {
             return Ok(false);
@@ -159,6 +172,12 @@ impl CertificateListingService {
         columns: Option<String>,
         output: &OutputFormat,
     ) -> Result<()> {
+        if output.json && columns.is_some() {
+            return Err(VaultCliError::InvalidInput(
+                "--columns has no effect with --json".to_string(),
+            ));
+        }
+
         let certificates = storage.list_certificates().await?;
 
         let expires_soon_days = expires_soon
@@ -196,6 +215,10 @@ impl CertificateListingService {
 
         // Soonest expiry first, consistent with `cert list`.
         filtered_certs.sort_by_key(|c| c.meta.expires);
+
+        if output.json {
+            return output.print_json(&filtered_certs);
+        }
 
         if filtered_certs.is_empty() {
             return Ok(());
@@ -456,5 +479,25 @@ mod tests {
         )
         .unwrap();
         assert!(active.is_expiring_within_active());
+    }
+
+    /// `cert list --json` must serialize the record, not the display string
+    /// `ExtendedKeyUsage` renders to (e.g. "CA:Client"): a nested field must
+    /// stay a JSON array for consumers to parse.
+    #[test]
+    fn json_serialization_keeps_extended_key_usage_as_an_array() {
+        let certs = vec![cert(Utc::now(), &["ClientAuth", "CodeSigning"])];
+
+        let json = serde_json::to_value(&certs).unwrap();
+        let eku = &json[0]["extended_key_usage"];
+        assert!(eku.is_array(), "expected array, got {eku}");
+        assert_eq!(eku[0], "ClientAuth");
+        assert_eq!(eku[1], "CodeSigning");
+
+        let round_tripped: Vec<CertificateMetadata> = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            round_tripped[0].extended_key_usage,
+            certs[0].extended_key_usage
+        );
     }
 }

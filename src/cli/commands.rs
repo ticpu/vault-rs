@@ -24,7 +24,7 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
     }
 
     // Create output formatter
-    let output = OutputFormat::new(cli.raw);
+    let output = OutputFormat::new(cli.raw, cli.json);
 
     // Ensure directories exist
     crate::utils::paths::VaultCliPaths::ensure_all_dirs()?;

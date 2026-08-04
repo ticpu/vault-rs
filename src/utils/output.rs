@@ -1,4 +1,6 @@
 use crate::cert::CertificateColumn;
+use crate::utils::errors::Result;
+use serde::Serialize;
 use std::fmt::Display;
 use std::io::{self, Write};
 
@@ -20,6 +22,7 @@ pub trait GetColumnValue {
 #[derive(Clone, Debug)]
 pub struct OutputFormat {
     pub raw: bool,
+    pub json: bool,
 }
 
 /// Build table data from certificates and columns
@@ -60,8 +63,17 @@ where
 }
 
 impl OutputFormat {
-    pub fn new(raw: bool) -> Self {
-        Self { raw }
+    pub fn new(raw: bool, json: bool) -> Self {
+        Self { raw, json }
+    }
+
+    /// Serializes the record itself (not display-formatted strings) as a
+    /// single JSON value. Callers must branch before building table data,
+    /// since a table row's cells are already truncated/summarized for display.
+    pub fn print_json<T: Serialize>(&self, value: &T) -> Result<()> {
+        let json = serde_json::to_string_pretty(value)?;
+        print_line(&json);
+        Ok(())
     }
 
     /// Print tabular data - either raw (tab-separated) or formatted (column-aligned)
@@ -190,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_raw_output() {
-        let format = OutputFormat::new(true);
+        let format = OutputFormat::new(true, false);
         let data = vec![
             vec!["short", "medium", "very_long_column"],
             vec!["a", "bb", "ccc"],
@@ -204,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_formatted_output() {
-        let format = OutputFormat::new(false);
+        let format = OutputFormat::new(false, false);
         let data = vec![
             vec!["short", "medium", "very_long_column"],
             vec!["a", "bb", "ccc"],

@@ -29,8 +29,12 @@ pub struct Cli {
     pub quiet: bool,
 
     /// Output raw tab-separated values (no formatting)
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "json")]
     pub raw: bool,
+
+    /// Output JSON instead of formatted or raw tables (list/show commands only)
+    #[arg(long, conflicts_with = "raw")]
+    pub json: bool,
 
     #[command(subcommand)]
     pub command: Commands,
