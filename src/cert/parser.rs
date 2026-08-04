@@ -124,7 +124,7 @@ impl CertificateParser {
             .map_err(|e| VaultCliError::CertParsing(format!("malformed {name} extension: {e}")))
     }
 
-    fn extract_sans(cert: &X509Certificate) -> Result<Vec<String>> {
+    pub(crate) fn extract_sans(cert: &X509Certificate) -> Result<Vec<String>> {
         let Some(der) = Self::extension(cert, &SUBJECT_ALT_NAME_OID) else {
             return Ok(Vec::new());
         };
@@ -137,7 +137,7 @@ impl CertificateParser {
             .collect())
     }
 
-    fn format_general_name(name: &GeneralName) -> Option<String> {
+    pub(crate) fn format_general_name(name: &GeneralName) -> Option<String> {
         match name {
             GeneralName::DNSName(dns) => Some(dns.to_string()),
             GeneralName::IPAddress(ip) => match <[u8; 4]>::try_from(*ip) {
@@ -174,7 +174,7 @@ impl CertificateParser {
     /// x509-parser exposes the well-known usages as typed booleans and leaves
     /// `other` for OIDs it did not recognise, so reading `other` alone yields
     /// nothing for any certificate using standard EKUs.
-    fn extract_extended_key_usage(cert: &X509Certificate) -> Result<Vec<String>> {
+    pub(crate) fn extract_extended_key_usage(cert: &X509Certificate) -> Result<Vec<String>> {
         let Some(der) = Self::extension(cert, &EXTENDED_KEY_USAGE_OID) else {
             return Ok(Vec::new());
         };
@@ -202,6 +202,31 @@ impl CertificateParser {
             .filter(|(set, _)| *set)
             .map(|(_, name)| (*name).to_string())
             .collect()
+    }
+
+    /// A short, human-legible key description ("EC prime256v1", "RSA 2048"),
+    /// shared between a CSR's key and an issued certificate's key so
+    /// `--dry-run` and the post-issuance report describe it identically.
+    pub(crate) fn describe_public_key(spki: &SubjectPublicKeyInfo) -> String {
+        use x509_parser::public_key::PublicKey;
+
+        match spki.parsed() {
+            Ok(PublicKey::RSA(rsa)) => format!("RSA {}", rsa.key_size()),
+            Ok(PublicKey::EC(_)) => {
+                let curve = spki
+                    .algorithm
+                    .parameters
+                    .as_ref()
+                    .and_then(|p| p.as_oid().ok())
+                    .and_then(|oid| oid2sn(&oid, oid_registry()).ok().map(str::to_string));
+                match curve {
+                    Some(name) => format!("EC {name}"),
+                    None => "EC".to_string(),
+                }
+            }
+            Ok(_) => "unrecognised key type".to_string(),
+            Err(_) => "unparseable key".to_string(),
+        }
     }
 
     fn extract_is_ca(cert: &X509Certificate) -> Result<bool> {

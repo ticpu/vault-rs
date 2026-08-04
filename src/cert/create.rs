@@ -1,6 +1,10 @@
+use crate::cert::plan::{build_plan, PlanInput};
+use crate::cert::report::print_identity_fields;
+use crate::cert::CertificateParser;
 use crate::cli::args::CryptoType;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::pem::{PemCertificate, PemCertificateChain, PemPrivateKey};
+use crate::utils::prompt::confirm;
 use crate::utils::{parse_comma_separated, resolve_crypto_type, validate_role_exists};
 use crate::vault::client::{IssueCertificateRequest, VaultClient};
 use std::fs;
@@ -16,6 +20,8 @@ pub struct CreateCertificateRequest {
     pub ttl: Option<String>,
     pub no_store: bool,
     pub export_plain: Option<String>,
+    pub dry_run: bool,
+    pub yes: bool,
 }
 
 pub async fn create_certificate(
@@ -50,12 +56,42 @@ pub async fn create_certificate(
     // Validate role exists (optional check with helpful error)
     validate_role_exists(client, &full_pki, &request.role).await?;
 
-    // Get CA chain first - if this fails, no certificate will be created
-    let ca_chain = client.get_ca_chain(&full_pki).await?;
-
     // Issue certificate from Vault
     let alt_names_vec = parse_comma_separated(request.alt_names.as_deref());
     let ip_sans_vec = parse_comma_separated(request.ip_sans.as_deref());
+
+    // Everything needed to rehearse or confirm the issuance: the role that
+    // governs the identity, and the issuer's name.
+    let role_config = client.read_role(&full_pki, &request.role).await?;
+    let issuer_pem = client.get_ca_certificate(&full_pki).await?;
+    let issuer_cn = CertificateParser::parse_pem(&issuer_pem, &full_pki)?.cn;
+
+    let plan_input = PlanInput {
+        role: &role_config,
+        cn_arg: &request.cn,
+        crypto_arg: request.crypto.as_ref().map(|c| c.as_str()),
+        alt_names_arg: alt_names_vec.as_deref().unwrap_or(&[]),
+        ip_sans_arg: ip_sans_vec.as_deref().unwrap_or(&[]),
+        ttl_arg: request.ttl.as_deref(),
+        csr: None,
+        issuer_cn: &issuer_cn,
+    };
+
+    if request.dry_run {
+        print_identity_fields(&build_plan(&plan_input));
+        return Ok(());
+    }
+
+    confirm(
+        &format!(
+            "Create a certificate for CN '{}' with role '{}' on {full_pki}?",
+            request.cn, request.role
+        ),
+        request.yes,
+    )?;
+
+    // Get CA chain first - if this fails, no certificate will be created
+    let ca_chain = client.get_ca_chain(&full_pki).await?;
 
     let issue_request = IssueCertificateRequest {
         pki_mount: &full_pki,

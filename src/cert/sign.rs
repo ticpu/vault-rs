@@ -1,5 +1,10 @@
+use crate::cert::csr::parse_csr_pem;
+use crate::cert::plan::{build_plan, PlanInput};
+use crate::cert::report::print_identity_fields;
+use crate::cert::CertificateParser;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::pem::{PemCertificate, PemCertificateChain};
+use crate::utils::prompt::confirm;
 use crate::utils::{parse_comma_separated, resolve_crypto_type, validate_role_exists};
 use crate::vault::client::VaultClient;
 use std::fs;
@@ -16,6 +21,8 @@ pub struct CsrSignRequest {
     pub ttl: Option<String>,
     pub no_store: bool,
     pub export_plain: Option<String>,
+    pub dry_run: bool,
+    pub yes: bool,
 }
 
 pub async fn sign_certificate_from_csr(
@@ -71,6 +78,39 @@ pub async fn sign_certificate_from_csr(
     let alt_names_vec = parse_comma_separated(request.alt_names.as_deref());
     let ip_sans_vec = parse_comma_separated(request.ip_sans.as_deref());
 
+    // Everything needed to rehearse or confirm the issuance: the role that
+    // governs the identity, the CSR's own claims, and the issuer's name.
+    let role_config = client.read_role(&full_pki, &request.role).await?;
+    let csr_info = parse_csr_pem(&csr_content)?;
+    let issuer_pem = client.get_ca_certificate(&full_pki).await?;
+    let issuer_cn = CertificateParser::parse_pem(&issuer_pem, &full_pki)?.cn;
+
+    let plan_input = PlanInput {
+        role: &role_config,
+        cn_arg: &request.cn,
+        crypto_arg: request.crypto.as_ref().map(|c| c.as_str()),
+        alt_names_arg: alt_names_vec.as_deref().unwrap_or(&[]),
+        ip_sans_arg: ip_sans_vec.as_deref().unwrap_or(&[]),
+        ttl_arg: request.ttl.as_deref(),
+        csr: Some(&csr_info),
+        issuer_cn: &issuer_cn,
+    };
+
+    if request.dry_run {
+        print_identity_fields(&build_plan(&plan_input));
+        return Ok(());
+    }
+
+    confirm(
+        &format!(
+            "Sign a certificate for CSR '{}' with role '{}' on {full_pki}?",
+            request.csr_file, request.role
+        ),
+        request.yes,
+    )?;
+
+    let ca_chain = client.get_ca_chain(&full_pki).await?;
+
     // Sign certificate using CSR
     let sign_request = crate::vault::client::SignCertificateRequest {
         pki_mount: &full_pki,
@@ -99,14 +139,13 @@ pub async fn sign_certificate_from_csr(
 
     // Store locally unless --no-store
     use crate::utils::cert_utils::CertificateStorageHelper;
-    let ca_chain = client.get_ca_chain(&full_pki).await?;
 
     let storage_helper = CertificateStorageHelper {
         serial: serial.to_string(),
         cn: request.cn.clone(),
         role: request.role.clone(),
         crypto: detected_crypto.clone(),
-        sans: alt_names_vec.unwrap_or_default(),
+        sans: alt_names_vec.clone().unwrap_or_default(),
         no_store: request.no_store,
     };
 

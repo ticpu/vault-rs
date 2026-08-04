@@ -302,6 +302,12 @@ pub enum CertCommands {
         /// Also export unencrypted to directory
         #[arg(long)]
         export_plain: Option<String>,
+        /// Show what would be issued, with provenance, and exit without writing
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        yes: bool,
     },
     /// Sign certificate from CSR
     Sign {
@@ -333,6 +339,12 @@ pub enum CertCommands {
         /// Also export unencrypted to directory
         #[arg(long)]
         export_plain: Option<String>,
+        /// Show what would be issued, with provenance, and exit without writing
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        yes: bool,
     },
     /// Export certificate by CN or serial
     Export {
@@ -386,6 +398,9 @@ pub enum CertCommands {
         /// PKI mount (for CN lookups, optional)
         #[arg(long, short = 'm')]
         pki_mount: Option<String>,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        yes: bool,
     },
 }
 

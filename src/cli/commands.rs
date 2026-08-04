@@ -176,6 +176,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             ttl,
             no_store,
             export_plain,
+            dry_run,
+            yes,
         } => {
             use crate::cert::{create_certificate, CreateCertificateRequest};
 
@@ -189,6 +191,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 ttl,
                 no_store,
                 export_plain,
+                dry_run,
+                yes,
             };
 
             create_certificate(&client, request).await?;
@@ -205,6 +209,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             ttl,
             no_store,
             export_plain,
+            dry_run,
+            yes,
         } => {
             use crate::cert::{sign_certificate_from_csr, CsrSignRequest};
 
@@ -219,6 +225,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 ttl,
                 no_store,
                 export_plain,
+                dry_run,
+                yes,
             };
 
             sign_certificate_from_csr(&client, request).await
@@ -298,12 +306,14 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         CertCommands::Revoke {
             identifier,
             pki_mount,
+            yes,
         } => {
             use crate::cert::{revoke_certificate, RevokeRequest};
 
             let request = RevokeRequest {
                 identifier: identifier.clone(),
                 pki_mount: pki_mount.clone(),
+                yes,
             };
 
             revoke_certificate(&client, request).await?;

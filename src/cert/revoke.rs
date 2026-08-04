@@ -1,9 +1,11 @@
 use crate::utils::errors::Result;
+use crate::utils::prompt::confirm;
 use crate::vault::client::VaultClient;
 
 pub struct RevokeRequest {
     pub identifier: String,
     pub pki_mount: Option<String>,
+    pub yes: bool,
 }
 
 pub async fn revoke_certificate(client: &VaultClient, request: RevokeRequest) -> Result<()> {
@@ -16,6 +18,11 @@ pub async fn revoke_certificate(client: &VaultClient, request: RevokeRequest) ->
 
     eprintln!("Revoking certificate serial: {serial}");
     eprintln!("PKI mount: {mount}");
+
+    confirm(
+        &format!("Revoke certificate serial {serial} in {mount}?"),
+        request.yes,
+    )?;
 
     // Revoke the certificate
     tracing::debug!("Trying to revoke with serial {serial}");
