@@ -7,9 +7,10 @@ A secure, UNIX-friendly PKI management tool for HashiCorp Vault with advanced ce
 While the official `vault` CLI is comprehensive for general Vault operations, `vault-rs` is purpose-built for PKI certificate management with several key enhancements:
 
 ### Encrypted Local Storage
+
 - **Local certificate caching**: All certificates and private keys are stored encrypted locally using AES-GCM
-- **Master key management**: Uses personal Vault storage (`kv-v2/users/<username>/vault-rs`) for master key encryption
-- **Secure permissions**: Runtime files stored in `XDG_RUNTIME_DIR` with mode 600
+- **Master key management**: Master key stored at a fixed `vault-rs/encryption-key` path in an auto-discovered KV mount (the `secret` mount if present, otherwise the first KV mount found)
+- **Secure permissions**: Runtime files stored in `$XDG_RUNTIME_DIR/vault-rs/` (falling back to `~/.local/state/vault-rs/` when unset) with mode 600
 - **NEVER uses /tmp**: All temporary operations use secure runtime directories
 
 ### Enhanced Certificate Listing 
@@ -37,31 +38,40 @@ vault-rs --json cert list --pki-mount internal
 vault list pki/certs/  # only shows serial numbers, no metadata
 ```
 
+`--allow-partial` on `cert list`, `cert list-mounts` and `cache status` lists what it could read
+instead of failing on a record it can't; skipped records are named on stderr. Combined with
+`--expiring-within`, a partial read can still exit 0 while blind to certificates it never read —
+the exit code is not authoritative in that case.
+
 ### Automatic DNS Discovery
+
 - **SRV record support**: Discovers Vault servers via `_vault._tcp.<domain>` SRV records
 - **DNS TTL caching**: Respects DNS TTL for intelligent cache expiration
 - **Search domain parsing**: Automatically parses `/etc/resolv.conf` for domain search
 
 ### Smart Certificate Management
+
 - **Crypto type auto-detection**: Automatically detects RSA vs EC from PKI mount issuers
 - **Fail-fast validation**: Never creates certificates with wrong crypto type
 - **Certificate revocation tracking**: Shows revocation status in listings
 - **Expiration monitoring**: Built-in expiration tracking and alerts
 
 ### Export Formats
+
 ```bash
-# With no --output, PEM and DER go to stdout; the rest need a directory
-vault-rs cert export example.com --format pem     # PEM to stdout (pipe-friendly)  
+# With no --output, every format goes to stdout except p12, which needs a directory
+vault-rs cert export example.com --format pem     # PEM to stdout (pipe-friendly)
 vault-rs cert export example.com --format p12     # PKCS#12 with passphrase
 vault-rs cert export example.com --format der     # DER, binary
-vault-rs cert export example.com --format chain   # leaf + intermediates, root excluded
+vault-rs cert export example.com --format chain   # leaf + intermediates, root excluded, no key needed
 vault-rs cert export example.com --format chain-with-root  # for internal trust config
-vault-rs cert export example.com --format all     # single bundle: key (if held) + leaf + chain
+vault-rs cert export example.com --format bundle  # key + leaf + chain; errors without a locally stored key
 ```
 
 `chain` excludes the self-signed root deliberately: it is the artifact a peer needs and the one
 safe to send outside. `chain-with-root` is for configuring your own trust stores — handing a root
-to an external party invites them to trust the whole hierarchy system-wide.
+to an external party invites them to trust the whole hierarchy system-wide. `bundle` requires the
+private key to be held in local storage; use `chain` for a keyless artifact.
 
 ### Rehearse Before Issuing, Verify After
 
@@ -108,17 +118,19 @@ a peer that was never given that hierarchy. Non-zero exit if any check fails, so
 monitoring probe.
 
 ### UNIX Philosophy Compliance
+
 - **Machine-readable output**: All output designed for shell scripting and automation
 - **Pipeline-friendly**: Clean stdout data, errors/logs to stderr only
 - **Tab completion**: Comprehensive bash/zsh/fish completion for all commands
 - **Raw mode**: `--raw` flag for tab-separated values without formatting
 
 ### Performance Optimizations
-- **Lazy certificate caching**: Certificates cached on first access, refreshed as needed
+
+- **Lazy certificate caching**: certificates are immutable, so each is fetched from Vault once and read from the local cache afterward — only serials missing from the cache are ever fetched
 - **Bulk operations**: Efficient batch processing for multiple certificates
-- **Intelligent refresh**: Only fetches certificates when cache is stale
 
 ### Vault Integration
+
 - **Command passthrough**: every Vault verb this tool does not wrap itself is forwarded to the official `vault` binary with the address and token already resolved. Reasoning about an issuance means reading role and issuer configuration no curated command anticipates, and the passthrough keeps that in one tool and one login instead of two. `vault-rs --help` lists what is currently forwarded
 - **Token management**: Secure token storage and automatic refresh
 - **Mount discovery**: Automatic PKI mount detection and validation
@@ -127,7 +139,7 @@ monitoring probe.
 
 ```bash
 # Build from source
-git clone https://github.com/your-org/vault-rs
+git clone https://github.com/ticpu/vault-rs
 cd vault-rs
 cargo build --release
 sudo cp target/release/vault-rs /usr/local/bin/
@@ -173,7 +185,15 @@ or omitted role errors before anything reaches the CA.
 | Pre-issuance preview | None | `--dry-run` with per-field provenance |
 | Chain verification | None | Against the anchor the relying party loads |
 | Crypto validation | Basic | Auto-detection, fail-fast validation |
-| Caching | None | Intelligent lazy loading |
+| Caching | None | Lazy loading; fetches only what is missing from the cache |
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Ran successfully |
+| 1 | `--expiring-within` matched a certificate, or `cert verify` failed a check |
+| 2 | Error |
 
 ## Configuration
 
@@ -192,24 +212,14 @@ vault-rs -vv cert list
 ## Architecture
 
 - **Local Storage**: `~/.local/share/vault-rs/` - Encrypted certificate storage
-- **Runtime**: `$XDG_RUNTIME_DIR/vault-rs/` - Tokens, cache, temp files  
+- **Runtime**: `$XDG_RUNTIME_DIR/vault-rs/` (falling back to `~/.local/state/vault-rs/` when unset) - Tokens, cache, temp files
 - **Config**: `~/.config/vault-rs/` - User configuration
-- **Cache**: Certificate metadata cached per PKI mount with TTL
+- **Cache**: Certificate metadata cached per PKI mount; certificates are immutable, so once fetched an entry is never re-fetched
 
 ## Security Model
 
-1. **Master key** stored in personal Vault KV store (`kv-v2/users/<username>/vault-rs`)
+1. **Master key** stored at a fixed `vault-rs/encryption-key` path in an auto-discovered KV mount; `auth init-encryption` refuses to overwrite an existing key unless `--destroy-all-my-keys` is passed, which makes every locally stored artifact permanently undecryptable
 2. **All certificates** encrypted locally with AES-GCM using derived keys
 3. **Secure file permissions** (600) on all sensitive files
 4. **No plaintext storage** of certificates or private keys
 5. **TLS verification** always enabled, uses system certificate store
-
-## Contributing
-
-vault-rs follows strict security and UNIX philosophy principles:
-- All output must be machine-readable  
-- Errors/logs go to stderr, data to stdout
-- Fail fast on security violations
-- Never store secrets in plaintext
-
-See [CLAUDE.md](CLAUDE.md) for detailed development guidelines.
