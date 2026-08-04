@@ -1,5 +1,6 @@
 use crate::cli::args::CryptoType;
 use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::pem::{PemCertificate, PemPrivateKey};
 use crate::utils::{parse_comma_separated, resolve_crypto_type, validate_role_exists};
 use crate::vault::client::{IssueCertificateRequest, VaultClient};
 use std::fs;
@@ -108,23 +109,36 @@ pub async fn create_certificate(
         let export_path = Path::new(&export_dir);
         fs::create_dir_all(export_path)?;
 
+        let pem_key = PemPrivateKey::new(private_key.to_string());
+        let pem_cert = PemCertificate::new(certificate.to_string());
+        let pem_issuing_ca = PemCertificate::new(issuing_ca.to_string());
+        let pem_chain = PemCertificate::new(ca_chain);
+
         // Write certificate files
-        fs::write(export_path.join(format!("{}.crt", request.cn)), certificate)?;
-        fs::write(export_path.join(format!("{}.key", request.cn)), private_key)?;
+        fs::write(
+            export_path.join(format!("{}.crt", request.cn)),
+            pem_cert.pem_data(),
+        )?;
+        fs::write(
+            export_path.join(format!("{}.key", request.cn)),
+            pem_key.pem_data(),
+        )?;
         fs::write(
             export_path.join(format!("{}.pem", request.cn)),
-            format!("{private_key}{certificate}"),
+            format!("{}{}", pem_key.pem_data(), pem_cert.pem_data()),
         )?;
-        fs::write(export_path.join(format!("{}.crt", request.pki)), issuing_ca)?;
+        fs::write(
+            export_path.join(format!("{}.crt", request.pki)),
+            pem_issuing_ca.pem_data(),
+        )?;
         fs::write(
             export_path.join(format!("{}_chain.crt", request.pki)),
-            &ca_chain,
+            pem_chain.pem_data(),
         )?;
 
         // Create P12 file using OpenSSL (like vlt.sh)
         let p12_file = export_path.join(format!("{}.p12", request.cn));
-        let _ =
-            crate::utils::create_p12_file(&p12_file, private_key, certificate, issuing_ca, true);
+        crate::utils::create_p12_file(&p12_file, private_key, certificate, issuing_ca, true)?;
 
         eprintln!("✓ Plain files exported to: {export_dir}");
     }

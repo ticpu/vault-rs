@@ -265,3 +265,51 @@ pub fn parse_certificate_chain(pem_data: &str) -> Vec<PemCertificate> {
 
     certificates
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn testdata(name: &str) -> String {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/cert/testdata/");
+        std::fs::read_to_string(format!("{path}{name}.pem"))
+            .unwrap_or_else(|e| panic!("missing fixture {name}.pem: {e}"))
+    }
+
+    /// Vault's JSON `certificate`/`issuing_ca` fields carry no trailing newline;
+    /// callers must go through PemCertificate/PemPrivateKey to get exactly one.
+    fn without_trailing_newline(name: &str) -> String {
+        testdata(name).trim_end().to_string()
+    }
+
+    #[test]
+    fn pem_certificate_ends_with_exactly_one_newline() {
+        let cert = PemCertificate::new(without_trailing_newline("leaf-client"));
+        assert!(cert.pem_data().ends_with("-----END CERTIFICATE-----\n"));
+        assert!(!cert.pem_data().ends_with("-----\n\n"));
+    }
+
+    #[test]
+    fn pem_private_key_ends_with_exactly_one_newline() {
+        // No private-key fixture on disk; reuse a certificate body, only the
+        // newline behavior of PemPrivateKey::new is under test here.
+        let key = PemPrivateKey::new(without_trailing_newline("leaf-client"));
+        assert!(key.pem_data().ends_with("-----END CERTIFICATE-----\n"));
+        assert!(!key.pem_data().ends_with("-----\n\n"));
+    }
+
+    #[test]
+    fn concatenated_leaf_and_ca_reparse() {
+        let leaf = PemCertificate::new(without_trailing_newline("leaf-client"));
+        let ca = PemCertificate::new(without_trailing_newline("ca-intermediate"));
+
+        let combined = format!("{}{}", leaf.pem_data(), ca.pem_data());
+
+        // Guard against the historical defect: concatenated PEMs without a
+        // separating newline glue END/BEGIN markers onto one line.
+        assert!(!combined.contains("----------"));
+
+        let parsed = parse_certificate_chain(&combined);
+        assert_eq!(parsed.len(), 2);
+    }
+}

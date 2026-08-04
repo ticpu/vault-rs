@@ -1,4 +1,5 @@
 use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::pem::PemCertificate;
 use crate::utils::{parse_comma_separated, resolve_crypto_type, validate_role_exists};
 use crate::vault::client::VaultClient;
 use std::fs;
@@ -122,15 +123,21 @@ pub async fn sign_certificate_from_csr(
         let export_path = Path::new(&export_dir);
         fs::create_dir_all(export_path)?;
 
-        // Get CA chain for export
-        let ca_chain = client.get_ca_chain(&full_pki).await?;
-
         // Write certificate files (no private key for CSR signing)
-        fs::write(export_path.join(format!("{}.crt", request.cn)), certificate)?;
-        fs::write(export_path.join(format!("{}.crt", request.pki)), issuing_ca)?;
+        let pem_cert = PemCertificate::new(certificate.to_string());
+        let pem_issuing_ca = PemCertificate::new(issuing_ca.to_string());
+        let pem_chain = PemCertificate::new(ca_chain);
+        fs::write(
+            export_path.join(format!("{}.crt", request.cn)),
+            pem_cert.pem_data(),
+        )?;
+        fs::write(
+            export_path.join(format!("{}.crt", request.pki)),
+            pem_issuing_ca.pem_data(),
+        )?;
         fs::write(
             export_path.join(format!("{}_chain.crt", request.pki)),
-            &ca_chain,
+            pem_chain.pem_data(),
         )?;
 
         eprintln!("✓ Certificate files exported to: {export_dir}");

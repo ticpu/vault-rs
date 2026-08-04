@@ -220,7 +220,7 @@ async fn export_certificate_chain(
             &output_content,
         )
     } else {
-        println!("{output_content}");
+        print!("{output_content}");
         Ok(())
     }
 }
