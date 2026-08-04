@@ -250,6 +250,14 @@ impl VaultAuth {
             if let Ok(renewed_token) = self.renew_token(&token).await {
                 return Ok(renewed_token);
             }
+            // Nothing else expires this file, and it outlives the session when
+            // the fallback state directory is in use.
+            if let Err(e) = fs::remove_file(&token_file) {
+                tracing::warn!(
+                    "Failed to remove the expired token at {}: {e}",
+                    token_file.display()
+                );
+            }
             return Err(VaultCliError::Auth(
                 "Stored token is invalid. Please login again.".to_string(),
             ));

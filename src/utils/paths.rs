@@ -23,15 +23,26 @@ impl VaultCliPaths {
             .ok_or_else(|| VaultCliError::Config("Cannot determine config directory".to_string()))
     }
 
-    /// Get the runtime directory: $XDG_RUNTIME_DIR/vault-rs/
+    /// Get the runtime directory: `$XDG_RUNTIME_DIR/vault-rs/`, falling back to
+    /// the state directory when the session offers no runtime one.
+    ///
+    /// This holds the authentication token; see docs/design-rationale.md,
+    /// "A private persistent directory over a shared volatile one".
     pub fn runtime_dir() -> Result<PathBuf> {
         if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-            Ok(PathBuf::from(runtime_dir).join(PROGRAM_NAME))
-        } else {
-            // Fallback to temp directory with user-specific path
-            let user_id = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-            Ok(PathBuf::from(format!("/tmp/{PROGRAM_NAME}-{user_id}")))
+            return Ok(PathBuf::from(runtime_dir).join(PROGRAM_NAME));
         }
+
+        dirs::state_dir()
+            .map(|dir| dir.join(PROGRAM_NAME))
+            .ok_or_else(|| {
+                VaultCliError::Config(
+                    "XDG_RUNTIME_DIR is unset and no state directory could be determined. \
+                     The authentication token goes in one of those two or nowhere; set \
+                     XDG_RUNTIME_DIR or XDG_STATE_HOME."
+                        .to_string(),
+                )
+            })
     }
 
     /// Get the secrets storage directory: ~/.local/share/vault-rs/secrets/
@@ -84,16 +95,23 @@ impl VaultCliPaths {
         Ok(Self::cache_dir()?.join("certs"))
     }
 
-    /// Ensure a directory exists with proper permissions
+    /// Ensure a directory exists and is reachable only by its owner.
+    ///
+    /// The mode is checked on every call, not only on creation: a directory
+    /// left behind by an earlier version, or created by someone else first,
+    /// is exactly the case the 0600 file mode does not cover.
     pub fn ensure_dir_exists(path: &PathBuf) -> Result<()> {
         if !path.exists() {
             fs::create_dir_all(path)?;
+        }
 
-            // Set restrictive permissions on data directories (700)
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = fs::metadata(path)?.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(path)?.permissions();
+            let mode = perms.mode() & 0o777;
+            if mode & 0o077 != 0 {
+                tracing::warn!("Tightening {} from mode {mode:04o} to 0700", path.display());
                 perms.set_mode(0o700);
                 fs::set_permissions(path, perms)?;
             }
@@ -112,6 +130,43 @@ impl VaultCliPaths {
         Self::ensure_dir_exists(&Self::pki_cache_dir()?)?;
         Self::ensure_dir_exists(&Self::cert_cache()?)?;
         Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/target/paths-tests")).join(name);
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    fn mode_of(path: &PathBuf) -> u32 {
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn a_new_directory_is_owner_only() {
+        let dir = scratch("new");
+        VaultCliPaths::ensure_dir_exists(&dir).unwrap();
+        assert_eq!(mode_of(&dir), 0o700);
+    }
+
+    /// The token directory may already exist from an earlier version, or have
+    /// been created by somebody else first. Only checking on creation leaves
+    /// both cases readable.
+    #[test]
+    fn an_existing_permissive_directory_is_tightened() {
+        let dir = scratch("permissive");
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        VaultCliPaths::ensure_dir_exists(&dir).unwrap();
+        assert_eq!(mode_of(&dir), 0o700);
     }
 }
 
