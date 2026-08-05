@@ -4,12 +4,20 @@ A secure, UNIX-friendly PKI management tool for HashiCorp Vault with advanced ce
 
 ## Why vault-rs?
 
-While the official `vault` CLI is comprehensive for general Vault operations, `vault-rs` is purpose-built for PKI certificate management with several key enhancements:
+While the official `vault` CLI is comprehensive for general Vault operations, `vault-rs` is purpose-built for PKI certificate management with several key enhancements. It speaks the API itself for the verbs used daily — `read`, `write`, `list`, `delete`, `kv`, `status`, `token` — and forwards the rest to the `vault` binary, which is therefore optional rather than required.
 
 ### Encrypted Local Storage
 
 - **Local certificate caching**: All certificates and private keys are stored encrypted locally using AES-GCM
-- **Master key management**: Master key stored at a fixed `vault-rs/encryption-key` path in an auto-discovered KV mount — the `secret` mount if present, otherwise the lowest-named KV mount. `session key status` reports which, and whether replacing it could be undone
+- **Master key management**: Master key stored at a fixed `vault-rs/encryption-key` path in a KV mount the store records once and then keeps using. With one KV mount that choice is made for you; with several it is refused rather than guessed, because guessing wrong mints a second key and leaves everything already stored unreadable:
+
+```bash
+vault-rs session init-encryption --mount secret   # put a new key here
+vault-rs session key use secret                   # adopt a key already there
+vault-rs session key status                       # which mount, and whether replacing it could be undone
+```
+
+  If the recorded mount later stops being there, that is reported as itself rather than as an empty store — the artifacts are still sealed under whatever was on it, so adopting a different one is an explicit step.
 - **Recovery is a command, not a hint**: `session key history` lists the versions the mount still holds, and `session key restore --version N` writes one back and reports how much of the store that made readable — `4 of 7 artifacts decrypt, up from 0`. A partial recovery is a success: the remaining artifacts are named, and one sealed by another cluster needs that cluster rather than another version
 - **Secure permissions**: Runtime files stored in `$XDG_RUNTIME_DIR/vault-rs/` (falling back to `~/.local/state/vault-rs/` when unset) with mode 600
 - **NEVER uses /tmp**: All temporary operations use secure runtime directories
@@ -146,10 +154,30 @@ write path is rehearsable:
 # What would actually be issued, and where each field comes from
 vault-rs cert sign -m internal --role client example.com request.csr --dry-run
 
+# What the role decides, before there is a request at all
+vault-rs cert role-info internal client
+
 # Inspect a CSR on its own, or projected through a role
 vault-rs cert inspect-csr request.csr
 vault-rs cert inspect-csr request.csr -m internal --role client
 ```
+
+`cert list-roles` gives names and reading the role path gives forty fields in no order; neither
+says which of them govern the identity. `role-info` renders through the same builder `--dry-run`
+uses, so the two cannot disagree about what the role fixes and what a request could still
+influence:
+
+```
+subject  O=Example Org, CN=(supplied at issuance)
+         CN  from the argument given to cert create
+         O   from role
+eku      ClientAuth                 (role client_flag)
+validity 72h                        (role max_ttl; role sets no explicit default)
+issuer   Example Issuing CA
+```
+
+`--json` emits the whole role record instead, since the parsed view models what governs an
+identity and would drop the rest without saying so.
 
 The provenance matters more than the result: with `use_csr_common_name=true` the subject comes from
 the CSR and the CN argument is inert, so `--dry-run` reports the argument as unused rather than
@@ -195,19 +223,48 @@ monitoring probe.
 
 ### Vault Integration
 
-- **`read`, `write`, `list`, `delete` are answered directly**, so `--json`, `--raw` and `--field` work on them and the official binary is not needed. Data keeps vault's own spelling — `key=value`, `key=@file`, `key=-` for stdin, a bare `@file`/`-` for a whole JSON body, and a repeated key for a list
-- **`kv get/put/list/delete/undelete/destroy/rollback` and `kv metadata get/delete` are answered directly**; `kv patch` and anything else forwards. Both spellings work — `vault-rs kv get secret/app` and `vault-rs kv get --mount secret app`. `--mount` has no `-m` short on purpose: vault spells it `-mount=secret`, which clap would read as a mount named `ount=secret`
-- **`status` needs no token** and reports the seal state of whatever `VAULT_ADDR` resolves to. **Note the exit code differs from `vault status`**: sealed is 1 here and 2 there, because 2 already means "error" for every other vault-rs command and one tool cannot have two meanings for it
-- **`token lookup/renew/revoke` act on this session's token**; `token create`, `capabilities` and anything naming another token forward. `token revoke` removes the local token too, so a revoked session does not leave a file behind that every later command fails against
-- **Command passthrough**: every Vault verb this tool does not wrap itself is forwarded to the official `vault` binary with the address and token already resolved. Reasoning about an issuance means reading role and issuer configuration no curated command anticipates, and the passthrough keeps that in one tool and one login instead of two. `vault-rs --help` lists what is currently forwarded
-- **Partly-modelled verbs split by subcommand**: `vault-rs secrets list` is answered directly; `vault-rs secrets enable` and every other subcommand is forwarded. `vault-rs --help secrets` says which
-- **`vault-rs vault <args…>`**: runs the official binary verbatim with this session's address and token. The token lives in `$XDG_RUNTIME_DIR/vault-rs/` and is never exported, so this is how you reach anything vault-rs does not model — invoking `vault` yourself would not be authenticated
-- **`--vault-addr` applies to one invocation**, outranking `VAULT_ADDR`. Useful for reaching the cluster that sealed an artifact (`vault-rs storage show` names it) without exporting anything into the shell you are in
-- **`VAULT_NAMESPACE` is sent on every request**, not only on forwarded ones
-- **`session` is this machine, everything else is the server**: `vault-rs session login/logout/status` and `session init-encryption` act on the local token and encryption key. `vault-rs auth …` and `vault-rs secrets …` reach Vault's own auth methods and engines
-- **Logging out revokes**: `vault-rs session logout` revokes the token server-side and removes it locally. The local token goes even when revocation fails — an expired token or an unreachable server should not leave the credential on disk — and the command exits non-zero so a script can tell
-- **Token management**: Secure token storage and automatic refresh
-- **Mount discovery**: Automatic PKI mount detection and validation
+The verbs an operator reaches for daily are answered over the API. The `vault` binary is optional,
+and needed only for what this tool does not model.
+
+```bash
+vault-rs read secret/data/app                  # --json, --raw and --field work on all of these
+vault-rs write pki/roles/web ttl=72h allow_any_name=true
+vault-rs kv get --mount secret app
+vault-rs status                                # no token needed
+vault-rs vault policy list                     # anything not modelled, with the session's token
+```
+
+- **Data keeps vault's own spelling**, because an operator pasting a documented invocation is
+  pasting its data arguments: `key=value`, `key=@file`, `key=-` for stdin, a bare `@file` or `-`
+  for a whole JSON body, and a repeated key for a list
+- **Partly-modelled verbs split by subcommand, visibly.** `kv get` is answered here and `kv patch`
+  forwards; `secrets list` is answered here and `secrets enable` forwards. `vault-rs --help kv`
+  says which. A modelled subcommand handed something it does not understand fails and names the
+  forwarding command rather than quietly re-dispatching
+- **`vault-rs vault <args…>` runs the official binary verbatim** with this session's address and
+  token. The token lives in `$XDG_RUNTIME_DIR/vault-rs/` and is never exported, so this — not
+  invoking `vault` yourself — is how you reach what is not modelled and stay authenticated
+- **`session` is this machine; `auth`, `secrets` and `token` are the server.** `session
+  login/logout/status`, `session init-encryption` and `session key …` act on the local token and
+  encryption key. `token lookup/renew/revoke` act on this session's token and everything naming
+  another token forwards
+- **Logging out revokes.** `session logout` revokes server-side and removes the local token — and
+  removes it even when revocation fails, since an expired token or an unreachable server should
+  not leave the credential on disk. It exits non-zero so a script can tell. `token revoke` is the
+  same call
+- **`status` needs no token**, because a sealed Vault can neither mint nor validate one. **Its
+  exit code differs from `vault status`**: sealed is 1 here and 2 there, since 2 already means
+  "error" for every other vault-rs command and one tool cannot carry both meanings
+- **`--mount` has no `-m` short on the `kv` commands.** Vault spells it `-mount=secret`, which
+  clap would read as a mount named `ount=secret` — a silently wrong write where an error is wanted
+- **`--vault-addr` applies to one invocation**, outranking `VAULT_ADDR`: useful for reaching the
+  cluster that sealed an artifact (`storage show` names it) without exporting it into the shell
+  that produced the confusion. **`VAULT_NAMESPACE` is sent on every request**, not only forwarded
+  ones
+- **A write to a guarded path says so first.** `write` and `kv put` announce a target that some
+  other command owns — the master key's path — naming that command and whether the mount can give
+  the key back, then proceed. The generic verb stays generic; if the check itself is refused the
+  notice says that rather than falling silent, so no warning means checked, never could-not-check
 
 ## Installation
 
@@ -260,6 +317,8 @@ or omitted role errors before anything reaches the CA.
 | Chain verification | None | Against the anchor the relying party loads |
 | Crypto validation | Basic | Auto-detection, fail-fast validation |
 | Caching | None | Lazy loading; fetches only what is missing from the cache |
+| Role configuration | Forty fields in no order | `cert role-info` marks the ones that decide the issued identity |
+| `read`/`write`/`kv` output | `-format=json` or a table | Honours the global `--json`, `--raw` and `--field` |
 
 ## Exit Codes
 
@@ -298,8 +357,25 @@ vault-rs -vv cert list
 
 ## Security Model
 
-1. **Master key** stored at a fixed `vault-rs/encryption-key` path in an auto-discovered KV mount; `session init-encryption` refuses to overwrite an existing key unless `--destroy-all-my-keys` is passed, which makes every locally stored artifact permanently undecryptable
+1. **Master key** stored at a fixed `vault-rs/encryption-key` path in the KV mount this store recorded; `session init-encryption` refuses to overwrite an existing key unless `--destroy-all-my-keys` is passed, and refuses even then on a mount keeping no version history, where the loss could not be undone
 2. **All certificates** encrypted locally with AES-GCM using derived keys
 3. **Secure file permissions** (600) on all sensitive files
 4. **No plaintext storage** of certificates or private keys
 5. **TLS verification** always enabled, uses system certificate store
+
+## Tests
+
+`cargo test` runs both suites. The unit tests stub Vault over HTTP; the integration tests drive the
+built binary against a throwaway `vault server -dev`, covering what a stub cannot — exit codes,
+which stream a line went to, and whether a path this code builds is one Vault actually accepts.
+They need the official `vault` binary and fail without it rather than skipping, since a suite that
+quietly does not run reads like one that passed. `VAULT_RS_NO_INTEGRATION=1` opts out knowingly.
+
+Both suites confine themselves with **Landlock** before doing anything: readable everywhere,
+writable only under `target/`. Pointing every path at a scratch directory is a promise the tests
+make to themselves, and one forgotten environment variable breaks it — a dev server writes its root
+token to `$HOME`, so an unconfined run overwrites the operator's own. This makes it the kernel's
+refusal instead. A kernel without Landlock warns and continues; the tests are correct about their
+paths either way, and what is lost is the backstop. Each suite has a test that writes just outside
+the boundary and expects to be refused, so a confinement that stopped working is caught by the
+harmless probe rather than by a real one.
