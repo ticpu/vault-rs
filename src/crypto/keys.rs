@@ -1,3 +1,4 @@
+use crate::crypto::key_mount;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::PROGRAM_NAME;
 use crate::vault::client::VaultClient;
@@ -5,8 +6,8 @@ use aes_gcm::{Aes256Gcm, Key, KeyInit};
 use rand::Rng;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 
-const DEFAULT_KV_MOUNT: &str = "secret";
 const KV_PATH: &str = "vault-rs/encryption-key";
 
 /// Where the master key lives: the mount discovered for it, and whether that
@@ -198,16 +199,31 @@ async fn recoverability(client: &VaultClient, path: &str) -> Result<VersionReten
 
 pub struct KeyManager {
     client: VaultClient,
+    /// Where this store records which mount holds its key. A field rather than
+    /// a lookup per call so a test points it at scratch, the same way the token
+    /// file and the secrets root are pointed.
+    record: PathBuf,
 }
 
 impl KeyManager {
     pub async fn new() -> Result<Self> {
         let client = VaultClient::new().await?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            record: key_mount::default_record_path()?,
+        })
     }
 
-    pub fn with_client(client: VaultClient) -> Self {
-        Self { client }
+    pub fn with_client(client: VaultClient) -> Result<Self> {
+        Ok(Self {
+            client,
+            record: key_mount::default_record_path()?,
+        })
+    }
+
+    #[cfg(test)]
+    pub fn recording_at(client: VaultClient, record: PathBuf) -> Self {
+        Self { client, record }
     }
 
     /// Get or create the master encryption key from Vault.
@@ -325,41 +341,69 @@ impl KeyManager {
     /// Which mount holds the master key, and what that mount says about its own
     /// layout.
     ///
-    /// The key's mount is chosen rather than given, so this is the one place
-    /// that still reads the whole listing — a probe addressed at a path cannot
-    /// answer which mount ought to hold it. The listing reports each mount's
-    /// layout alongside, so the answer comes from the same request and travels
-    /// with the location instead of being read back off a path later.
+    /// The record decides, not a fresh look at what is mounted: which engine a
+    /// store belongs to stops being answerable once a second one exists, and an
+    /// answer that changes between runs is the one failure this must not have.
+    /// Discovery runs only when nothing is recorded yet, and refuses rather
+    /// than choosing where the choice is not obvious.
     pub async fn key_location(&self) -> Result<KeyLocation> {
         let mounts = self.client.list_mounts().await?;
-
-        if let Some(preferred) = mounts.data.get(&format!("{DEFAULT_KV_MOUNT}/")) {
-            if preferred.is_kv() {
-                return Ok(KeyLocation::new(DEFAULT_KV_MOUNT, preferred.get_version()));
-            }
-        }
-
-        // Lowest path wins, and the ordering is the point rather than the
-        // choice: the mount listing is unordered, so picking whichever came
-        // back first sends one run to a mount the next run does not look in,
-        // where finding no key reads as an empty store and mints a second one.
-        // Everything sealed under the first is then unreadable.
-        let mut candidates: Vec<_> = mounts
+        let available: Vec<(String, Option<&str>)> = mounts
             .data
             .iter()
             .filter(|(_, mount_info)| mount_info.is_kv())
+            .map(|(path, mount_info)| {
+                (
+                    path.trim_end_matches('/').to_string(),
+                    mount_info.get_version(),
+                )
+            })
             .collect();
-        candidates.sort_by_key(|(a, _)| *a);
 
-        if let Some((mount_path, mount_info)) = candidates.first() {
-            let mount = mount_path.trim_end_matches('/');
-            tracing::info!("Using KV mount '{mount}' for encryption key storage");
-            return Ok(KeyLocation::new(mount, mount_info.get_version()));
+        if let Some(recorded) = key_mount::recorded_at(&self.record)? {
+            return match available.iter().find(|(mount, _)| *mount == recorded.mount) {
+                Some((mount, version)) => Ok(KeyLocation::new(mount, *version)),
+                None => Err(key_mount::recorded_mount_missing(
+                    &recorded.mount,
+                    &self.describe_candidates(&available).await,
+                )),
+            };
         }
 
-        Err(VaultCliError::Storage(
-            format!("No KV mount found in Vault.\n\nTo enable encrypted local storage, create a KV mount:\n  {PROGRAM_NAME} secrets enable -path=secret kv-v2\n\nAlternatively, use --no-store with certificate creation to skip local storage.\nUse '{PROGRAM_NAME} secrets list' to see available secret engines.")
-        ))
+        match available.as_slice() {
+            [] => Err(VaultCliError::Storage(
+                format!("No KV mount found in Vault.\n\nTo enable encrypted local storage, create a KV mount:\n  {PROGRAM_NAME} secrets enable -path=secret kv-v2\n\nAlternatively, use --no-store with certificate creation to skip local storage.\nUse '{PROGRAM_NAME} secrets list' to see available secret engines.")
+            )),
+            // One mount is not a choice, so making it is not a decision the
+            // operator has to be asked for.
+            [(mount, version)] => {
+                key_mount::record_at(&self.record, mount)?;
+                Ok(KeyLocation::new(mount, *version))
+            }
+            many => Err(key_mount::ambiguous(&self.describe_candidates(many).await)),
+        }
+    }
+
+    /// The candidate mounts, each marked with whether a vault-rs key is already
+    /// on it. Read per mount rather than guessed, because that mark is what
+    /// turns the refusal into an instruction.
+    async fn describe_candidates(
+        &self,
+        available: &[(String, Option<&str>)],
+    ) -> Vec<key_mount::Candidate> {
+        let mut candidates = Vec::new();
+        for (mount, version) in available {
+            let location = KeyLocation::new(mount, *version);
+            // discard-ok: a mount that cannot be read holds no key this tool
+            // can use, and the refusal being built says only what it found
+            let holds_a_key = self.client.get(&location.data_path()).await.is_ok();
+            candidates.push(key_mount::Candidate {
+                mount: mount.clone(),
+                holds_a_key,
+            });
+        }
+        candidates.sort_by(|a, b| a.mount.cmp(&b.mount));
+        candidates
     }
 
     /// The stored key, or `Ok(None)` when the path genuinely holds nothing.
@@ -464,6 +508,7 @@ impl KeyManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::test_support::scratch;
     use serde_json::Value;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -472,9 +517,22 @@ mod tests {
     const V1_PATH: &str = "/v1/secret/vault-rs/encryption-key";
     const V2_META: &str = "/v1/secret/metadata/vault-rs/encryption-key";
 
+    /// Each test records the mount in its own scratch directory. Sharing one
+    /// would let a test that resolved a mount decide the answer for the next,
+    /// and reading the real store's record would answer for the operator's.
+    /// A directory per call, because `scratch` clears what it hands back: a
+    /// name shared between tests has one wiping another's record mid-run.
     fn manager(server: &MockServer) -> KeyManager {
-        KeyManager::with_client(
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        manager_named(server, &n.to_string())
+    }
+
+    fn manager_named(server: &MockServer, name: &str) -> KeyManager {
+        KeyManager::recording_at(
             VaultClient::for_test(server.uri(), "test-token".to_string()).expect("test client"),
+            crate::storage::test_support::scratch(&format!("key-record-{name}"))
+                .join("key-mount.yaml"),
         )
     }
 
@@ -819,12 +877,7 @@ mod tests {
         assert!(notice.contains("403"), "{notice}");
     }
 
-    /// The listing is unordered, so a fallback that took whichever mount came
-    /// back first would send one run to a mount the next run does not look in
-    /// — minting a second key and stranding everything sealed under the first.
-    #[tokio::test]
-    async fn the_fallback_mount_is_the_same_one_every_time() {
-        let server = MockServer::start().await;
+    async fn mount_several(server: &MockServer) {
         Mock::given(method("GET"))
             .and(path("/v1/sys/mounts"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -834,19 +887,131 @@ mod tests {
                     "mike/": { "type": "kv", "options": { "version": "2" } }
                 }
             })))
-            .mount(&server)
+            .mount(server)
             .await;
+    }
+
+    /// Which engine a store belongs to stops being answerable once a second one
+    /// exists. Guessing it wrong is not an error the operator sees, it is a
+    /// second key and a store that stops opening, so nothing is written.
+    #[tokio::test]
+    async fn several_mounts_refuse_rather_than_choose() {
+        let server = MockServer::start().await;
+        mount_several(&server).await;
+        for mount in ["alpha", "mike", "zulu"] {
+            respond_to_read(
+                &server,
+                &format!("/v1/{mount}/data/vault-rs/encryption-key"),
+                ResponseTemplate::new(404),
+            )
+            .await;
+            expect_writes(
+                &server,
+                &format!("/v1/{mount}/data/vault-rs/encryption-key"),
+                0,
+            )
+            .await;
+        }
+
+        let err = manager_named(&server, "ambiguous")
+            .get_master_key()
+            .await
+            .expect_err("more than one candidate")
+            .to_string();
+        assert!(err.contains("alpha"), "{err}");
+        assert!(err.contains("zulu"), "{err}");
+        assert!(err.contains("init-encryption --mount"), "{err}");
+    }
+
+    /// A mount that already holds one is the likely answer, and saying which
+    /// turns the refusal into an instruction.
+    #[tokio::test]
+    async fn the_refusal_names_the_mount_that_already_holds_a_key() {
+        let server = MockServer::start().await;
+        mount_several(&server).await;
         respond_to_read(
             &server,
-            "/v1/alpha/data/vault-rs/encryption-key",
+            "/v1/mike/data/vault-rs/encryption-key",
             stored_key(&"ab".repeat(32), true),
         )
         .await;
-        expect_writes(&server, "/v1/alpha/data/vault-rs/encryption-key", 0).await;
-
-        for _ in 0..8 {
-            let key = manager(&server).get_master_key().await.expect("read");
-            assert_eq!(key, [0xab; 32], "a different mount was chosen");
+        for mount in ["alpha", "zulu"] {
+            respond_to_read(
+                &server,
+                &format!("/v1/{mount}/data/vault-rs/encryption-key"),
+                ResponseTemplate::new(404),
+            )
+            .await;
         }
+
+        let err = manager_named(&server, "names-the-holder")
+            .get_master_key()
+            .await
+            .expect_err("more than one candidate")
+            .to_string();
+        assert!(err.contains("already holds a vault-rs key"), "{err}");
+        assert!(err.contains("session key use mike"), "{err}");
+    }
+
+    /// One mount is not a choice, so it is made and written down rather than
+    /// asked about.
+    #[tokio::test]
+    async fn a_single_mount_is_used_and_remembered() {
+        let server = MockServer::start().await;
+        mount_kv(&server, "2").await;
+        respond_to_read(&server, V2_PATH, stored_key(&"ab".repeat(32), true)).await;
+        expect_writes(&server, V2_PATH, 0).await;
+
+        let record = scratch("single-mount").join("key-mount.yaml");
+        let manager = KeyManager::recording_at(
+            VaultClient::for_test(server.uri(), "test-token".to_string()).expect("test client"),
+            record.clone(),
+        );
+        manager.get_master_key().await.expect("read");
+
+        assert_eq!(
+            key_mount::recorded_at(&record)
+                .expect("record")
+                .map(|r| r.mount),
+            Some("secret".to_string())
+        );
+    }
+
+    /// The store is still sealed under whatever was on the recorded mount, so
+    /// its absence is named rather than read as "no key yet" — which would mint
+    /// a second one and complete the loss.
+    #[tokio::test]
+    async fn a_recorded_mount_that_is_gone_is_refused_not_re_derived() {
+        let server = MockServer::start().await;
+        mount_several(&server).await;
+        for mount in ["alpha", "mike", "zulu"] {
+            respond_to_read(
+                &server,
+                &format!("/v1/{mount}/data/vault-rs/encryption-key"),
+                ResponseTemplate::new(404),
+            )
+            .await;
+            expect_writes(
+                &server,
+                &format!("/v1/{mount}/data/vault-rs/encryption-key"),
+                0,
+            )
+            .await;
+        }
+
+        let record = scratch("mount-gone").join("key-mount.yaml");
+        key_mount::record_at(&record, "retired").expect("recording");
+
+        let manager = KeyManager::recording_at(
+            VaultClient::for_test(server.uri(), "test-token".to_string()).expect("test client"),
+            record,
+        );
+        let err = manager
+            .get_master_key()
+            .await
+            .expect_err("the recorded mount is not there")
+            .to_string();
+        assert!(err.contains("retired"), "{err}");
+        assert!(err.contains("session key use"), "{err}");
     }
 }

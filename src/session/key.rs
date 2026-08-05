@@ -4,6 +4,7 @@
 //! not decrypt was being handed a KV incantation to compose by hand, at the one
 //! moment they can least check they typed it right.
 
+use crate::crypto::key_mount;
 use crate::crypto::keys::{KeyLocation, KeyManager};
 use crate::logical::kv::{self, Target};
 use crate::storage::local::LocalStorage;
@@ -21,7 +22,7 @@ use crate::vault::client::VaultClient;
 /// named.
 pub async fn status(output: &OutputFormat) -> Result<()> {
     let client = VaultClient::new().await?;
-    let manager = KeyManager::with_client(client.clone());
+    let manager = KeyManager::with_client(client.clone())?;
     let location = manager.key_location().await?;
 
     let mut rows = vec![
@@ -56,7 +57,7 @@ pub async fn status(output: &OutputFormat) -> Result<()> {
 /// Every version the mount still holds, and what state each is in.
 pub async fn history(output: &OutputFormat) -> Result<()> {
     let client = VaultClient::new().await?;
-    let location = KeyManager::with_client(client.clone())
+    let location = KeyManager::with_client(client.clone())?
         .key_location()
         .await?;
     let target = require_versions(&location, "history")?;
@@ -72,7 +73,7 @@ pub async fn history(output: &OutputFormat) -> Result<()> {
 /// artifact reports whichever verdict that artifact happened to carry.
 pub async fn restore(version: u64) -> Result<()> {
     let client = VaultClient::new().await?;
-    let location = KeyManager::with_client(client.clone())
+    let location = KeyManager::with_client(client.clone())?
         .key_location()
         .await?;
     let target = require_versions(&location, "restore")?;
@@ -116,6 +117,66 @@ pub async fn restore(version: u64) -> Result<()> {
         "\n`{PROGRAM_NAME} storage show <name>` gives the reason for each; an artifact sealed by \
          another cluster needs that cluster, not another version."
     );
+
+    Ok(())
+}
+
+/// Say where a key about to be minted should go.
+///
+/// Only where the store has not already committed to a mount: re-pointing it
+/// is what `key use` is for, and doing it here would mint a second key while
+/// looking like initialisation.
+pub fn choose_mount(mount: &str) -> Result<()> {
+    let mount = mount.trim_end_matches('/');
+    match key_mount::recorded()? {
+        Some(recorded) if recorded.mount != mount => Err(VaultCliError::InvalidInput(format!(
+            "this store's key is already recorded on '{}'. Initialising on '{mount}' would mint a \
+             second key and leave everything already stored sealed under the first.\n\n\
+             If the key really is on '{mount}' now:\n  {PROGRAM_NAME} session key use {mount}",
+            recorded.mount
+        ))),
+        // Recording the same mount twice is what it already says.
+        Some(_) => Ok(()),
+        None => key_mount::record(mount),
+    }
+}
+
+/// Adopt a mount as the one holding this store's key.
+///
+/// Deliberately does not move or mint anything: it records what the operator
+/// asserts is already true. Whether a key is actually there is reported rather
+/// than enforced — the mount may be about to receive one.
+pub async fn use_mount(mount: &str) -> Result<()> {
+    let mount = mount.trim_end_matches('/');
+    let client = VaultClient::new().await?;
+
+    let previous = key_mount::recorded()?;
+    key_mount::record(mount)?;
+
+    if let Some(previous) = previous {
+        if previous.mount != mount {
+            eprintln!(
+                "This store's key was recorded on '{}' and is now recorded on '{mount}'. \
+                 Artifacts sealed under the key on '{}' stay unreadable unless that same key is \
+                 the one here.",
+                previous.mount, previous.mount
+            );
+        }
+    }
+
+    // Reported, not enforced: an operator pointing at a mount before putting a
+    // key on it is doing something reasonable, and being told is enough.
+    let location = KeyManager::with_client(client.clone())?
+        .key_location()
+        .await?;
+    match client.get(&location.data_path()).await {
+        Ok(_) => eprintln!("A vault-rs key is on '{mount}'."),
+        Err(e) if e.is_not_found() => eprintln!(
+            "No vault-rs key is on '{mount}' yet. `{PROGRAM_NAME} session init-encryption` puts \
+             one there; until then nothing in the local store can be read."
+        ),
+        Err(e) => eprintln!("Could not check whether a key is on '{mount}': {e}"),
+    }
 
     Ok(())
 }

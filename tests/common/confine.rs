@@ -1,21 +1,20 @@
-//! Make the scratch directory the only place these tests can write.
-//!
-//! The harness already points every path at `target/`, but that is a promise
-//! the code makes to itself: one forgotten environment variable and a test
-//! writes to the operator's real home, which is how a dev server came to
-//! overwrite a real token file. This turns the promise into something the
-//! kernel refuses rather than something the tests remember.
-//!
-//! Applied per thread, not once per process. Landlock restricts the calling
-//! thread and the children it goes on to spawn — sibling threads are untouched
-//! unless the kernel is new enough to offer process-wide enforcement, which is
-//! not something to depend on. The test harness gives each test its own thread,
-//! so each confines itself before spawning anything.
-//!
-//! Missing or partial support warns and continues. The tests are correct about
-//! their paths without it; what is lost is the backstop, and one that quietly
-//! did not apply is worse than none.
-
+// Make the scratch directory the only place these tests can write.
+//
+// The harness already points every path at `target/`, but that is a promise
+// the code makes to itself: one forgotten environment variable and a test
+// writes to the operator's real home, which is how a dev server came to
+// overwrite a real token file. This turns the promise into something the
+// kernel refuses rather than something the tests remember.
+//
+// Applied per thread, not once per process. Landlock restricts the calling
+// thread and the children it goes on to spawn — sibling threads are untouched
+// unless the kernel is new enough to offer process-wide enforcement, which is
+// not something to depend on. The test harness gives each test its own thread,
+// so each confines itself before spawning anything.
+//
+// Missing or partial support warns and continues. The tests are correct about
+// their paths without it; what is lost is the backstop, and one that quietly
+// did not apply is worse than none.
 use std::path::Path;
 
 /// Confine this thread, and anything it spawns, to reading anywhere and

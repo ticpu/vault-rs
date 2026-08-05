@@ -18,11 +18,13 @@ pub async fn handle_session_commands(
         SessionCommands::Key { command } => match command {
             KeyCommands::Status => crate::session::key::status(output).await,
             KeyCommands::History => crate::session::key::history(output).await,
+            KeyCommands::Use { mount } => crate::session::key::use_mount(&mount).await,
             KeyCommands::Restore { version } => crate::session::key::restore(version).await,
         },
         SessionCommands::InitEncryption {
+            mount,
             destroy_all_my_keys,
-        } => init_encryption_command(destroy_all_my_keys).await,
+        } => init_encryption_command(mount.as_deref(), destroy_all_my_keys).await,
     }
 }
 
@@ -151,7 +153,11 @@ async fn check_permissions() {
     }
 }
 
-async fn init_encryption_command(destroy_existing: bool) -> Result<()> {
+async fn init_encryption_command(mount: Option<&str>, destroy_existing: bool) -> Result<()> {
+    if let Some(mount) = mount {
+        crate::session::key::choose_mount(mount)?;
+    }
+
     let encryption_manager = crate::crypto::encryption::EncryptionManager::new().await?;
     encryption_manager
         .init_encryption_key(destroy_existing)

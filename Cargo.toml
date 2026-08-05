@@ -60,7 +60,8 @@ rustls-pki-types = "1"
 wiremock = "0.6"
 which = "8"
 
-# The integration tests confine themselves to their scratch directory before
-# starting anything.
+# Both test binaries confine themselves to the build directory before running
+# anything.
 [target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "1"
 landlock = "0.4"

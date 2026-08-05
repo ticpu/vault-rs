@@ -370,6 +370,12 @@ pub enum KeyCommands {
     Status,
     /// Every version of the master key the mount still holds
     History,
+    /// Record that this store's key is on MOUNT, without moving or minting one
+    Use {
+        /// KV mount holding the key
+        #[arg(value_name = "MOUNT")]
+        mount: String,
+    },
     /// Write a prior version back, and report how much of the store it recovers
     Restore {
         /// Version to restore
@@ -401,6 +407,9 @@ pub enum SessionCommands {
     },
     /// Initialize encryption key in personal vault
     InitEncryption {
+        /// KV mount to put it on, when more than one could hold it
+        #[arg(long)]
+        mount: Option<String>,
         /// Overwrite an existing key. Every certificate and private key already
         /// in the local store becomes permanently undecryptable.
         #[arg(long)]

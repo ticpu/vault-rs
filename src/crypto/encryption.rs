@@ -30,9 +30,22 @@ impl EncryptionManager {
         })
     }
 
-    pub fn with_client(client: crate::vault::client::VaultClient) -> Self {
+    pub fn with_client(client: crate::vault::client::VaultClient) -> Result<Self> {
+        Ok(Self {
+            key_manager: KeyManager::with_client(client)?,
+        })
+    }
+
+    /// For a store rooted somewhere other than the default, which is what a
+    /// test has: the record of which mount holds the key belongs to that store
+    /// and must not be looked up in the real one.
+    #[cfg(test)]
+    pub fn recording_at(
+        client: crate::vault::client::VaultClient,
+        record: std::path::PathBuf,
+    ) -> Self {
         Self {
-            key_manager: KeyManager::with_client(client),
+            key_manager: KeyManager::recording_at(client, record),
         }
     }
 
@@ -231,9 +244,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let manager = super::EncryptionManager::with_client(
+        let manager = super::EncryptionManager::recording_at(
             crate::vault::client::VaultClient::for_test(server.uri(), "test-token".to_string())
                 .expect("test client"),
+            crate::storage::test_support::scratch("encryption-empty").join("key-mount.yaml"),
         );
 
         let empty = manager

@@ -41,21 +41,29 @@ impl LocalStorage {
     }
 
     pub fn with_client(client: crate::vault::client::VaultClient) -> Result<Self> {
-        Ok(Self::rooted_at(client, VaultCliPaths::secrets_dir()?))
-    }
-
-    fn rooted_at(client: crate::vault::client::VaultClient, secrets_root: PathBuf) -> Self {
-        Self {
-            encryption_manager: EncryptionManager::with_client(client.clone()),
+        Ok(Self {
+            encryption_manager: EncryptionManager::with_client(client.clone())?,
             client,
-            secrets_root,
-        }
+            secrets_root: VaultCliPaths::secrets_dir()?,
+        })
     }
 
     /// A store over a scratch tree, for tests that stand up a stub Vault.
+    ///
+    /// Which mount holds the key is recorded beside this store rather than the
+    /// real one: read from there, a test would answer for the operator's store
+    /// and write to it.
     #[cfg(test)]
     pub fn for_test(client: crate::vault::client::VaultClient, secrets_root: PathBuf) -> Self {
-        Self::rooted_at(client, secrets_root)
+        // Beside the tree, never in it: production keeps the record next to
+        // the secrets directory, and a file inside one is something a listing
+        // is right to refuse.
+        let record = secrets_root.with_extension("key-mount.yaml");
+        Self {
+            encryption_manager: EncryptionManager::recording_at(client.clone(), record),
+            client,
+            secrets_root,
+        }
     }
 
     /// Seal a payload the way this store would, for tests that plant a file
