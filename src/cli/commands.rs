@@ -476,6 +476,20 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
         )
         .await
         .context("removing a stored artifact"),
+        StorageCommands::Import {
+            file,
+            pki_mount,
+            role,
+        } => crate::storage::commands::import(
+            &storage,
+            crate::storage::commands::ImportRequest {
+                file: &file,
+                pki_mount: pki_mount.as_deref(),
+                role: role.as_deref(),
+            },
+        )
+        .await
+        .context("importing an artifact"),
         StorageCommands::Decrypt { file_path } => {
             use std::path::Path;
 

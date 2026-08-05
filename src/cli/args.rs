@@ -503,6 +503,17 @@ pub enum StorageCommands {
         #[arg(long)]
         destroy_my_unreadable_artifact: bool,
     },
+    /// File a PEM bundle into the local store, sealed by the Vault now being addressed
+    Import {
+        /// PEM file holding a certificate, optionally a key, a chain and a provenance block
+        file: String,
+        /// PKI mount. Required unless the file carries provenance; no certificate names one
+        #[arg(long)]
+        pki_mount: Option<String>,
+        /// Issuing role. Recorded as absent when neither this nor the file supplies it
+        #[arg(long)]
+        role: Option<String>,
+    },
     /// Decrypt storage file for debugging
     Decrypt {
         /// Path to encrypted file

@@ -1,8 +1,14 @@
-use crate::storage::local::{EntryTarget, KeyMaterial, LocalStorage, StoredEntry};
+use crate::cert::CertificateParser;
+use crate::storage::local::{CertificateData, EntryTarget, KeyMaterial, LocalStorage, StoredEntry};
+use crate::storage::metadata::{normalize_serial, StoredIdentity, StoredMetadata};
+use crate::storage::provenance::Provenance;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
+use crate::utils::pem::{parse_certificate_chain, pem_blocks};
 use crate::utils::PROGRAM_NAME;
+use chrono::Utc;
 use std::fmt::Write as _;
+use std::fs;
 
 pub struct ShowRequest<'a> {
     pub cn: &'a str,
@@ -237,6 +243,172 @@ async fn refusal(
         missing.join(" ")
     );
     report
+}
+
+pub struct ImportRequest<'a> {
+    pub file: &'a str,
+    pub pki_mount: Option<&'a str>,
+    pub role: Option<&'a str>,
+}
+
+/// Where a field of an imported record came from.
+///
+/// Reported rather than assumed: a field the invocation supplied and one the
+/// artifact carried are different facts about the same record, and an
+/// operator who believes the file set the role should find out here rather
+/// than from a listing months later.
+enum Source {
+    Invocation,
+    Artifact,
+    Certificate,
+    Unrecorded,
+}
+
+impl Source {
+    fn describe(&self) -> &'static str {
+        match self {
+            Self::Invocation => "from the command line",
+            Self::Artifact => "from the file's provenance",
+            Self::Certificate => "read from the certificate",
+            Self::Unrecorded => "not recorded",
+        }
+    }
+}
+
+/// File a PEM bundle into the local store.
+///
+/// The artifact is sealed by the cluster now being addressed, so `sealed-by`
+/// describes this store and not wherever the file came from. Everything the
+/// certificate answers is taken from the certificate; the provenance block
+/// supplies only what it cannot, and never overrides it.
+pub async fn import(storage: &LocalStorage, request: ImportRequest<'_>) -> Result<()> {
+    let contents = fs::read_to_string(request.file)
+        .map_err(|e| VaultCliError::Storage(format!("cannot read '{}': {e}", request.file)))?;
+    let blocks = pem_blocks(&contents)?;
+    let provenance = Provenance::from_pem_blocks(&blocks)?;
+
+    let certificates = parse_certificate_chain(&contents)?;
+    let (leaf, chain) = certificates.split_first().ok_or_else(|| {
+        VaultCliError::InvalidInput(format!("'{}' holds no certificate", request.file))
+    })?;
+
+    let key = blocks
+        .iter()
+        .find(|b| b.label.ends_with("PRIVATE KEY"))
+        .map(|b| b.text.clone())
+        .unwrap_or_default();
+
+    // The mount is a Vault path, not a property of what it issued, so nothing
+    // in the file can stand in for it.
+    let (pki_mount, mount_source) = match (request.pki_mount, provenance.as_ref()) {
+        (Some(mount), _) => (mount.to_string(), Source::Invocation),
+        (None, Some(p)) => (p.pki_mount.clone(), Source::Artifact),
+        (None, None) => {
+            return Err(VaultCliError::InvalidInput(format!(
+                "'{}' carries no provenance, so the PKI mount has to be named with --pki-mount. \
+                 No certificate records which mount issued it.",
+                request.file
+            )))
+        }
+    };
+
+    let (role, role_source) = match (
+        request.role,
+        provenance.as_ref().and_then(|p| p.role.clone()),
+    ) {
+        (Some(role), _) => (Some(role.to_string()), Source::Invocation),
+        (None, Some(role)) => (Some(role), Source::Artifact),
+        (None, None) => (None, Source::Unrecorded),
+    };
+
+    let issued = CertificateParser::parse_pem(leaf.pem_data(), &pki_mount)?;
+    let serial = normalize_serial(&issued.serial.as_colon_hex());
+
+    let target = EntryTarget {
+        cn: &issued.cn,
+        pki_mount: Some(&pki_mount),
+        serial: Some(&serial),
+    };
+    // Only "nothing matches" means the slot is free. A store that could not be
+    // read is not an empty one, and treating it as empty writes over whatever
+    // was unreadable.
+    match storage.resolve_entry(&target).await {
+        Ok(existing) => {
+            return Err(VaultCliError::InvalidInput(format!(
+                "{}/{}/{} is already stored at {}. Importing over it could destroy a private key \
+                 that exists nowhere else, so removing it is its own decision:\n  \
+                 {PROGRAM_NAME} storage show {} --serial {}\n  \
+                 {PROGRAM_NAME} storage remove {} --serial {}",
+                existing.pki_mount,
+                existing.cn,
+                existing.serial,
+                existing.path.display(),
+                existing.cn,
+                existing.serial,
+                existing.cn,
+                existing.serial,
+            )))
+        }
+        Err(VaultCliError::CertNotFound(_)) => {}
+        Err(e) => return Err(e),
+    }
+
+    let chain_pem: String = chain.iter().map(|c| c.pem_data()).collect();
+    let crypto = provenance.as_ref().and_then(|p| p.crypto.clone());
+    let status = provenance
+        .as_ref()
+        .map(|p| p.status.clone())
+        .unwrap_or_default();
+    let created = provenance
+        .as_ref()
+        .map(|p| p.created)
+        .unwrap_or_else(Utc::now);
+
+    storage
+        .store_certificate(CertificateData {
+            pki_mount: &pki_mount,
+            cn: &issued.cn,
+            serial: &serial,
+            certificate_pem: leaf.pem_data(),
+            private_key_pem: &key,
+            ca_chain_pem: &chain_pem,
+            metadata: StoredMetadata {
+                crypto: crypto.clone(),
+                created,
+                file_info: Default::default(),
+                meta: StoredIdentity {
+                    role: role.clone(),
+                    status,
+                },
+            },
+        })
+        .await?;
+
+    let crypto_source = match (provenance.as_ref().and_then(|p| p.crypto.as_ref()), &crypto) {
+        (Some(_), _) => Source::Artifact,
+        _ => Source::Unrecorded,
+    };
+    eprintln!(
+        "Imported {pki_mount}/{}/{serial}\n  \
+         mount     {pki_mount} ({})\n  \
+         common name {} ({})\n  \
+         role      {} ({})\n  \
+         crypto    {} ({})\n  \
+         key       {}",
+        issued.cn,
+        mount_source.describe(),
+        issued.cn,
+        Source::Certificate.describe(),
+        role.as_deref().unwrap_or("-"),
+        role_source.describe(),
+        crypto.as_deref().unwrap_or("-"),
+        crypto_source.describe(),
+        match key.is_empty() {
+            true => "none in the file",
+            false => "stored",
+        },
+    );
+    Ok(())
 }
 
 #[cfg(test)]
