@@ -72,6 +72,12 @@ impl VaultClient {
         })
     }
 
+    /// Where this client is pointed, for recording which Vault sealed an
+    /// artifact and for telling an operator where to point back.
+    pub fn vault_addr(&self) -> &str {
+        &self.vault_addr
+    }
+
     /// Health check
     pub async fn health(&self) -> Result<Value> {
         let url = format!("{}/v1/sys/health", self.vault_addr);

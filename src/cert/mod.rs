@@ -23,7 +23,7 @@ pub use create::{create_certificate, CreateCertificateRequest};
 pub use csr::{parse_csr_pem, CsrInfo};
 pub use export::{export_certificate, ExportCertificateRequest};
 pub use inspect::{inspect_csr, InspectCsrRequest};
-pub use listing::{CertListFilter, CertificateListingService};
+pub use listing::{CertListFilter, CertificateListingService, StorageListRequest};
 pub use lookup::find_certificate_by_identifier;
 pub use metadata::{CertificateColumn, CertificateMetadata};
 pub use parser::CertificateParser;

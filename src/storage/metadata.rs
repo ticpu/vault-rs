@@ -3,18 +3,57 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-fn normalize_serial(serial: &str) -> String {
+pub(crate) fn normalize_serial(serial: &str) -> String {
     serial.replace(':', "").to_lowercase()
 }
 
+/// What `metadata.yaml.enc` holds: only what the stored certificate cannot
+/// yield. Anything readable from the certificate is read from it on every
+/// listing instead, so no second copy of it can go stale on disk.
+///
+/// The shape is a strict subset of what earlier builds wrote, keys and
+/// nesting included, so an artifact already on disk still reads and no
+/// second parse path has to exist for it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredMetadata {
+    pub crypto: String,
+    /// When the artifact was written, not the certificate's `notBefore`.
+    pub created: DateTime<Utc>,
+    pub file_info: HashMap<String, FileInfo>,
+    pub meta: StoredIdentity,
+}
+
+/// The part of the issuance no certificate records.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredIdentity {
+    /// The PKI has no record of which role issued a certificate, so the store
+    /// is the only place this exists.
+    pub role: String,
+    pub status: CertStatus,
+}
+
+/// Which Vault sealed an artifact, kept in the clear beside it: the moment it
+/// is wanted is the moment nothing in that directory decrypts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SealedBy {
+    /// Identifies the cluster, not the material at the key's path — a
+    /// performance secondary serves the replicated KV under its own id — so a
+    /// mismatch ranks the suspicions rather than settling them.
+    pub cluster_id: String,
+    /// Where that cluster was reached, as a hint for the operator. Never the
+    /// identity: a cluster outlives any name pointing at it.
+    pub address: String,
+}
+
+/// One stored artifact, assembled by the walk. Never deserialized: the
+/// certificate-derived fields come from the certificate itself.
+#[derive(Debug, Clone, Serialize)]
 pub struct CertificateStorage {
     pub pki_mount: String,
     pub crypto: String,
     pub created: DateTime<Utc>,
     pub storage_path: String,
-    pub vault_status: String,
-    pub last_vault_check: DateTime<Utc>,
+    pub sealed_by: Option<SealedBy>,
     pub file_info: HashMap<String, FileInfo>,
     pub meta: StorageCertificateMetadata,
 }
@@ -30,48 +69,16 @@ impl GetColumnValue for CertificateStorage {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct StorageCertificateMetadata {
-    #[serde(default = "default_serial")]
     pub serial: String,
-    #[serde(default = "default_cn")]
     pub cn: String,
-    #[serde(default = "default_role")]
     pub role: String,
-    #[serde(default = "default_crypto")]
     pub crypto: String,
-    #[serde(default = "default_created")]
     pub created: DateTime<Utc>,
-    #[serde(default = "default_expires")]
     pub expires: DateTime<Utc>,
-    #[serde(default)]
     pub status: CertStatus,
-    #[serde(default)]
     pub sans: Vec<String>,
-}
-
-fn default_serial() -> String {
-    "unknown".to_string()
-}
-
-fn default_cn() -> String {
-    "unknown".to_string()
-}
-
-fn default_role() -> String {
-    "unknown".to_string()
-}
-
-fn default_crypto() -> String {
-    "unknown".to_string()
-}
-
-fn default_created() -> DateTime<Utc> {
-    Utc::now()
-}
-
-fn default_expires() -> DateTime<Utc> {
-    Utc::now() + chrono::Duration::days(365)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,7 +88,7 @@ pub struct FileInfo {
     pub checksum: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum CertStatus {
     Active,
     Expired,
@@ -122,54 +129,5 @@ impl GetColumnValue for StorageCertificateMetadata {
             },
             CertificateColumn::Role => self.role.clone(),
         }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MasterIndex {
-    pub certificates: Vec<CertificateStorage>,
-    pub last_full_sync: DateTime<Utc>,
-    pub cache_version: String,
-}
-
-impl MasterIndex {
-    pub fn new() -> Self {
-        Self {
-            certificates: Vec::new(),
-            last_full_sync: Utc::now(),
-            cache_version: "1.0".to_string(),
-        }
-    }
-
-    pub fn add_certificate(&mut self, cert: CertificateStorage) {
-        // Remove existing entry with same serial if it exists
-        self.certificates
-            .retain(|c| c.meta.serial != cert.meta.serial);
-        self.certificates.push(cert);
-        self.sort_by_expiry();
-    }
-
-    pub fn remove_certificate(&mut self, serial: &str) -> bool {
-        let before_count = self.certificates.len();
-        self.certificates.retain(|c| c.meta.serial != serial);
-        self.certificates.len() != before_count
-    }
-
-    pub fn find_by_serial(&self, serial: &str) -> Option<&CertificateStorage> {
-        self.certificates.iter().find(|c| c.meta.serial == serial)
-    }
-
-    pub fn sort_by_expiry(&mut self) {
-        self.certificates.sort_by_key(|a| a.meta.expires);
-    }
-
-    pub fn update_last_sync(&mut self) {
-        self.last_full_sync = Utc::now();
-    }
-}
-
-impl Default for MasterIndex {
-    fn default() -> Self {
-        Self::new()
     }
 }

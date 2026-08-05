@@ -100,6 +100,16 @@ fn eku_matches(cert_ekus: &[String], filter: &str) -> bool {
     cert_ekus.iter().any(|usage| usage.to_lowercase() == target)
 }
 
+/// What `storage list` was asked for.
+pub struct StorageListRequest {
+    pub pki: Option<String>,
+    pub expired: bool,
+    pub expires_soon: Option<String>,
+    pub role: Option<String>,
+    pub columns: Option<String>,
+    pub allow_partial: bool,
+}
+
 /// Which command is asking for columns. `Role` is only ever populated by
 /// local storage (see `CertListFilter`'s doc comment), so `cert list` must
 /// reject it rather than silently print a blank column.
@@ -186,20 +196,25 @@ impl CertificateListingService {
     /// List certificates from local storage with column formatting
     pub async fn list_storage_certificates(
         storage: &LocalStorage,
-        pki: Option<String>,
-        expired: bool,
-        expires_soon: Option<String>,
-        role: Option<String>,
-        columns: Option<String>,
+        request: StorageListRequest,
         output: &OutputFormat,
     ) -> Result<()> {
+        let StorageListRequest {
+            pki,
+            expired,
+            expires_soon,
+            role,
+            columns,
+            allow_partial,
+        } = request;
+
         if output.json && columns.is_some() {
             return Err(VaultCliError::InvalidInput(
                 "--columns has no effect with --json".to_string(),
             ));
         }
 
-        let certificates = storage.list_certificates().await?;
+        let certificates = storage.list_certificates().await?.resolve(allow_partial)?;
 
         let expires_soon_days = expires_soon
             .map(|days| {
@@ -209,7 +224,8 @@ impl CertificateListingService {
             })
             .transpose()?;
 
-        let mut filtered_certs: Vec<_> = certificates
+        // Already ordered by the walk on a total key; filtering preserves it.
+        let filtered_certs: Vec<_> = certificates
             .into_iter()
             .filter(|cert| {
                 if let Some(ref pki_filter) = pki {
@@ -233,9 +249,6 @@ impl CertificateListingService {
                 true
             })
             .collect();
-
-        // Soonest expiry first, consistent with `cert list`.
-        filtered_certs.sort_by_key(|c| c.meta.expires);
 
         if output.json {
             return output.print_json(&filtered_certs);

@@ -215,32 +215,34 @@ impl CertificateStorageHelper {
         }
 
         use crate::cert::CertificateParser;
-        use crate::storage::metadata::CertStatus;
-        use crate::storage::{CertificateData, LocalStorage, StorageCertificateMetadata};
+        use crate::storage::metadata::{
+            normalize_serial, CertStatus, StoredIdentity, StoredMetadata,
+        };
+        use crate::storage::{CertificateData, LocalStorage};
         use chrono::Utc;
 
         // Filed under the identity the CA actually issued, not the one that was
         // asked for: a role with use_csr_common_name leaves the CN argument
         // inert, and storing that name puts the certificate under a CN no
-        // lookup will ever match. Expiry likewise comes off the certificate —
-        // `storage list --expired`/`--expires-soon` filter on it.
+        // lookup will ever match.
         let issued = CertificateParser::parse_pem(certificate_pem, pki_mount)?;
 
         let storage = LocalStorage::new().await?;
-        let metadata = StorageCertificateMetadata {
-            serial: self.serial.replace(':', "").to_lowercase(),
-            cn: issued.cn.clone(),
-            role: self.role.clone(),
+        // Only what the certificate cannot yield; the rest is read back off it.
+        let metadata = StoredMetadata {
             crypto: self.crypto.clone(),
             created: Utc::now(),
-            expires: issued.not_after,
-            status: CertStatus::Active,
-            sans: issued.sans.clone(),
+            file_info: Default::default(),
+            meta: StoredIdentity {
+                role: self.role.clone(),
+                status: CertStatus::Active,
+            },
         };
 
         let cert_data = CertificateData {
             pki_mount,
             cn: &issued.cn,
+            serial: &normalize_serial(&self.serial),
             certificate_pem,
             private_key_pem: private_key_pem.unwrap_or(""),
             ca_chain_pem,

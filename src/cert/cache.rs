@@ -187,8 +187,28 @@ impl CertificateCache {
             }
         }
 
+        cleared_count += self.clear_orphaned_index()?;
+
         tracing::info!("Cleared {} cache files", cleared_count);
         Ok(cleared_count)
+    }
+
+    /// Remove the master index earlier builds wrote. Nothing reads it — the
+    /// artifact directory is the store — so it survives only as a stale copy
+    /// for whoever decrypts it by hand.
+    fn clear_orphaned_index(&self) -> Result<usize> {
+        let Some(cache_root) = self.cache_dir.parent() else {
+            return Ok(0);
+        };
+        let index = cache_root.join("index.yaml.enc");
+        match fs::remove_file(&index) {
+            Ok(()) => {
+                tracing::debug!("Removed orphaned master index: {}", index.display());
+                Ok(1)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Per-mount entry counts.

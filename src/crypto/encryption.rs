@@ -115,6 +115,12 @@ impl EncryptionManager {
         self.key_manager.init_encryption_key(destroy_existing).await
     }
 
+    /// The key-history route out of a decryption failure, for a caller
+    /// assembling its own report rather than reading one error at a time.
+    pub async fn recovery_hint(&self) -> String {
+        self.key_manager.recovery_hint().await
+    }
+
     /// Encrypt string data
     pub async fn encrypt_string(&self, data: &str, context: &str) -> Result<Vec<u8>> {
         self.encrypt_data(data.as_bytes(), context).await

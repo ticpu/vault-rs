@@ -465,6 +465,9 @@ pub enum StorageCommands {
         /// Columns to display (comma-separated): cn, serial, not_before, not_after, sans, key_usage, extended_key_usage, issuer, pki_mount, revoked, expired, role. Prefix any with + to add it to the defaults instead of replacing them.
         #[arg(long)]
         columns: Option<String>,
+        /// List what could be read, treating unreadable artifacts as a warning. The result is not authoritative for that run.
+        #[arg(long)]
+        allow_partial: bool,
     },
     /// Show detailed info for stored certificate
     Show {

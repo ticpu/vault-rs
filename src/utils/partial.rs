@@ -33,11 +33,26 @@ impl Incomplete {
     }
 
     fn describe(&self) -> String {
+        let cause = chain(&self.error);
         match self.field {
-            Some(field) => format!("{}: {field} unreadable: {}", self.subject, self.error),
-            None => format!("{}: skipped: {}", self.subject, self.error),
+            Some(field) => format!("{}: {field} unreadable: {cause}", self.subject),
+            None => format!("{}: skipped: {cause}", self.subject),
         }
     }
+}
+
+/// An error and every cause under it. The report is baked into a string here,
+/// so a chain printed only where the process exits is not printed at all —
+/// and the variants that carry a `#[from]` say nothing without their source.
+fn chain(error: &VaultCliError) -> String {
+    let mut rendered = error.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        // discard-ok: writing into a String is infallible
+        let _ = write!(rendered, ": {cause}");
+        source = cause.source();
+    }
+    rendered
 }
 
 /// An answer plus whatever stopped it from being complete.
@@ -47,6 +62,7 @@ impl Incomplete {
 pub struct Partial<T> {
     items: Vec<T>,
     failures: Vec<Incomplete>,
+    remedy: Option<String>,
 }
 
 impl<T> Default for Partial<T> {
@@ -60,11 +76,33 @@ impl<T> Partial<T> {
         Self {
             items: Vec::new(),
             failures: Vec::new(),
+            remedy: None,
         }
     }
 
     pub fn push(&mut self, item: T) {
         self.items.push(item);
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.items.iter()
+    }
+
+    pub fn has_failures(&self) -> bool {
+        !self.failures.is_empty()
+    }
+
+    /// Whether anything failed for the given reason, so a producer can offer
+    /// the remedy that fits rather than every remedy it knows.
+    pub fn any_failure(&self, predicate: impl Fn(&VaultCliError) -> bool) -> bool {
+        self.failures.iter().any(|f| predicate(&f.error))
+    }
+
+    /// What to do about the failures, from the producer that knows what they
+    /// are. Refusing is the operator's whole route out, so the message has to
+    /// carry every way back and not just the one that is easiest to name.
+    pub fn set_remedy(&mut self, remedy: Option<String>) {
+        self.remedy = remedy;
     }
 
     pub fn extend(&mut self, items: impl IntoIterator<Item = T>) {
@@ -116,6 +154,9 @@ impl<T> Partial<T> {
             for failure in &self.failures {
                 eprintln!("  {}", failure.describe());
             }
+            if let Some(ref remedy) = self.remedy {
+                eprintln!("\n{remedy}");
+            }
             return Ok(self.items);
         }
 
@@ -126,6 +167,10 @@ impl<T> Partial<T> {
         for failure in &self.failures {
             // discard-ok: writing into a String is infallible
             let _ = writeln!(report, "  {}", failure.describe());
+        }
+        if let Some(ref remedy) = self.remedy {
+            // discard-ok: writing into a String is infallible
+            let _ = write!(report, "\n{remedy}\n");
         }
         report.push_str("\nPass --allow-partial to work with what could be read.");
 

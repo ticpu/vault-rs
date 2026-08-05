@@ -70,11 +70,6 @@ impl VaultCliPaths {
         Ok(Self::runtime_dir()?.join("token"))
     }
 
-    /// Get the master index path: ~/.local/share/vault-rs/cache/index.yaml.enc
-    pub fn master_index() -> Result<PathBuf> {
-        Ok(Self::cache_dir()?.join("index.yaml.enc"))
-    }
-
     /// Get the serial cache directory: ~/.local/share/vault-rs/cache/serials/
     pub fn serial_cache_dir() -> Result<PathBuf> {
         Ok(Self::cache_dir()?.join("serials"))

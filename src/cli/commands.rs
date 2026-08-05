@@ -418,15 +418,19 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
             expires_soon,
             role,
             columns,
+            allow_partial,
         } => {
-            use crate::cert::CertificateListingService;
+            use crate::cert::{CertificateListingService, StorageListRequest};
             CertificateListingService::list_storage_certificates(
                 &storage,
-                pki,
-                expired,
-                expires_soon,
-                role,
-                columns,
+                StorageListRequest {
+                    pki,
+                    expired,
+                    expires_soon,
+                    role,
+                    columns,
+                    allow_partial,
+                },
                 output,
             )
             .await

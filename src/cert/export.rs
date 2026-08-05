@@ -1,6 +1,7 @@
 use crate::cert::SerialNumber;
 use crate::cli::args::ExportFormat;
 use crate::storage::local::LocalStorage;
+use crate::storage::metadata::normalize_serial;
 use crate::storage::CertificateStorage;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::pem::{PemCertificate, PemCertificateBundle, PemCertificateChain, PemPrivateKey};
@@ -27,24 +28,43 @@ async fn find_certificate_in_storage(
     storage: &LocalStorage,
     identifier: &str,
 ) -> Result<Option<CertificateStorage>> {
-    let certs = storage.list_certificates().await?;
+    // A lookup that finds what it wanted does not care what else was
+    // unreadable; one that does not has to say so rather than report a clean
+    // absence, so the failures ride along to the caller's error.
+    let (certs, unreadable) = storage.list_certificates().await?.into_parts();
+
     // discard-ok: probe; an identifier that is not a serial is looked up by CN
     if let Ok(serial) = SerialNumber::parse(identifier) {
-        let serial_colon = serial.as_colon_hex();
+        // Stored serials are colon-less and lower-case; comparing against the
+        // colon form matches nothing and falls silently through to the CN.
+        let wanted = normalize_serial(&serial.as_colon_hex());
 
         if let Some(cert) = certs
             .iter()
-            .find(|cert| cert.meta.serial == serial_colon)
+            .find(|cert| cert.meta.serial == wanted)
             .cloned()
         {
             return Ok(Some(cert));
         }
     }
-    // Fallback: by Common Name
-    Ok(certs
+
+    if let Some(cert) = certs
         .iter()
         .find(|cert| cert.meta.cn == identifier)
-        .cloned())
+        .cloned()
+    {
+        return Ok(Some(cert));
+    }
+
+    if !unreadable.is_empty() {
+        return Err(VaultCliError::IncompleteRead(format!(
+            "'{identifier}' was not found, and {} stored artifact(s) could not be read, so this \
+             absence is not authoritative. Run `{} storage list` for what is wrong with them.",
+            unreadable.len(),
+            crate::utils::PROGRAM_NAME
+        )));
+    }
+    Ok(None)
 }
 
 /// Get certificate data from local storage by certificate record
@@ -53,7 +73,11 @@ async fn get_certificate_data_from_storage(
     cert_record: &CertificateStorage,
 ) -> Result<(String, String, String)> {
     let (certificate_pem, private_key, ca_chain_pem, _) = storage
-        .get_certificate(&cert_record.pki_mount, &cert_record.meta.cn)
+        .get_certificate(
+            &cert_record.pki_mount,
+            &cert_record.meta.cn,
+            Some(&cert_record.meta.serial),
+        )
         .await?;
     Ok((certificate_pem, private_key, ca_chain_pem))
 }
