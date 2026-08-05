@@ -414,6 +414,7 @@ pub async fn import(storage: &LocalStorage, request: ImportRequest<'_>) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::provenance::Provenance;
     use crate::storage::test_support::*;
     use std::fs;
 
@@ -579,5 +580,181 @@ mod tests {
         show(&storage, request(true), &output)
             .await
             .expect("reporting what needs no key");
+    }
+
+    /// A file with everything the store cannot re-derive, as `cert export
+    /// --with-provenance` writes it.
+    fn exported(root: &std::path::Path, name: &str, provenance: Option<Provenance>) -> String {
+        let path = root.join(name);
+        let mut contents = crate::storage::test_support::leaf_pem();
+        if let Some(provenance) = provenance {
+            contents.push_str(&provenance.to_pem_block().expect("encodes"));
+        }
+        fs::create_dir_all(root).expect("scratch");
+        fs::write(&path, contents).expect("writing the export");
+        path.to_string_lossy().to_string()
+    }
+
+    fn provenance() -> Provenance {
+        Provenance::new(
+            "pki".to_string(),
+            Some("client".to_string()),
+            Some("ec".to_string()),
+            crate::storage::metadata::CertStatus::Active,
+            "2020-01-02T03:04:05Z".parse().expect("timestamp"),
+        )
+    }
+
+    /// The round trip the feature exists for: the role and mount survive,
+    /// and so does the time the artifact was first stored.
+    #[tokio::test]
+    async fn provenance_restores_what_no_certificate_records() {
+        let root = scratch("import-provenance");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root.join("store"));
+        let file = exported(&root, "exported.pem", Some(provenance()));
+
+        import(
+            &storage,
+            ImportRequest {
+                file: &file,
+                pki_mount: None,
+                role: None,
+            },
+        )
+        .await
+        .expect("importing");
+
+        let stored = storage.scan().await.expect("scan").resolve(false).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].pki_mount, "pki");
+        assert_eq!(stored[0].meta.role.as_deref(), Some("client"));
+        assert_eq!(stored[0].meta.crypto.as_deref(), Some("ec"));
+        assert_eq!(stored[0].created, provenance().created);
+        // Sealed by the cluster now being addressed, not by wherever the file
+        // came from.
+        assert_eq!(
+            stored[0].sealed_by.as_ref().map(|s| s.cluster_id.as_str()),
+            Some(CLUSTER)
+        );
+    }
+
+    /// Nothing supplies the role, so nothing records one. The mount has to
+    /// come from the invocation, since no certificate names one.
+    #[tokio::test]
+    async fn without_provenance_the_unknown_fields_are_absent() {
+        let root = scratch("import-bare");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root.join("store"));
+        let file = exported(&root, "bare.pem", None);
+
+        let refused = import(
+            &storage,
+            ImportRequest {
+                file: &file,
+                pki_mount: None,
+                role: None,
+            },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(refused.contains("--pki-mount"), "{refused}");
+
+        import(
+            &storage,
+            ImportRequest {
+                file: &file,
+                pki_mount: Some("pki"),
+                role: None,
+            },
+        )
+        .await
+        .expect("importing with the mount named");
+
+        let stored = storage.scan().await.expect("scan").resolve(false).unwrap();
+        assert_eq!(stored[0].meta.role, None);
+        assert_eq!(stored[0].meta.crypto, None);
+    }
+
+    /// The invocation is the more specific statement, and the operator hears
+    /// which one won.
+    #[tokio::test]
+    async fn the_command_line_overrides_the_block() {
+        let root = scratch("import-override");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root.join("store"));
+        let file = exported(&root, "exported.pem", Some(provenance()));
+
+        import(
+            &storage,
+            ImportRequest {
+                file: &file,
+                pki_mount: Some("other-mount"),
+                role: Some("server"),
+            },
+        )
+        .await
+        .expect("importing");
+
+        let stored = storage.scan().await.expect("scan").resolve(false).unwrap();
+        assert_eq!(stored[0].pki_mount, "other-mount");
+        assert_eq!(stored[0].meta.role.as_deref(), Some("server"));
+    }
+
+    /// An overwrite could destroy a private key that exists nowhere else, and
+    /// the option consenting to that lives on remove.
+    #[tokio::test]
+    async fn importing_over_an_existing_entry_is_refused() {
+        let root = scratch("import-collision");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root.join("store"));
+        let file = exported(&root, "exported.pem", Some(provenance()));
+        let request = || ImportRequest {
+            file: &file,
+            pki_mount: None,
+            role: None,
+        };
+
+        import(&storage, request()).await.expect("first import");
+        let refused = import(&storage, request()).await.unwrap_err().to_string();
+
+        assert!(refused.contains("already stored"), "{refused}");
+        assert!(refused.contains("storage remove"), "{refused}");
+        assert_eq!(
+            storage
+                .scan()
+                .await
+                .expect("scan")
+                .resolve(false)
+                .unwrap()
+                .len(),
+            1,
+            "the refusal leaves exactly what was there"
+        );
+    }
+
+    /// A file with no certificate is not an artifact, whatever else it holds.
+    #[tokio::test]
+    async fn a_file_without_a_certificate_is_refused() {
+        let root = scratch("import-empty");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root.join("store"));
+        fs::create_dir_all(&root).expect("scratch");
+        let file = root.join("only-provenance.pem");
+        fs::write(&file, provenance().to_pem_block().expect("encodes")).expect("writing");
+
+        let refused = import(
+            &storage,
+            ImportRequest {
+                file: &file.to_string_lossy(),
+                pki_mount: None,
+                role: None,
+            },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(refused.contains("no certificate"), "{refused}");
     }
 }
