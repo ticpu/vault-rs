@@ -44,30 +44,38 @@ shows up there, and the release workflow builds the same way.
      contents — those break scripts silently.
    - No git hashes, no raw commit subjects, no co-author lines.
 
-4. Commit the bump and the lock together, then tag it:
+4. Commit the bump on master and push it:
 
 ```sh
 git add Cargo.toml
-git add -f Cargo.lock
 git commit -m "release: vX.Y.Z"
+git push
+```
+
+5. Tag a detached child commit that pins `Cargo.lock`. The tag is the only ref
+   that reaches it, so the lock never lands on master while the released
+   binaries still build from an exact dependency set:
+
+```sh
+git checkout --detach
+git add -f Cargo.lock
+git commit -m "build: pin Cargo.lock for vX.Y.Z"
 git tag -as vX.Y.Z -m "$(cat <<'EOF'
 vX.Y.Z
 
 <changelog>
 EOF
 )"
-```
-
-   `Cargo.lock` is gitignored during development and force-added only on a
-   release commit: this is a binary, so a released build has to be reproducible
-   from an exact dependency set.
-
-5. Push, and report the tag and changelog:
-
-```sh
-git push
 git push origin vX.Y.Z
+git switch master
 ```
+
+   `git switch master` leaves the working-tree `Cargo.lock` untracked; the next
+   cargo command regenerates it. Force-adding it on a master commit instead
+   would not be a one-off: the file stays tracked afterwards, and every later
+   development commit carries its churn.
+
+6. Report the tag and changelog.
 
    Pushing the tag triggers `.github/workflows/release.yml`, which builds the
    amd64/arm64 `.deb`s and bare binaries, attaches a source tarball and
@@ -76,6 +84,9 @@ git push origin vX.Y.Z
 
 ## Important
 
+- **`Cargo.lock` never reaches master** — it is gitignored there and exists only
+  on the tag's own commit, so a release build is reproducible and development
+  commits carry no lockfile churn.
 - The tag is IMMUTABLE once pushed — never retag. Wrong? Make a new patch release.
 - Not published to crates.io. It is a binary; the `.deb` and the GitHub release
   are the distribution. Do not run `cargo publish`.
