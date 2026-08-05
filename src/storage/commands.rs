@@ -82,8 +82,14 @@ fn record_pairs(
         ("pki_mount".to_string(), record.pki_mount.clone()),
         ("cn".to_string(), record.meta.cn.clone()),
         ("serial".to_string(), record.meta.serial.clone()),
-        ("role".to_string(), record.meta.role.clone()),
-        ("crypto".to_string(), record.meta.crypto.clone()),
+        (
+            "role".to_string(),
+            record.meta.role.clone().unwrap_or_default(),
+        ),
+        (
+            "crypto".to_string(),
+            record.meta.crypto.clone().unwrap_or_default(),
+        ),
         (
             "not_after".to_string(),
             record.meta.expires.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -167,10 +173,16 @@ pub async fn remove(storage: &LocalStorage, request: RemoveRequest<'_>) -> Resul
     // none — so it is named on the way out. Every other case reached this
     // point through an option that already named the loss.
     if let (KeyMaterial::None, Ok(record)) = (&key, &entry.record) {
+        // Named only when there is one: an artifact imported without a role
+        // has none, and printing an empty name reads as a role called "".
+        let role = match record.meta.role {
+            Some(ref role) => format!("the issuing role ('{role}'), "),
+            None => String::new(),
+        };
         eprintln!(
-            "Removing {}/{}/{}: the certificate stays in the PKI, but the issuing role ('{}'), \
-             the time it was stored and its recorded status exist nowhere else.",
-            entry.pki_mount, entry.cn, entry.serial, record.meta.role
+            "Removing {}/{}/{}: the certificate stays in the PKI, but {role}the time it was \
+             stored and its recorded status exist nowhere else.",
+            entry.pki_mount, entry.cn, entry.serial
         );
     }
 

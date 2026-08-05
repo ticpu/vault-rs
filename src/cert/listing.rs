@@ -242,7 +242,9 @@ impl CertificateListingService {
                     }
                 }
                 if let Some(ref role_filter) = role {
-                    if cert.meta.role != *role_filter {
+                    // An artifact with no recorded role matches no role
+                    // filter; it is not a wildcard.
+                    if cert.meta.role.as_deref() != Some(role_filter.as_str()) {
                         return false;
                     }
                 }

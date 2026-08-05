@@ -230,11 +230,11 @@ impl CertificateStorageHelper {
         let storage = LocalStorage::new().await?;
         // Only what the certificate cannot yield; the rest is read back off it.
         let metadata = StoredMetadata {
-            crypto: self.crypto.clone(),
+            crypto: Some(self.crypto.clone()),
             created: Utc::now(),
             file_info: Default::default(),
             meta: StoredIdentity {
-                role: self.role.clone(),
+                role: Some(self.role.clone()),
                 status: CertStatus::Active,
             },
         };

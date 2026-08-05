@@ -2,6 +2,7 @@ use crate::cert::SerialNumber;
 use crate::cli::args::ExportFormat;
 use crate::storage::local::LocalStorage;
 use crate::storage::metadata::normalize_serial;
+use crate::storage::provenance::Provenance;
 use crate::storage::CertificateStorage;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::pem::{PemCertificate, PemCertificateBundle, PemCertificateChain, PemPrivateKey};
@@ -21,6 +22,7 @@ pub struct ExportCertificateRequest {
     pub output_dir: Option<String>,
     pub no_passphrase: bool,
     pub text: bool,
+    pub with_provenance: bool,
 }
 
 /// Find certificate in local storage by identifier (CN or serial)
@@ -203,7 +205,11 @@ async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) ->
 
 /// Bundle format: private key + certificate + CA chain in PEM format. Requires
 /// the key to be held in local storage — the keyless artifact is `chain`.
-async fn export_bundle(client: &VaultClient, request: &ExportCertificateRequest) -> Result<()> {
+async fn export_bundle(
+    client: &VaultClient,
+    request: &ExportCertificateRequest,
+    provenance: Option<&str>,
+) -> Result<()> {
     let (private_key, cert_from_storage, ca_chain_from_storage) =
         get_certificate_bundle_from_storage(client, &request.identifier)
             .await
@@ -225,7 +231,7 @@ async fn export_bundle(client: &VaultClient, request: &ExportCertificateRequest)
 
     let ca_chain = ca_chain_from_storage.without_root()?;
     let bundle = PemCertificateBundle::new(Some(private_key), cert_from_storage, ca_chain);
-    let output_content = bundle.output(request.text);
+    let output_content = with_provenance(bundle.output(request.text), provenance);
     write_output_or_print(
         request.output_dir.as_deref(),
         &format!("{}.pem", sanitize_filename(&request.identifier)),
@@ -237,8 +243,9 @@ async fn export_bundle(client: &VaultClient, request: &ExportCertificateRequest)
 async fn export_pem_certificate(
     request: &ExportCertificateRequest,
     certificate: PemCertificate,
+    provenance: Option<&str>,
 ) -> Result<()> {
-    let output_content = certificate.output(request.text);
+    let output_content = with_provenance(certificate.output(request.text), provenance);
 
     if let Some(ref dir) = request.output_dir {
         write_to_file(
@@ -282,6 +289,7 @@ async fn export_certificate_chain(
     request: &ExportCertificateRequest,
     certificate: PemCertificate,
     include_root: bool,
+    provenance: Option<&str>,
 ) -> Result<()> {
     let ca_chain_pem = client.get_ca_chain(&request.mount).await?;
     let ca_chain = build_ca_chain(&ca_chain_pem)?;
@@ -322,7 +330,7 @@ async fn export_certificate_chain(
         return Err(VaultCliError::InvalidInput(msg));
     }
 
-    let output_content = chain.output(request.text);
+    let output_content = with_provenance(chain.output(request.text), provenance);
     let suffix = if include_root {
         "chain-with-root"
     } else {
@@ -382,16 +390,87 @@ pub async fn export_certificate(
         ));
     };
 
+    // Resolved once, before any format runs, so a format that cannot carry it
+    // refuses before writing anything.
+    let provenance = provenance_block(client, &request).await?;
+    let provenance = provenance.as_deref();
+
     match request.format {
-        ExportFormat::Pem => export_pem_certificate(&request, certificate).await,
+        ExportFormat::Pem => export_pem_certificate(&request, certificate, provenance).await,
         ExportFormat::Der => export_der_certificate(&request, certificate).await,
-        ExportFormat::Chain => export_certificate_chain(client, &request, certificate, false).await,
+        ExportFormat::Chain => {
+            export_certificate_chain(client, &request, certificate, false, provenance).await
+        }
         ExportFormat::ChainWithRoot => {
-            export_certificate_chain(client, &request, certificate, true).await
+            export_certificate_chain(client, &request, certificate, true, provenance).await
         }
         ExportFormat::Key => export_key(client, &request).await,
         ExportFormat::P12 => export_p12(client, &request).await,
-        ExportFormat::Bundle => export_bundle(client, &request).await,
+        ExportFormat::Bundle => export_bundle(client, &request, provenance).await,
+    }
+}
+
+/// The provenance block to append, when asked for and the format can carry it.
+///
+/// A binary format has nowhere to put it, and a key on its own is not the
+/// artifact it describes. Refused rather than dropped: a flag that silently
+/// does nothing is how an operator ships an artifact believing it carries
+/// something it does not.
+async fn provenance_block(
+    client: &VaultClient,
+    request: &ExportCertificateRequest,
+) -> Result<Option<String>> {
+    if !request.with_provenance {
+        return Ok(None);
+    }
+
+    match request.format {
+        ExportFormat::Pem
+        | ExportFormat::Chain
+        | ExportFormat::ChainWithRoot
+        | ExportFormat::Bundle => {}
+        ref format => {
+            return Err(VaultCliError::InvalidInput(format!(
+                "--with-provenance has nowhere to go in {format:?} output. Use pem, chain, \
+                 chain-with-root or bundle."
+            )))
+        }
+    }
+
+    // The role lives only in the local store; Vault, which the rest of this
+    // command reads from, has never recorded one.
+    let storage = LocalStorage::with_client(client.clone())?;
+    let record = find_certificate_in_storage(&storage, &request.identifier)
+        .await?
+        .ok_or_else(|| {
+            VaultCliError::InvalidInput(format!(
+                "--with-provenance needs '{}' in the local store, and it is not there. The mount \
+                 and issuing role exist nowhere else, so there is nothing to embed.",
+                request.identifier
+            ))
+        })?;
+
+    Ok(Some(
+        Provenance::new(
+            record.pki_mount.clone(),
+            record.meta.role.clone(),
+            record.meta.crypto.clone(),
+            record.meta.status.clone(),
+            record.created,
+        )
+        .to_pem_block()?,
+    ))
+}
+
+/// Append the provenance block, which goes last.
+///
+/// `parse_x509_pem` decodes the first block it finds without checking the
+/// label, so a leading provenance block would hand its bytes to a DER parser
+/// in every reader that takes a whole file.
+fn with_provenance(content: String, provenance: Option<&str>) -> String {
+    match provenance {
+        Some(block) => format!("{content}{block}"),
+        None => content,
     }
 }
 
@@ -504,9 +583,10 @@ mod tests {
             output_dir: None,
             no_passphrase: false,
             text: false,
+            with_provenance: false,
         };
 
-        let err = export_bundle(&client, &request).await.expect_err(
+        let err = export_bundle(&client, &request, None).await.expect_err(
             "bundle export must fail without a stored key, never fall back to keyless output",
         );
         assert!(

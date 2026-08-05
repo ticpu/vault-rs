@@ -780,7 +780,7 @@ mod tests {
         let found = storage.scan().await.expect("scan").resolve(false).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].meta.cn, "leaf-client");
-        assert_eq!(found[0].meta.role, "client");
+        assert_eq!(found[0].meta.role.as_deref(), Some("client"));
     }
 
     /// Derived fields come off the certificate, so a stored expiry written by

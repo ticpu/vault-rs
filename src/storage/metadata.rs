@@ -16,7 +16,9 @@ pub(crate) fn normalize_serial(serial: &str) -> String {
 /// second parse path has to exist for it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredMetadata {
-    pub crypto: String,
+    /// What the issuance was asked for. No certificate records the request,
+    /// only its result, so an artifact that arrived without this has none.
+    pub crypto: Option<String>,
     /// When the artifact was written, not the certificate's `notBefore`.
     pub created: DateTime<Utc>,
     pub file_info: HashMap<String, FileInfo>,
@@ -27,8 +29,10 @@ pub struct StoredMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredIdentity {
     /// The PKI has no record of which role issued a certificate, so the store
-    /// is the only place this exists.
-    pub role: String,
+    /// is the only place this exists — and an artifact imported without it
+    /// genuinely has none. Absent rather than invented: a fabricated value
+    /// here is unfalsifiable, since nothing else holds the field.
+    pub role: Option<String>,
     pub status: CertStatus,
 }
 
@@ -50,7 +54,7 @@ pub struct SealedBy {
 #[derive(Debug, Clone, Serialize)]
 pub struct CertificateStorage {
     pub pki_mount: String,
-    pub crypto: String,
+    pub crypto: Option<String>,
     pub created: DateTime<Utc>,
     pub storage_path: String,
     pub sealed_by: Option<SealedBy>,
@@ -73,8 +77,8 @@ impl GetColumnValue for CertificateStorage {
 pub struct StorageCertificateMetadata {
     pub serial: String,
     pub cn: String,
-    pub role: String,
-    pub crypto: String,
+    pub role: Option<String>,
+    pub crypto: Option<String>,
     pub created: DateTime<Utc>,
     pub expires: DateTime<Utc>,
     pub status: CertStatus,
@@ -127,7 +131,8 @@ impl GetColumnValue for StorageCertificateMetadata {
                 true => "✗".to_string(),
                 false => String::new(),
             },
-            CertificateColumn::Role => self.role.clone(),
+            // Empty, like every other column the store cannot fill.
+            CertificateColumn::Role => self.role.clone().unwrap_or_default(),
         }
     }
 }

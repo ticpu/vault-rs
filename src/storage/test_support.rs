@@ -70,11 +70,11 @@ pub async fn write_entry(storage: &LocalStorage, cn: &str, serial: &str, key: &s
             private_key_pem: key,
             ca_chain_pem: "",
             metadata: StoredMetadata {
-                crypto: "ec".to_string(),
+                crypto: Some("ec".to_string()),
                 created: chrono::Utc::now(),
                 file_info: Default::default(),
                 meta: StoredIdentity {
-                    role: "client".to_string(),
+                    role: Some("client".to_string()),
                     status: CertStatus::Active,
                 },
             },

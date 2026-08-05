@@ -328,6 +328,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             output,
             no_passphrase,
             text,
+            with_provenance,
         } => {
             use crate::cert::{
                 export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
@@ -343,6 +344,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         output_dir: output,
                         no_passphrase,
                         text,
+                        with_provenance,
                     };
                     export_certificate(&client, request).await?;
                 }
@@ -381,6 +383,9 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         output_dir: Some(output),
                         no_passphrase: false, // export-by-serial has no --no-passphrase flag
                         text,
+                        // export-by-serial has no flag for it either; the verb
+                        // that carries provenance is `cert export`.
+                        with_provenance: false,
                     };
                     export_certificate(&client, request).await?;
                 }

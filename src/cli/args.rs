@@ -407,6 +407,9 @@ pub enum CertCommands {
         /// Include OpenSSL-style text output before PEM data
         #[arg(long)]
         text: bool,
+        /// Append the mount and issuing role, which no certificate records, so storage import can restore them
+        #[arg(long)]
+        with_provenance: bool,
     },
     /// Show certificate details by CN or serial
     Show {
