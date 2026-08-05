@@ -117,11 +117,8 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Print seal and HA status (passthrough to vault)
-    Status {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
+    /// Report the seal state of the Vault being addressed
+    Status,
     /// Retrieve API help for paths (passthrough to vault)
     PathHelp {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -212,10 +209,10 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Interact with tokens (passthrough to vault)
+    /// Act on this session's token; other token verbs forward
     Token {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+        #[command(subcommand)]
+        command: TokenCommands,
     },
     /// Interact with Vault's Transform Secrets Engine (passthrough to vault)
     Transform {
@@ -351,6 +348,20 @@ pub enum KvMetadataCommands {
         #[arg(long)]
         mount: Option<String>,
     },
+}
+
+/// Only the self surface. Acting on another token by accessor or by value is a
+/// different operation with a different blast radius, and forwards.
+#[derive(Subcommand)]
+pub enum TokenCommands {
+    /// Show this session's token
+    Lookup,
+    /// Extend this session's token
+    Renew,
+    /// Revoke this session's token and remove it locally
+    Revoke,
+    #[command(external_subcommand)]
+    Forwarded(Vec<String>),
 }
 
 #[derive(Subcommand)]

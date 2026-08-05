@@ -197,6 +197,8 @@ monitoring probe.
 
 - **`read`, `write`, `list`, `delete` are answered directly**, so `--json`, `--raw` and `--field` work on them and the official binary is not needed. Data keeps vault's own spelling — `key=value`, `key=@file`, `key=-` for stdin, a bare `@file`/`-` for a whole JSON body, and a repeated key for a list
 - **`kv get/put/list/delete/undelete/destroy/rollback` and `kv metadata get/delete` are answered directly**; `kv patch` and anything else forwards. Both spellings work — `vault-rs kv get secret/app` and `vault-rs kv get --mount secret app`. `--mount` has no `-m` short on purpose: vault spells it `-mount=secret`, which clap would read as a mount named `ount=secret`
+- **`status` needs no token** and reports the seal state of whatever `VAULT_ADDR` resolves to. **Note the exit code differs from `vault status`**: sealed is 1 here and 2 there, because 2 already means "error" for every other vault-rs command and one tool cannot have two meanings for it
+- **`token lookup/renew/revoke` act on this session's token**; `token create`, `capabilities` and anything naming another token forward. `token revoke` removes the local token too, so a revoked session does not leave a file behind that every later command fails against
 - **Command passthrough**: every Vault verb this tool does not wrap itself is forwarded to the official `vault` binary with the address and token already resolved. Reasoning about an issuance means reading role and issuer configuration no curated command anticipates, and the passthrough keeps that in one tool and one login instead of two. `vault-rs --help` lists what is currently forwarded
 - **Partly-modelled verbs split by subcommand**: `vault-rs secrets list` is answered directly; `vault-rs secrets enable` and every other subcommand is forwarded. `vault-rs --help secrets` says which
 - **`vault-rs vault <args…>`**: runs the official binary verbatim with this session's address and token. The token lives in `$XDG_RUNTIME_DIR/vault-rs/` and is never exported, so this is how you reach anything vault-rs does not model — invoking `vault` yourself would not be authenticated
@@ -264,7 +266,7 @@ or omitted role errors before anything reaches the CA.
 | Code | Meaning |
 |------|---------|
 | 0 | Ran successfully |
-| 1 | `--expiring-within` matched a certificate, or `cert verify` failed a check |
+| 1 | A verdict: `--expiring-within` matched, `cert verify` failed a check, or `status` found the server sealed |
 | 2 | Error |
 
 A command that could not read every record it was asked about is an error, not a partial success:

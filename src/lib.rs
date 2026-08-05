@@ -4,6 +4,7 @@ pub mod cli;
 pub mod crypto;
 pub mod logical;
 pub mod secrets;
+pub mod server;
 pub mod session;
 pub mod storage;
 pub mod utils;

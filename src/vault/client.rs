@@ -81,6 +81,24 @@ impl VaultClient {
         })
     }
 
+    /// A client that resolves no token.
+    ///
+    /// For the endpoints that answer without one. Reporting a seal state is the
+    /// case that needs it: a sealed Vault cannot mint or validate a token, so
+    /// requiring one would fail exactly where the report is wanted.
+    pub async fn unauthenticated() -> Result<Self> {
+        Ok(Self {
+            client: super::create_http_client()?,
+            vault_addr: get_vault_addr().await?,
+            token: String::new(),
+            // discard-ok: an unset namespace is the ordinary single-tenant case
+            namespace: std::env::var("VAULT_NAMESPACE")
+                .ok()
+                .filter(|n| !n.is_empty()),
+            mount_versions: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+
     /// A client against an explicit address, for tests that stand up a stub
     /// Vault. Production goes through `new`, which resolves both fields.
     #[cfg(test)]

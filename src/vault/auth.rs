@@ -1,5 +1,6 @@
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::paths::VaultCliPaths;
+use crate::utils::PROGRAM_NAME;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::env;
@@ -340,8 +341,14 @@ impl VaultAuth {
                     token_file.display()
                 );
             }
+            // Renewal is how this path tried to recover, not why it failed:
+            // the token was already rejected before renewal was attempted, and
+            // naming only the renewal sends the operator to look at a lease
+            // when what they need is to log in again.
             return Err(VaultCliError::Auth(format!(
-                "Stored token is invalid and could not be renewed: {renewal_error}"
+                "The stored token was rejected by Vault, and renewing it did not help \
+                 ({renewal_error}). It has been removed; log in again with \
+                 `{PROGRAM_NAME} session login`."
             )));
         }
 

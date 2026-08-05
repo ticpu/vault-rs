@@ -89,7 +89,15 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
         }
         Commands::Patch { ref args } => handle_vault_command("patch", args).await,
         Commands::Unwrap { ref args } => handle_vault_command("unwrap", args).await,
-        Commands::Status { ref args } => handle_vault_command("status", args).await,
+        Commands::Status => {
+            // Sealed is a verdict about a server that answered, so it takes the
+            // exit code this tool uses for verdicts rather than for errors.
+            match crate::server::status(&output).await {
+                Ok(status) if status.sealed => std::process::exit(1),
+                Ok(_) => Ok(()),
+                Err(e) => Err(e).context("status"),
+            }
+        }
         Commands::PathHelp { ref args } => handle_vault_command("path-help", args).await,
         Commands::Print { ref args } => handle_vault_command("print", args).await,
         Commands::VersionHistory { ref args } => {
@@ -121,7 +129,16 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
             .into()),
         },
         Commands::Ssh { ref args } => handle_vault_command("ssh", args).await,
-        Commands::Token { ref args } => handle_vault_command("token", args).await,
+        Commands::Token { command } => match command {
+            TokenCommands::Lookup => crate::session::token::lookup(&output)
+                .await
+                .context("token lookup"),
+            TokenCommands::Renew => crate::session::token::renew().await.context("token renew"),
+            TokenCommands::Revoke => crate::session::token::revoke()
+                .await
+                .context("token revoke"),
+            TokenCommands::Forwarded(ref args) => handle_vault_command("token", args).await,
+        },
         Commands::Transform { ref args } => handle_vault_command("transform", args).await,
         Commands::Transit { ref args } => handle_vault_command("transit", args).await,
     }
