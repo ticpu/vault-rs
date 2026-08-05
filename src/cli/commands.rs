@@ -230,6 +230,35 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 .await
                 .with_context(|| format!("reading the CA of mount '{mount}'"))
         }
+        CertCommands::RoleInfo {
+            first,
+            second,
+            pki_mount,
+        } => {
+            use crate::cert::show_role_info;
+
+            // `-m internal server` and `internal server` name the same thing,
+            // so which positional holds the role depends on whether the flag
+            // already supplied the mount.
+            let (mount, role) = match pki_mount {
+                Some(mount) => (Some(mount), first),
+                None => (first, second),
+            };
+
+            let (Some(mount), Some(role)) = (mount, role) else {
+                return Err(VaultCliError::InvalidInput(
+                    "a PKI mount and a role are required: `cert role-info <PKI_MOUNT> <ROLE>`, \
+                     or `-m <PKI_MOUNT> <ROLE>`"
+                        .to_string(),
+                )
+                .into());
+            };
+
+            let client = VaultClient::new().await?;
+            show_role_info(&client, &mount, &role, output)
+                .await
+                .with_context(|| format!("reading role '{role}' of mount '{mount}'"))
+        }
         CertCommands::Verify {
             certificate_file,
             against_ca,

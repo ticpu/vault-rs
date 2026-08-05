@@ -98,13 +98,21 @@ impl IdentityField {
     }
 }
 
-/// Print the fields to stderr: a rehearsal or report is status for a person,
-/// never data (see docs/design-rationale.md, "Austerity applies to the data
-/// stream only").
+/// Print the fields to stderr, where they accompany data rather than being it:
+/// a rehearsal sits beside the certificate an issuance writes to stdout (see
+/// docs/design-rationale.md, "Austerity applies to the data stream only").
 pub fn print_identity_fields(fields: &[IdentityField]) {
     for line in format_identity_fields(fields) {
         eprintln!("{line}");
     }
+}
+
+/// The same rendering, for a command whose whole answer this is. Redirecting
+/// such a command has to yield its report rather than an empty file, and the
+/// stream is the caller's to pick — the formatting is not, or the rehearsal
+/// and the report drift apart.
+pub fn identity_field_lines(fields: &[IdentityField]) -> Vec<String> {
+    format_identity_fields(fields)
 }
 
 /// Column widths are derived from the fields actually being printed, plus a

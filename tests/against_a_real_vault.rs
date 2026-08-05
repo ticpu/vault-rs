@@ -323,6 +323,56 @@ fn these_tests_cannot_write_outside_their_scratch_directory() {
     }
 }
 
+/// What the role decides is read off a live role, and the fields that decide
+/// it are marked as deciding rather than being three lines among forty.
+#[test]
+fn a_role_reports_what_it_decides_about_an_issuance() {
+    let vault = vault!("role-info");
+    vault.enable("pki", "pki");
+    vault
+        .run(&[
+            "write",
+            "pki/root/generate/internal",
+            "common_name=Example Issuing CA",
+            "ttl=87600h",
+        ])
+        .succeeded();
+    vault
+        .run(&[
+            "write",
+            "pki/roles/client",
+            "allow_any_name=true",
+            "client_flag=true",
+            "server_flag=false",
+            "organization=Example Org",
+            "use_csr_common_name=false",
+            "max_ttl=72h",
+        ])
+        .succeeded();
+
+    let shown = vault.run(&["cert", "role-info", "pki", "client"]);
+    shown
+        .succeeded()
+        .stdout_has("Example Org")
+        .stdout_has("ClientAuth")
+        // The CN has no source yet, and saying so beats rendering an empty one.
+        .stdout_has("supplied at issuance")
+        .stdout_has("Example Issuing CA");
+
+    // The flag spelling names the same role.
+    vault
+        .run(&["cert", "role-info", "-m", "pki", "client"])
+        .succeeded()
+        .stdout_has("ClientAuth");
+
+    // The whole record, not the parsed subset: a field the struct does not
+    // model still has to come back.
+    vault
+        .run(&["--json", "cert", "role-info", "pki", "client"])
+        .succeeded()
+        .stdout_has("allow_any_name");
+}
+
 /// A path that holds nothing is a refusal carrying its status, not an empty
 /// record.
 #[test]

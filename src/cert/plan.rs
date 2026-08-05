@@ -87,9 +87,18 @@ fn effective_cn(input: &PlanInput) -> EffectiveCn {
                     .to_string(),
             },
         },
-        None => EffectiveCn {
-            value: input.cn_arg.unwrap_or_default().to_string(),
-            note: "from argument".to_string(),
+        // Vault takes the CN from the argument unconditionally here, so with no
+        // argument there is no value yet — reading one off an absent field
+        // would render a certificate with an empty subject as the plan.
+        None => match input.cn_arg {
+            Some(arg) => EffectiveCn {
+                value: arg.to_string(),
+                note: "from argument".to_string(),
+            },
+            None => EffectiveCn {
+                value: "(supplied at issuance)".to_string(),
+                note: "from the argument given to cert create".to_string(),
+            },
         },
     }
 }
@@ -533,5 +542,41 @@ mod tests {
             issuer_cn: "Example Issuing CA",
         };
         build_plan(&input)
+    }
+
+    /// `cert role-info` renders through this builder with no CSR and no
+    /// invocation, so the CN has no source yet. Reading one off the absent
+    /// argument put an empty subject in the plan, which reads as a certificate
+    /// that would be issued with no name.
+    #[test]
+    fn with_no_csr_and_no_argument_the_cn_is_owed_to_the_issuance() {
+        let role = RoleConfig {
+            organization: vec!["Example Org".to_string()],
+            ..RoleConfig::default()
+        };
+        let fields = build_plan(&PlanInput {
+            role: &role,
+            cn_arg: None,
+            crypto_arg: None,
+            alt_names_arg: &[],
+            ip_sans_arg: &[],
+            ttl_arg: None,
+            csr: None,
+            issuer_cn: "Example Issuing CA",
+        });
+
+        let subject = field(&fields, "subject");
+        assert!(
+            !subject.value.contains("CN=,") && !subject.value.ends_with("CN="),
+            "an absent CN rendered as an empty one: {}",
+            subject.value
+        );
+        assert!(
+            subject.value.contains("supplied at issuance"),
+            "{}",
+            subject.value
+        );
+        // What the role does fix is still reported as the role's.
+        assert!(subject.value.contains("O=Example Org"), "{}", subject.value);
     }
 }

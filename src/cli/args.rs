@@ -462,6 +462,19 @@ pub enum CertCommands {
         #[arg(long = "pki-mount", short = 'm', value_hint = clap::ValueHint::Other)]
         pki_mount: Option<String>,
     },
+    /// Show what a role decides about the certificates it issues: subject,
+    /// usages, alternative names and validity, each marked with its source
+    RoleInfo {
+        /// PKI mount, then role — or just the role when -m names the mount
+        #[arg(value_name = "PKI_MOUNT|ROLE", value_hint = clap::ValueHint::Other)]
+        first: Option<String>,
+        /// Role name, when the mount was given positionally
+        #[arg(value_name = "ROLE", value_hint = clap::ValueHint::Other)]
+        second: Option<String>,
+        /// PKI mount path
+        #[arg(long = "pki-mount", short = 'm', value_hint = clap::ValueHint::Other)]
+        pki_mount: Option<String>,
+    },
     /// Verify a certificate against the CA a relying party actually loads:
     /// chain, anchor match, purpose and expiry. Non-zero exit if any check fails
     Verify {
