@@ -3,10 +3,25 @@
 ## Passthrough for the verbs this tool does not wrap
 
 Every Vault verb the tool does not model itself is forwarded with the server address and token
-already resolved. Curated commands are a layer above that surface, never a replacement for it:
-reasoning about an issuance means reading role and issuer configuration no curated command
-anticipates, and without a passthrough that work moves to a separately authenticated tool, where it
-happens less often and with less context at hand.
+already resolved, under a name the operator can invoke directly. Curated commands are a layer above
+that surface, never a replacement for it: reasoning about an issuance means reading role and issuer
+configuration no curated command anticipates, and the token this tool holds is never exported, so
+sending that work to a separately authenticated tool is advice nobody can act on.
+
+Where a verb is modelled only in part, the division is by subcommand and stated in its help. A
+modelled subcommand handed something it does not understand fails and names the forwarding command
+rather than re-dispatching what it already began: a command that sometimes runs one way and
+sometimes the other has two output shapes under one name, and leaves the caller no way to tell
+which they got.
+
+## A mount reports its own storage version
+
+Which storage layout a mount uses is asked of the mount answering for the path being addressed. The
+layout leaves a mark on the paths it accepts, and reading that mark backwards to infer the layout
+inverts cause and evidence: a path assembled from a guess is accepted by whichever mount happens to
+match it, and the payload written there takes the shape the guess implied rather than the one the
+mount expects. Asking costs no permission the operation does not already need, where enumerating
+every mount to find out does.
 
 ## Detected attributes are read or reported absent, never inferred
 
@@ -139,6 +154,16 @@ artifact in the store undecryptable and every one of them intact: the files are 
 the previous key version reads them again. A bulk operation that takes that state for corruption
 destroys what the rollback would have recovered.
 
+## A restore claims only what it measured
+
+Restoring a key reports how much of the local store it made readable, counted before and against
+after. The store can hold artifacts sealed under different keys and by different clusters at once,
+so one artifact drawn as a sample decides the verdict by which one it drew — reporting a store
+recovered while part of it stays unreadable, or a failure after a restore that worked. A recovery
+that reached some artifacts and not others is a success and reads as one: an operator who takes it
+for failure goes looking for another version to roll back to, and burns the one that was working.
+Nothing local to check is its own answer, distinct from both.
+
 ## An exported artifact may carry the provenance the certificate cannot
 
 Export can embed what the store knows and no certificate records — the issuing role, the mount it
@@ -158,3 +183,15 @@ history, so the operator dropping a certificate the PKI still holds types what t
 the only copy of a private key types. Consent is graded to the loss. Key material takes an option
 named for it; an artifact holding only the provenance the PKI never recorded is deleted after saying
 what goes with it, since a gate raised for the small loss trains the reflex that opens the large one.
+
+## A generic verb owes notice, not guards
+
+Where a path is protected by an option named for what it destroys, the generic read and write verbs
+do not re-implement that option; they announce the target before acting and name the command that
+owns it. A guard shaped around one path and bolted onto one verb is absent from the next verb added,
+and consent belongs with the operation that can describe what is being consented to.
+
+Notice that could not complete says so. Confirming the target costs reads the operation itself does
+not perform, so a caller permitted to write may still be refused the confirmation; falling silent
+there makes the absence of a warning indistinguishable from a checked negative, and turns silence
+into a claim nothing established.
