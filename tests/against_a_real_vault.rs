@@ -281,6 +281,48 @@ fn the_token_verbs_act_on_this_session() {
     vault.run(&["session", "login", "--help"]).succeeded();
 }
 
+/// The confinement is a claim about the kernel, so it is checked rather than
+/// trusted: this writes where a stray test would and expects to be refused.
+///
+/// It runs after a server has started, because that is what applies the
+/// restriction to this thread.
+#[test]
+fn these_tests_cannot_write_outside_their_scratch_directory() {
+    let vault = vault!("confinement");
+
+    let inside = vault.scratch_path("allowed");
+    std::fs::write(&inside, "scratch").expect("writing inside the scratch directory");
+
+    let home = std::env::var("HOME").expect("a home to be kept out of");
+    for outside in [
+        // Just outside the boundary, which is where an off-by-one in the rule
+        // would show.
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/target"))
+            .join("vault-rs-should-never-appear"),
+        // The one that matters.
+        std::path::Path::new(&home).join(".vault-rs-should-never-appear"),
+    ] {
+        match std::fs::write(&outside, "this must not land") {
+            Ok(()) => {
+                // discard-ok: removing what should never have been written; the
+                // panic below is the report either way
+                let _ = std::fs::remove_file(&outside);
+                panic!(
+                    "wrote to {} — these tests are not confined, so a stray path would reach a \
+                     real home",
+                    outside.display()
+                );
+            }
+            Err(e) => assert_eq!(
+                e.kind(),
+                std::io::ErrorKind::PermissionDenied,
+                "{} was refused for the wrong reason: {e}",
+                outside.display()
+            ),
+        }
+    }
+}
+
 /// A path that holds nothing is a refusal carrying its status, not an empty
 /// record.
 #[test]

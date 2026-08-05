@@ -6,6 +6,8 @@
 //! commands mint keys, destroy secret versions and revoke tokens, and against
 //! a real Vault or a real store any of them is a bad afternoon.
 
+mod confine;
+
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -73,6 +75,10 @@ impl DevVault {
                  Install it, or set VAULT_RS_NO_INTEGRATION=1 to skip them knowingly."
             );
         }
+
+        // Before anything is spawned, so the servers and binaries below
+        // inherit it.
+        confine::to_scratch_only(&scratch_root());
 
         let slot = Slot::take();
         let home = scratch(name);
@@ -307,8 +313,15 @@ fn next_port() -> u16 {
     base.wrapping_add(NEXT.fetch_add(2, Ordering::Relaxed))
 }
 
+/// The one directory these tests may write to.
+fn scratch_root() -> PathBuf {
+    let root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/target/integration"));
+    std::fs::create_dir_all(&root).expect("scratch root");
+    root
+}
+
 fn scratch(name: &str) -> PathBuf {
-    let dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/target/integration")).join(name);
+    let dir = scratch_root().join(name);
     // discard-ok: test scratch; the directory usually does not exist yet
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch home");
