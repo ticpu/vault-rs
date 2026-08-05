@@ -12,6 +12,8 @@ While the official `vault` CLI is comprehensive for general Vault operations, `v
 - **Master key management**: Master key stored at a fixed `vault-rs/encryption-key` path in an auto-discovered KV mount (the `secret` mount if present, otherwise the first KV mount found)
 - **Secure permissions**: Runtime files stored in `$XDG_RUNTIME_DIR/vault-rs/` (falling back to `~/.local/state/vault-rs/` when unset) with mode 600
 - **NEVER uses /tmp**: All temporary operations use secure runtime directories
+- **The directory is the store**: every read walks `~/.local/share/vault-rs/secrets/{mount}/{cn}/{serial}/` and takes each record from that artifact's own files. There is no index to rebuild, so a store copied or restored by hand lists as-is.
+- **Sealed per cluster**: the master key comes from whichever Vault `VAULT_ADDR` resolved to when the artifact was written, and each artifact records that cluster beside it. Point the tool at a second server, issue something, and point it back: that artifact is readable only from the cluster that sealed it, and `storage list` says so instead of blaming the key.
 
 ### Enhanced Certificate Listing 
 ```bash
@@ -32,6 +34,60 @@ vault-rs cert list --exclude-expired --exclude-revoked
 # JSON for anything nested (--json is global, before the subcommand)
 vault-rs --json cert list --pki-mount internal
 ```
+
+`cert list --json` and `storage list --json` emit different schemas, because they are different
+records: one is what the PKI holds, the other is what is on this disk. Neither carries a
+`vault_status` — nothing checked it.
+
+### The Local Store
+
+```bash
+vault-rs storage list                          # refuses if anything is unreadable, and says why
+vault-rs storage list --allow-partial          # list what could be read; the rest named on stderr
+vault-rs storage show example.com              # one artifact, including files and sealing cluster
+vault-rs storage show example.com --serial 3a1f…   # when one name is held more than once
+```
+
+An artifact that will not decrypt is a corruption signal, not a row: `storage list` names it on
+stderr and exits non-zero, and `--allow-partial` is the explicit escape hatch. `storage show` still
+reports such an artifact — the path, which cluster sealed it, and each file's size — because it is
+the first thing you run after a listing points at one.
+
+Removal names what it destroys instead of taking a general-purpose `--yes`:
+
+```bash
+vault-rs storage remove example.com                                  # deleted if only a certificate
+vault-rs storage remove example.com --destroy-my-private-key         # key exists nowhere else
+vault-rs storage remove example.com --destroy-my-unreadable-artifact # nothing can read it today
+```
+
+Removing a certificate-only artifact needs no option — the PKI still holds the certificate — but it
+does drop the issuing role, which the PKI never recorded. An ambiguous name is refused with the
+candidates listed, never resolved to the first match.
+
+### Moving Entries Between Machines or Clusters
+
+An artifact is encrypted under a key derived from the master key of the Vault cluster that sealed
+it, so copying `secrets/` to a host pointed at a different cluster produces a directory nothing can
+read. Move the certificate and key instead, then re-import:
+
+```bash
+# On the source host, while pointed at the cluster that sealed it
+vault-rs cert export example.com --format bundle > example.com.bundle.pem   # key + leaf + chain
+vault-rs cert export example.com --format p12 --output ./                   # or PKCS#12
+
+# Check what you are about to lose: the issuing role lives only in the store
+vault-rs storage show example.com
+```
+
+The store holds no import verb, and deliberately: an artifact is written by the issuance that
+produced it, so the way back in is to re-issue against the target cluster, or to keep the exported
+bundle as the artifact of record and skip the local store entirely (`--no-store` at issuance). If
+you only need the material off this machine, the bundle above is the complete artifact — the local
+copy adds the issuing role and nothing else the PKI cannot tell you.
+
+To read an old artifact again rather than move it, point back at the cluster that sealed it; the
+address is recorded next to the artifact and `storage show` prints it.
 
 **vs. official vault:**
 ```bash
@@ -177,7 +233,7 @@ or omitted role errors before anything reaches the CA.
 | Feature | Official `vault` | `vault-rs` |
 |---------|------------------|------------|
 | Certificate listing | Serial numbers only | Rich metadata with filtering |
-| Local storage | None | Encrypted local cache |
+| Local storage | None | Encrypted per-artifact directory, listed by walking it |
 | Output format | Human-readable | UNIX-friendly, machine-readable |
 | DNS discovery | Manual VAULT_ADDR | Automatic SRV record discovery |
 | Export formats | Limited | Text and binary encodings, plus chain variants for handoff vs internal trust |
@@ -194,6 +250,12 @@ or omitted role errors before anything reaches the CA.
 | 0 | Ran successfully |
 | 1 | `--expiring-within` matched a certificate, or `cert verify` failed a check |
 | 2 | Error |
+
+A command that could not read every record it was asked about is an error, not a partial success:
+there is no exit code meaning "answered, partially", because a caller who did not ask for one would
+find a code it has never seen. `--allow-partial` (on `cert list`, `storage list`, `storage show`)
+takes the answer anyway and prints what was missing on stderr — having been told it is not
+authoritative for that run.
 
 ## Configuration
 
