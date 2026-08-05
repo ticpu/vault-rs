@@ -3,7 +3,7 @@ use crate::utils::dns_discovery::get_vault_addr;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use crate::vault::{
-    auth::{TokenState, VaultAuth},
+    auth::{LogoutOutcome, TokenState, VaultAuth},
     client::VaultClient,
 };
 
@@ -50,8 +50,18 @@ async fn login_with_credentials(auth: &VaultAuth, method: &str, username: &str) 
 async fn logout_command() -> Result<()> {
     let vault_addr = get_vault_addr().await?;
     let auth = VaultAuth::new(vault_addr);
-    auth.logout().await?;
-    eprintln!("Successfully logged out");
+
+    match auth.logout().await {
+        Ok(LogoutOutcome::Revoked) => eprintln!("Logged out: token revoked and removed"),
+        Ok(LogoutOutcome::NoToken) => eprintln!("No stored token to remove"),
+        // The token is off this machine either way, so the failure is about the
+        // server and not about whether logging out happened.
+        Err(e) => {
+            eprintln!("Stored token removed; revoking it on the server failed.");
+            return Err(e);
+        }
+    }
+
     Ok(())
 }
 
