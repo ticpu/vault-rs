@@ -139,6 +139,17 @@ artifact in the store undecryptable and every one of them intact: the files are 
 the previous key version reads them again. A bulk operation that takes that state for corruption
 destroys what the rollback would have recovered.
 
+## An exported artifact may carry the provenance the certificate cannot
+
+Export can embed what the store knows and no certificate records — the issuing role, the mount it
+came from — in a labelled block the format already accommodates, and import reads it back. The
+alternative is that moving an artifact silently drops the only copy of those fields, since the PKI
+never held them. What is embedded is a claim and not evidence: anything the certificate itself
+answers is still taken from the certificate on import, and the block never contradicts it. An import
+that receives no provenance records the unknown fields as absent rather than adopting a default, and
+says which of them came from where, because a field the invocation supplied and one the artifact
+carried are different facts about the same record.
+
 ## An option that destroys unrecoverable material is named for what it destroys
 
 Where deleting something local cannot be undone, consent is given by an option that says what is
