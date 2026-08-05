@@ -1,3 +1,4 @@
+pub mod commands;
 pub mod local;
 pub mod metadata;
 

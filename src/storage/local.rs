@@ -1,4 +1,4 @@
-use crate::crypto::encryption::EncryptionManager;
+use crate::crypto::encryption::{EncryptionManager, EMPTY_PAYLOAD_LEN};
 use crate::storage::metadata::{
     normalize_serial, CertificateStorage, FileInfo, SealedBy, StorageCertificateMetadata,
     StoredMetadata,
@@ -7,6 +7,7 @@ use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::partial::{Incomplete, Partial};
 use crate::utils::paths::VaultCliPaths;
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -287,25 +288,13 @@ impl LocalStorage {
         }
 
         let mut lines = Vec::new();
-        let undecryptable = scanned.any_failure(|e| matches!(e, VaultCliError::Encryption(_)));
-        if undecryptable {
+        if scanned.any_failure(|e| matches!(e, VaultCliError::Encryption(_))) {
             let reached = self.cluster_id().await;
             let foreign = reached
                 .as_deref()
                 .and_then(|r| seals.iter().find(|s| s.cluster_id != r));
             if let Some(foreign) = foreign {
-                // The identifier names the cluster, not the material at the
-                // key's path — a performance secondary serves the replicated
-                // KV under its own id — so this leads without displacing the
-                // key-history route already attached to each failure.
-                lines.push(format!(
-                    "At least one artifact was sealed by a different Vault cluster ({}) than the \
-                     one being addressed ({}). Reach that cluster again and it reads:\n  \
-                     VAULT_ADDR={}\nIf that is not it, the key history named above still applies.",
-                    foreign.cluster_id,
-                    reached.as_deref().unwrap_or("unknown"),
-                    foreign.address
-                ));
+                lines.push(Self::cluster_mismatch(foreign, reached.as_deref()));
             }
         }
 
@@ -317,6 +306,46 @@ impl LocalStorage {
         Some(lines.join("\n\n"))
     }
 
+    /// Why one artifact will not read, in the order the record can support it:
+    /// the cluster comparison where there is one, then the key history.
+    ///
+    /// The comparison leads but never replaces — the identifier names the
+    /// cluster, not the material at the key's path, and a performance
+    /// secondary serves the replicated KV under its own id, so a mismatch that
+    /// suppressed the key route would hide the one answer that worked.
+    pub async fn diagnose_unreadable(&self, entry: &StoredEntry, why: &VaultCliError) -> String {
+        if !matches!(why, VaultCliError::Encryption(_)) {
+            return format!("{}/{}: {why}", entry.cn, entry.serial);
+        }
+
+        let reached = self.cluster_id().await;
+        let mut lines = Vec::new();
+        match entry.sealed_by() {
+            Some(sealed_by)
+                if reached
+                    .as_deref()
+                    .is_some_and(|r| r != sealed_by.cluster_id) =>
+            {
+                lines.push(Self::cluster_mismatch(&sealed_by, reached.as_deref()));
+            }
+            _ => {}
+        }
+        lines.push(self.encryption_manager.recovery_hint().await);
+        lines.join("\n\n")
+    }
+
+    fn cluster_mismatch(sealed_by: &SealedBy, reached: Option<&str>) -> String {
+        format!(
+            "This artifact was sealed by a different Vault cluster ({}) than the one being \
+             addressed ({}). Reach that cluster again and it reads:\n  VAULT_ADDR={}\n\
+             That identifies the cluster, not the key itself, so if it is not the cause the key \
+             history below still applies.",
+            sealed_by.cluster_id,
+            reached.unwrap_or("unknown"),
+            sealed_by.address
+        )
+    }
+
     async fn cluster_id(&self) -> Option<String> {
         match self.client.health().await {
             Ok(health) => health
@@ -326,6 +355,78 @@ impl LocalStorage {
             Err(e) => {
                 tracing::warn!("Could not read the cluster identity to compare it: {e}");
                 None
+            }
+        }
+    }
+
+    /// The one artifact a command-line target names, resolved by path so an
+    /// entry that will not decrypt is still reachable.
+    ///
+    /// `show` and `remove` share this: an operator inspects an entry and then
+    /// removes it, so a `show` that picked a candidate where `remove` refuses
+    /// would point at one artifact and delete another.
+    pub async fn resolve_entry(&self, target: &EntryTarget<'_>) -> Result<StoredEntry> {
+        let mut candidates = Vec::new();
+        let secrets_dir = VaultCliPaths::secrets_dir()?;
+        if secrets_dir.exists() {
+            for mount_entry in read_subdirs(&secrets_dir)? {
+                let pki_mount = mount_entry.file_name().to_string_lossy().to_string();
+                if target.pki_mount.is_some_and(|m| m != pki_mount) {
+                    continue;
+                }
+                for cn_entry in read_subdirs(&mount_entry.path())? {
+                    let cn = cn_entry.file_name().to_string_lossy().to_string();
+                    if cn != target.cn {
+                        continue;
+                    }
+                    for serial_entry in read_subdirs(&cn_entry.path())? {
+                        let serial = serial_entry.file_name().to_string_lossy().to_string();
+                        if target.serial.is_some_and(|s| normalize_serial(s) != serial) {
+                            continue;
+                        }
+                        candidates.push((
+                            pki_mount.clone(),
+                            cn.clone(),
+                            serial,
+                            serial_entry.path(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Ambiguity is an error, never a choice: an unqualified name that
+        // matched nothing must fail the same way, or a mistyped one silently
+        // acts on a neighbour.
+        match candidates.len() {
+            0 => Err(VaultCliError::CertNotFound(format!(
+                "no stored artifact matches {}",
+                target.describe()
+            ))),
+            1 => {
+                let (pki_mount, cn, serial, path) = candidates.remove(0);
+                let record = self.load_entry(&path, &pki_mount, &cn).await;
+                Ok(StoredEntry {
+                    pki_mount,
+                    cn,
+                    serial,
+                    path,
+                    record,
+                })
+            }
+            _ => {
+                let mut report = format!(
+                    "more than one entry matches {}; narrow it with --pki-mount or --serial:\n",
+                    target.describe()
+                );
+                for (pki_mount, cn, serial, _) in &candidates {
+                    // discard-ok: writing into a String is infallible
+                    let _ = writeln!(
+                        report,
+                        "  --pki-mount {pki_mount} --serial {serial}  ({cn})"
+                    );
+                }
+                Err(VaultCliError::InvalidInput(report))
             }
         }
     }
@@ -477,6 +578,87 @@ impl LocalStorage {
         self.encryption_manager
             .decrypt_from_file(context, file_path)
             .await
+    }
+}
+
+/// What a command line named.
+pub struct EntryTarget<'a> {
+    pub cn: &'a str,
+    pub pki_mount: Option<&'a str>,
+    pub serial: Option<&'a str>,
+}
+
+impl EntryTarget<'_> {
+    fn describe(&self) -> String {
+        let mut described = format!("common name '{}'", self.cn);
+        if let Some(mount) = self.pki_mount {
+            described.push_str(&format!(" on mount '{mount}'"));
+        }
+        if let Some(serial) = self.serial {
+            described.push_str(&format!(" with serial '{serial}'"));
+        }
+        described
+    }
+}
+
+/// One resolved artifact directory, whether or not anything in it decrypts.
+pub struct StoredEntry {
+    pub pki_mount: String,
+    pub cn: String,
+    pub serial: String,
+    pub path: PathBuf,
+    /// The record, or why it would not load. Kept as a result rather than
+    /// propagated so `show` can still report what needs no key and `remove`
+    /// can still reach the artifact.
+    pub record: std::result::Result<CertificateStorage, VaultCliError>,
+}
+
+/// What an artifact's key file holds, decided by ciphertext length so the
+/// answer survives the artifact not decrypting.
+#[derive(PartialEq, Eq)]
+pub enum KeyMaterial {
+    /// No key file, or one whose plaintext is empty — a CSR-signed artifact
+    /// keeps its key with the requester.
+    None,
+    Present,
+    /// Shorter than a nonce and a tag, so it holds nothing that could decrypt.
+    Malformed,
+}
+
+impl StoredEntry {
+    pub fn key_material(&self) -> Result<KeyMaterial> {
+        let key_file = self.path.join("private_key.pem.enc");
+        let len = match fs::metadata(&key_file) {
+            Ok(metadata) => metadata.len(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(KeyMaterial::None),
+            Err(e) => return Err(e.into()),
+        };
+
+        Ok(match len as usize {
+            len if len == EMPTY_PAYLOAD_LEN => KeyMaterial::None,
+            len if len > EMPTY_PAYLOAD_LEN => KeyMaterial::Present,
+            _ => KeyMaterial::Malformed,
+        })
+    }
+
+    /// Every artifact file with its size, for a report that cannot decrypt.
+    pub fn files(&self) -> Result<Vec<(String, u64)>> {
+        let mut files = Vec::new();
+        for entry in fs::read_dir(&self.path)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                files.push((
+                    entry.file_name().to_string_lossy().to_string(),
+                    entry.metadata()?.len(),
+                ));
+            }
+        }
+        files.sort();
+        Ok(files)
+    }
+
+    pub fn sealed_by(&self) -> Option<SealedBy> {
+        LocalStorage::read_sealed_by(&self.path)
     }
 }
 

@@ -473,17 +473,32 @@ pub enum StorageCommands {
     Show {
         /// Common name
         cn: String,
-        /// PKI mount
+        /// PKI mount, when the same common name is held under more than one
         #[arg(long)]
         pki_mount: Option<String>,
+        /// Serial, when the same common name is held more than once
+        #[arg(long)]
+        serial: Option<String>,
+        /// Report an artifact that will not decrypt instead of failing on it
+        #[arg(long)]
+        allow_partial: bool,
     },
-    /// Remove stored certificate
+    /// Remove one stored artifact. Destroying anything unrecoverable requires the option that names it.
     Remove {
         /// Common name
         cn: String,
-        /// PKI mount
+        /// PKI mount, when the same common name is held under more than one
         #[arg(long)]
         pki_mount: Option<String>,
+        /// Serial, when the same common name is held more than once
+        #[arg(long)]
+        serial: Option<String>,
+        /// Consent to destroying a private key that exists nowhere else
+        #[arg(long)]
+        destroy_my_private_key: bool,
+        /// Consent to destroying an artifact nothing can currently read, whose contents cannot be named
+        #[arg(long)]
+        destroy_my_unreadable_artifact: bool,
     },
     /// Decrypt storage file for debugging
     Decrypt {

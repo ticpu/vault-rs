@@ -436,16 +436,41 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
             .await
             .context("listing local storage")
         }
-        StorageCommands::Show { cn, pki_mount } => {
-            println!("Show stored certificate - CN: {cn}, PKI: {pki_mount:?}");
-            // TODO: Implement storage show
-            Ok(())
-        }
-        StorageCommands::Remove { cn, pki_mount } => {
-            println!("Remove stored certificate - CN: {cn}, PKI: {pki_mount:?}");
-            // TODO: Implement storage remove
-            Ok(())
-        }
+        StorageCommands::Show {
+            cn,
+            pki_mount,
+            serial,
+            allow_partial,
+        } => crate::storage::commands::show(
+            &storage,
+            crate::storage::commands::ShowRequest {
+                cn: &cn,
+                pki_mount: pki_mount.as_deref(),
+                serial: serial.as_deref(),
+                allow_partial,
+            },
+            output,
+        )
+        .await
+        .context("showing a stored artifact"),
+        StorageCommands::Remove {
+            cn,
+            pki_mount,
+            serial,
+            destroy_my_private_key,
+            destroy_my_unreadable_artifact,
+        } => crate::storage::commands::remove(
+            &storage,
+            crate::storage::commands::RemoveRequest {
+                cn: &cn,
+                pki_mount: pki_mount.as_deref(),
+                serial: serial.as_deref(),
+                destroy_my_private_key,
+                destroy_my_unreadable_artifact,
+            },
+        )
+        .await
+        .context("removing a stored artifact"),
         StorageCommands::Decrypt { file_path } => {
             use std::path::Path;
 

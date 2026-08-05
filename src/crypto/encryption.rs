@@ -1,5 +1,6 @@
 use crate::crypto::keys::KeyManager;
 use crate::utils::errors::{Result, VaultCliError};
+use aes_gcm::aead::array::typenum::Unsigned;
 use aes_gcm::{aead::Aead, Nonce};
 use std::fs;
 use std::path::Path;
@@ -7,6 +8,16 @@ use std::path::Path;
 /// Stored artifacts are `nonce || ciphertext+tag`. Changing this would make
 /// every already-encrypted artifact in the local store unreadable.
 const NONCE_LEN: usize = 12;
+
+/// The length of a stored file whose plaintext is empty: nonce plus tag and
+/// nothing between them, since GCM ciphertext is as long as its plaintext.
+///
+/// `storage remove` grades its hazard on this, so it is computed from the
+/// cipher rather than written down: were it a literal, a changed nonce width
+/// or tag length would silently reclassify key-bearing artifacts as empty and
+/// delete them without ever requiring the option named for the key.
+pub const EMPTY_PAYLOAD_LEN: usize =
+    NONCE_LEN + <aes_gcm::Aes256Gcm as aes_gcm::AeadCore>::TagSize::USIZE;
 
 pub struct EncryptionManager {
     key_manager: KeyManager,
