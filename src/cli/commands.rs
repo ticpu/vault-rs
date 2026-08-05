@@ -119,6 +119,10 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
             SecretsCommands::Forwarded(ref args) => handle_vault_command("secrets", args).await,
         },
         Commands::Auth { ref args } => handle_vault_command("auth", args).await,
+        #[cfg(feature = "dev-server")]
+        Commands::DevServer { port, ref at } => {
+            crate::cli::dev_server::run(port, at.as_deref()).context("starting a throwaway Vault")
+        }
         Commands::Vault { ref args } => match args.split_first() {
             Some((subcommand, rest)) => handle_vault_command(subcommand, rest).await,
             None => Err(VaultCliError::InvalidInput(format!(

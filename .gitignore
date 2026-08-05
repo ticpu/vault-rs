@@ -1,6 +1,8 @@
 .idea/
 Cargo.lock
 target/
+# Where `dev-server` keeps a throwaway Vault's token and state.
+vault-dev/
 *.deb
 *.json
 *.pem

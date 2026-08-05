@@ -194,6 +194,17 @@ pub enum Commands {
         #[command(subcommand)]
         command: SecretsCommands,
     },
+    /// Start a throwaway Vault whose writes stay out of your home (dev builds)
+    #[cfg(feature = "dev-server")]
+    #[command(hide = true)]
+    DevServer {
+        /// Port to listen on
+        #[arg(long, default_value_t = 8200)]
+        port: u16,
+        /// Directory to keep everything it writes in; defaults to ./vault-dev
+        #[arg(long)]
+        at: Option<String>,
+    },
     /// Run the official vault binary with this session's address and token
     Vault {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]

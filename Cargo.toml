@@ -56,6 +56,11 @@ ordermap = "1"
 rustls-webpki = { version = "0.103", default-features = false, features = ["std", "aws-lc-rs"] }
 rustls-pki-types = "1"
 
+# Off by default: `dev-server` is for running this tool against a throwaway
+# Vault by hand, and a released binary has no business carrying it.
+[features]
+dev-server = []
+
 [dev-dependencies]
 wiremock = "0.6"
 which = "8"
