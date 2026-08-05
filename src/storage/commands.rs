@@ -521,7 +521,7 @@ mod tests {
         );
         // The refusal has to carry the way back, not just the way to delete.
         assert!(refused.contains("sealing-cluster"), "{refused}");
-        assert!(refused.contains("kv rollback"), "{refused}");
+        assert!(refused.contains("session key restore"), "{refused}");
 
         // One option is not enough while two hazards apply.
         let still_refused = remove(

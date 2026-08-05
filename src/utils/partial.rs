@@ -32,7 +32,7 @@ impl Incomplete {
         }
     }
 
-    fn describe(&self) -> String {
+    pub fn describe(&self) -> String {
         let cause = chain(&self.error);
         match self.field {
             Some(field) => format!("{}: {field} unreadable: {cause}", self.subject),

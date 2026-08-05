@@ -990,7 +990,7 @@ mod tests {
 
         assert!(refused.contains("sealing-cluster"), "{refused}");
         assert!(refused.contains("other-cluster"), "{refused}");
-        assert!(refused.contains("kv rollback"), "{refused}");
+        assert!(refused.contains("session key restore"), "{refused}");
         assert!(refused.contains("storage remove"), "{refused}");
     }
 
@@ -1019,7 +1019,7 @@ mod tests {
             .to_string();
 
         assert!(!refused.contains("sealed by a different"), "{refused}");
-        assert!(refused.contains("kv rollback"), "{refused}");
+        assert!(refused.contains("session key restore"), "{refused}");
     }
 
     /// The key hazard is graded on ciphertext length, so it holds for an

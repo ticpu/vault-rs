@@ -354,6 +354,20 @@ pub enum KvMetadataCommands {
 }
 
 #[derive(Subcommand)]
+pub enum KeyCommands {
+    /// Where the master key is, and whether replacing it could be undone
+    Status,
+    /// Every version of the master key the mount still holds
+    History,
+    /// Write a prior version back, and report how much of the store it recovers
+    Restore {
+        /// Version to restore
+        #[arg(long)]
+        version: u64,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum SessionCommands {
     /// Login to Vault
     Login {
@@ -369,6 +383,11 @@ pub enum SessionCommands {
     Logout,
     /// Show authentication status
     Status,
+    /// The master key this machine's local store is sealed with
+    Key {
+        #[command(subcommand)]
+        command: KeyCommands,
+    },
     /// Initialize encryption key in personal vault
     InitEncryption {
         /// Overwrite an existing key. Every certificate and private key already

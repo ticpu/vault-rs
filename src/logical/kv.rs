@@ -22,6 +22,17 @@ pub struct Target {
 }
 
 impl Target {
+    /// A secret whose mount and layout the caller already established. The
+    /// master key's mount is chosen by discovery rather than probed, so it
+    /// arrives here already answered rather than being asked again.
+    pub fn known(mount: &str, key: &str, versioned: bool) -> Self {
+        Self {
+            mount: mount.trim_matches('/').to_string(),
+            key: key.trim_matches('/').to_string(),
+            versioned,
+        }
+    }
+
     pub async fn resolve(client: &VaultClient, mount: Option<&str>, path: &str) -> Result<Self> {
         let path = path.trim_matches('/');
 

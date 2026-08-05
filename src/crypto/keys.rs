@@ -13,12 +13,17 @@ const KV_PATH: &str = "vault-rs/encryption-key";
 /// mount keeps versions. Carrying the layout with the location is what stops
 /// every consumer reading it back out of the path's shape, which inverts a
 /// consequence of the layout into evidence for it.
-struct KeyLocation {
-    mount: String,
-    versioned: bool,
+pub struct KeyLocation {
+    pub mount: String,
+    pub versioned: bool,
 }
 
 impl KeyLocation {
+    /// The key's own path within its mount, which is fixed.
+    pub fn key(&self) -> &'static str {
+        KV_PATH
+    }
+
     fn new(mount: &str, reported: Option<&str>) -> Self {
         Self {
             mount: mount.trim_end_matches('/').to_string(),
@@ -27,7 +32,7 @@ impl KeyLocation {
     }
 
     /// Where the value itself is addressed.
-    fn data_path(&self) -> String {
+    pub fn data_path(&self) -> String {
         match self.versioned {
             true => format!("{}/data/{KV_PATH}", self.mount),
             false => format!("{}/{KV_PATH}", self.mount),
@@ -52,11 +57,27 @@ pub enum VersionRetention {
 }
 
 impl VersionRetention {
+    /// The same answer as `describe`, without the command to act on it: a
+    /// status line reports the state, it does not instruct.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Retained { current, .. } => {
+                format!("yes, version {current} would remain")
+            }
+            Self::None { why, .. } => format!("no — {why}"),
+        }
+    }
+
     pub fn describe(&self) -> String {
         match self {
-            Self::Retained { current, mount, key } => format!(
+            Self::Retained {
+                current,
+                mount,
+                key,
+            } => format!(
                 "This mount retains prior versions, so version {current} would remain and could \
-                 be restored with:\n  {PROGRAM_NAME} kv rollback --mount {mount} --version {current} {key}"
+                 be restored with:\n  {PROGRAM_NAME} session key restore --version {current}\n  \
+                 (mount {mount}, key {key})"
             ),
             Self::None { why, .. } => {
                 format!("{why}, so this would be permanent: there is no recovery.")
@@ -259,7 +280,7 @@ impl KeyManager {
     ///
     /// Unreadable metadata is not "probably fine": it is the case where the
     /// answer is unknown, and the caller refuses on it.
-    async fn version_retention(&self, location: &KeyLocation) -> Result<VersionRetention> {
+    pub async fn version_retention(&self, location: &KeyLocation) -> Result<VersionRetention> {
         retention_at(&self.client, &location.mount, location.versioned, KV_PATH).await
     }
 
@@ -286,10 +307,11 @@ impl KeyManager {
         format!(
             "The master key in Vault is probably not the one this artifact was sealed with.\n\
              Check whether the previous key is still there:\n  \
-             {PROGRAM_NAME} kv metadata get --mount {mount} {key}\n\
+             {PROGRAM_NAME} session key history\n\
              If an earlier version holds it, restoring that version makes these artifacts \
              readable again without destroying the current one:\n  \
-             {PROGRAM_NAME} kv rollback --mount {mount} --version N {key}"
+             {PROGRAM_NAME} session key restore --version N\n\
+             (mount {mount}, key {key})"
         )
     }
 
@@ -308,7 +330,7 @@ impl KeyManager {
     /// answer which mount ought to hold it. The listing reports each mount's
     /// layout alongside, so the answer comes from the same request and travels
     /// with the location instead of being read back off a path later.
-    async fn key_location(&self) -> Result<KeyLocation> {
+    pub async fn key_location(&self) -> Result<KeyLocation> {
         let mounts = self.client.list_mounts().await?;
 
         if let Some(preferred) = mounts.data.get(&format!("{DEFAULT_KV_MOUNT}/")) {
@@ -633,7 +655,7 @@ mod tests {
             .await
             .expect_err("a key is present")
             .to_string();
-        assert!(err.contains("kv rollback"), "{err}");
+        assert!(err.contains("session key restore"), "{err}");
         assert!(err.contains("--version 7"), "{err}");
         assert!(!err.contains("no recovery"), "{err}");
     }

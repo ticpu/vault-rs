@@ -1,4 +1,4 @@
-use crate::cli::args::SessionCommands;
+use crate::cli::args::{KeyCommands, SessionCommands};
 use crate::utils::dns_discovery::get_vault_addr;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
@@ -15,6 +15,11 @@ pub async fn handle_session_commands(
         SessionCommands::Login { method, username } => login_command(method, username).await,
         SessionCommands::Logout => logout_command().await,
         SessionCommands::Status => status_command(output).await,
+        SessionCommands::Key { command } => match command {
+            KeyCommands::Status => crate::session::key::status(output).await,
+            KeyCommands::History => crate::session::key::history(output).await,
+            KeyCommands::Restore { version } => crate::session::key::restore(version).await,
+        },
         SessionCommands::InitEncryption {
             destroy_all_my_keys,
         } => init_encryption_command(destroy_all_my_keys).await,

@@ -9,7 +9,8 @@ While the official `vault` CLI is comprehensive for general Vault operations, `v
 ### Encrypted Local Storage
 
 - **Local certificate caching**: All certificates and private keys are stored encrypted locally using AES-GCM
-- **Master key management**: Master key stored at a fixed `vault-rs/encryption-key` path in an auto-discovered KV mount (the `secret` mount if present, otherwise the first KV mount found)
+- **Master key management**: Master key stored at a fixed `vault-rs/encryption-key` path in an auto-discovered KV mount — the `secret` mount if present, otherwise the lowest-named KV mount. `session key status` reports which, and whether replacing it could be undone
+- **Recovery is a command, not a hint**: `session key history` lists the versions the mount still holds, and `session key restore --version N` writes one back and reports how much of the store that made readable — `4 of 7 artifacts decrypt, up from 0`. A partial recovery is a success: the remaining artifacts are named, and one sealed by another cluster needs that cluster rather than another version
 - **Secure permissions**: Runtime files stored in `$XDG_RUNTIME_DIR/vault-rs/` (falling back to `~/.local/state/vault-rs/` when unset) with mode 600
 - **NEVER uses /tmp**: All temporary operations use secure runtime directories
 - **The directory is the store**: every read walks `~/.local/share/vault-rs/secrets/{mount}/{cn}/{serial}/` and takes each record from that artifact's own files. There is no index to rebuild, so a store copied or restored by hand lists as-is.
