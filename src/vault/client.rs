@@ -172,6 +172,42 @@ impl VaultClient {
         self.handle_response(path, response).await
     }
 
+    /// A read where a refusal may still be carrying the record.
+    ///
+    /// The versioned KV layout reports a withdrawn version as "nothing here"
+    /// while still returning that version's metadata, so a caller that has to
+    /// tell a version someone deleted from one that never existed cannot let
+    /// the status alone decide. A refusal with nothing in it is still a
+    /// refusal.
+    pub async fn get_even_if_withdrawn(&self, path: &str) -> Result<Value> {
+        let response = self.request(reqwest::Method::GET, path).send().await?;
+        let status = response.status();
+        if status.is_success() {
+            return self.handle_response(path, response).await;
+        }
+
+        let body = response
+            .text()
+            .await
+            // discard-ok: building a message from an already-failed response;
+            // the status is the signal, the body is a courtesy
+            .unwrap_or_default();
+
+        if status.as_u16() == 404 {
+            // discard-ok: a body that is not JSON carries no record, which is
+            // the refusal reported below
+            if let Ok(record) = serde_json::from_str::<Value>(&body) {
+                let carries_something = record.get("data").is_some_and(|d| !d.is_null())
+                    || record.get("warnings").is_some_and(|w| !w.is_null());
+                if carries_something {
+                    return Ok(record);
+                }
+            }
+        }
+
+        Err(Self::describe_refusal(path, status.as_u16(), body))
+    }
+
     /// Generic DELETE request to Vault API
     pub async fn delete(&self, path: &str) -> Result<Value> {
         let response = self.request(reqwest::Method::DELETE, path).send().await?;
@@ -389,6 +425,10 @@ impl VaultClient {
             // the status is the signal, the body is a courtesy
             .unwrap_or_default();
 
+        Self::describe_refusal(path, status, body)
+    }
+
+    fn describe_refusal(path: &str, status: u16, body: String) -> VaultCliError {
         let errors = match serde_json::from_str::<Value>(&body) {
             Ok(envelope) => match envelope.get("errors").and_then(|e| e.as_array()) {
                 Some(reported) => reported

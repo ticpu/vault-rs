@@ -115,7 +115,7 @@ pub async fn get(
         path = format!("{path}?version={version}");
     }
 
-    let secret = client.get(&path).await?;
+    let secret = client.get_even_if_withdrawn(&path).await?;
     super::commands::report_secret(&unwrap_data(&secret, target.versioned()), field, output)
 }
 
@@ -235,7 +235,7 @@ pub async fn rollback(client: &VaultClient, target: &Target, version: u64) -> Re
     target.require_versions("rollback")?;
     let path = target.data();
 
-    let current = client.get(&path).await?;
+    let current = client.get_even_if_withdrawn(&path).await?;
     let cas = current["data"]["metadata"]["version"]
         .as_u64()
         .ok_or_else(|| {
@@ -244,7 +244,9 @@ pub async fn rollback(client: &VaultClient, target: &Target, version: u64) -> Re
             ))
         })?;
 
-    let wanted = client.get(&format!("{path}?version={version}")).await?;
+    let wanted = client
+        .get_even_if_withdrawn(&format!("{path}?version={version}"))
+        .await?;
     let metadata = &wanted["data"]["metadata"];
 
     if metadata["destroyed"].as_bool().unwrap_or(false) {

@@ -43,6 +43,19 @@ jobs:
     - name: Error discards
       run: ./scripts/check-error-discards.sh
 
+    # The integration tests drive the built binary against a throwaway dev
+    # server, so the runner needs the official one. Without it they fail rather
+    # than skip, which is the point: a suite that quietly does not exercise the
+    # server reads exactly like one that passed.
+    - name: Install Vault CLI
+      run: |
+        set -euo pipefail
+        version=$(curl -fsSL https://api.github.com/repos/hashicorp/vault/releases/latest | jq -r .tag_name | tr -d v)
+        curl -fsSLo vault.zip "https://releases.hashicorp.com/vault/${version}/vault_${version}_linux_amd64.zip"
+        unzip -q vault.zip vault
+        sudo install -m0755 vault /usr/local/bin/vault
+        vault version
+
     - name: Test
       run: cargo test --release
 
