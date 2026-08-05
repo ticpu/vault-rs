@@ -201,6 +201,55 @@ impl EncryptionManager {
 #[cfg(test)]
 mod tests {
     use aes_gcm::{aead::Aead, Aes256Gcm, Key, KeyInit, Nonce};
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// `storage remove` decides whether an artifact holds a private key by
+    /// comparing this file's length against `EMPTY_PAYLOAD_LEN`, and it has to
+    /// decide that for artifacts it cannot decrypt. The assertion goes through
+    /// the real encryptor: a synthesized buffer of the expected length would
+    /// restate the assumption and survive exactly the change this exists to
+    /// catch — a version prefix, another AEAD or a different nonce width, any
+    /// of which would reclassify key-bearing artifacts as empty and let them
+    /// be deleted without the option that names the key.
+    #[tokio::test]
+    async fn an_empty_plaintext_encrypts_to_exactly_nonce_plus_tag() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/sys/mounts"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": { "secret/": { "type": "kv", "options": { "version": "2" } } }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/secret/data/vault-rs/encryption-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": { "data": { "key": "ab".repeat(32) } }
+            })))
+            .mount(&server)
+            .await;
+
+        let manager = super::EncryptionManager::with_client(
+            crate::vault::client::VaultClient::for_test(server.uri(), "test-token".to_string())
+                .expect("test client"),
+        );
+
+        let empty = manager
+            .encrypt_data(b"", "cert-test-empty")
+            .await
+            .expect("encrypting an empty plaintext");
+        assert_eq!(empty.len(), super::EMPTY_PAYLOAD_LEN);
+
+        // Any non-empty plaintext has to land above it, or the comparison has
+        // no side to fall on. One byte is the smallest case that must.
+        let keyed = manager
+            .encrypt_data(b"x", "cert-test-empty")
+            .await
+            .expect("encrypting a payload");
+        assert!(keyed.len() > super::EMPTY_PAYLOAD_LEN, "{}", keyed.len());
+    }
 
     /// Pins the stored ciphertext format against an independent AES-256-GCM
     /// implementation. The local store holds artifacts encrypted by earlier

@@ -98,7 +98,7 @@ async fn get_certificate_bundle_from_storage(
     client: &VaultClient,
     identifier: &str,
 ) -> Result<(Option<PemPrivateKey>, PemCertificate, PemCertificateChain)> {
-    let storage = LocalStorage::with_client(client.clone());
+    let storage = LocalStorage::with_client(client.clone())?;
 
     let cert_record = find_certificate_in_storage(&storage, identifier)
         .await?
@@ -123,7 +123,7 @@ async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) ->
     // find_certificate_in_storage/get_certificate_data_from_storage (not the
     // combined get_certificate_bundle_from_storage) so a decrypt failure or
     // corrupt index reports its own cause instead of "not found".
-    let storage = LocalStorage::with_client(client.clone());
+    let storage = LocalStorage::with_client(client.clone())?;
 
     let cert_record = find_certificate_in_storage(&storage, &request.identifier)
         .await?
@@ -310,7 +310,7 @@ async fn export_certificate_chain(
 
 /// Key export requires local storage lookup
 async fn export_key(client: &VaultClient, request: &ExportCertificateRequest) -> Result<()> {
-    let storage = LocalStorage::with_client(client.clone());
+    let storage = LocalStorage::with_client(client.clone())?;
 
     let cert_record = find_certificate_in_storage(&storage, &request.identifier)
         .await?

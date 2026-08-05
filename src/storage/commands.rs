@@ -226,3 +226,174 @@ async fn refusal(
     );
     report
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::test_support::*;
+    use std::fs;
+
+    fn request<'a>(cn: &'a str, serial: &'a str) -> RemoveRequest<'a> {
+        RemoveRequest {
+            cn,
+            pki_mount: None,
+            serial: Some(serial),
+            destroy_my_private_key: false,
+            destroy_my_unreadable_artifact: false,
+        }
+    }
+
+    /// Give the entry a key file long enough to read as key-bearing. Its
+    /// contents do not matter: the grading is on ciphertext length.
+    async fn give_it_a_key(storage: &LocalStorage, root: &std::path::Path, serial: &str) {
+        let payload = storage
+            .encrypt_for_test(b"a key", "cert-pki-leaf-client")
+            .await;
+        fs::write(
+            root.join("pki")
+                .join("leaf-client")
+                .join(serial)
+                .join("private_key.pem.enc"),
+            payload,
+        )
+        .expect("writing a key file");
+    }
+
+    /// Nothing unrecoverable is at stake, so nothing gates it — the PKI still
+    /// holds the certificate.
+    #[tokio::test]
+    async fn a_certificate_only_artifact_is_removed_without_an_option() {
+        let root = scratch("remove-certonly");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root);
+        write_entry(&storage, "leaf-client", "aa01", "").await;
+
+        remove(&storage, request("leaf-client", "aa01"))
+            .await
+            .expect("removing");
+        assert!(!root.join("pki").join("leaf-client").join("aa01").exists());
+        // The emptied CN and mount directories go with it, or the walk keeps
+        // descending into shells.
+        assert!(!root.join("pki").exists());
+    }
+
+    #[tokio::test]
+    async fn a_key_bearing_artifact_needs_the_option_that_names_the_key() {
+        let root = scratch("remove-keyed");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root);
+        write_entry(&storage, "leaf-client", "aa01", "").await;
+        give_it_a_key(&storage, &root, "aa01").await;
+
+        let refused = remove(&storage, request("leaf-client", "aa01"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("--destroy-my-private-key"), "{refused}");
+        assert!(
+            !refused.contains("--destroy-my-unreadable-artifact"),
+            "a readable artifact must not demand the unreadable option: {refused}"
+        );
+        assert!(
+            root.join("pki").join("leaf-client").join("aa01").exists(),
+            "a refusal must destroy nothing"
+        );
+
+        remove(
+            &storage,
+            RemoveRequest {
+                destroy_my_private_key: true,
+                ..request("leaf-client", "aa01")
+            },
+        )
+        .await
+        .expect("removing with the option");
+        assert!(!root.join("pki").join("leaf-client").join("aa01").exists());
+    }
+
+    /// Both hazards are real, so both options are required: gating this behind
+    /// the unreadable one alone would destroy a private key without saying so.
+    #[tokio::test]
+    async fn an_unreadable_key_bearing_artifact_needs_both_options() {
+        let root = scratch("remove-both");
+        let sealing = stub_vault("sealing-cluster", &"ab".repeat(32)).await;
+        let sealed = store(&sealing, &root);
+        write_entry(&sealed, "leaf-client", "aa01", "").await;
+        give_it_a_key(&sealed, &root, "aa01").await;
+
+        // A different cluster with a different master key: intact, unreadable.
+        let other = stub_vault("other-cluster", &"cd".repeat(32)).await;
+        let storage = store(&other, &root);
+
+        let refused = remove(&storage, request("leaf-client", "aa01"))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("--destroy-my-private-key"), "{refused}");
+        assert!(
+            refused.contains("--destroy-my-unreadable-artifact"),
+            "{refused}"
+        );
+        // The refusal has to carry the way back, not just the way to delete.
+        assert!(refused.contains("sealing-cluster"), "{refused}");
+        assert!(refused.contains("kv rollback"), "{refused}");
+
+        // One option is not enough while two hazards apply.
+        let still_refused = remove(
+            &storage,
+            RemoveRequest {
+                destroy_my_unreadable_artifact: true,
+                ..request("leaf-client", "aa01")
+            },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            still_refused.contains("--destroy-my-private-key"),
+            "{still_refused}"
+        );
+        assert!(root.join("pki").join("leaf-client").join("aa01").exists());
+
+        remove(
+            &storage,
+            RemoveRequest {
+                destroy_my_private_key: true,
+                destroy_my_unreadable_artifact: true,
+                ..request("leaf-client", "aa01")
+            },
+        )
+        .await
+        .expect("removing with both options");
+        assert!(!root.join("pki").join("leaf-client").join("aa01").exists());
+    }
+
+    /// `show` is the first thing run after a listing names an artifact, so it
+    /// reports one that will not decrypt instead of failing on it.
+    #[tokio::test]
+    async fn show_reports_an_unreadable_artifact_rather_than_failing() {
+        let root = scratch("show-unreadable");
+        let sealing = stub_vault("sealing-cluster", &"ab".repeat(32)).await;
+        write_entry(&store(&sealing, &root), "leaf-client", "aa01", "").await;
+
+        let other = stub_vault("other-cluster", &"cd".repeat(32)).await;
+        let storage = store(&other, &root);
+        let request = |allow_partial| ShowRequest {
+            cn: "leaf-client",
+            pki_mount: None,
+            serial: Some("aa01"),
+            allow_partial,
+        };
+        let output = OutputFormat::new(true, false);
+
+        let refused = show(&storage, request(false), &output)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("--allow-partial"), "{refused}");
+
+        show(&storage, request(true), &output)
+            .await
+            .expect("reporting what needs no key");
+    }
+}

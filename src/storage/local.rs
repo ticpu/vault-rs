@@ -29,19 +29,51 @@ pub struct CertificateData<'a> {
 pub struct LocalStorage {
     encryption_manager: EncryptionManager,
     client: crate::vault::client::VaultClient,
+    /// Where the artifact directories live. Held rather than looked up per
+    /// call so every path this builds comes from one place.
+    secrets_root: PathBuf,
 }
 
 impl LocalStorage {
     pub async fn new() -> Result<Self> {
         let client = crate::vault::client::VaultClient::new().await?;
-        Ok(Self::with_client(client))
+        Self::with_client(client)
     }
 
-    pub fn with_client(client: crate::vault::client::VaultClient) -> Self {
+    pub fn with_client(client: crate::vault::client::VaultClient) -> Result<Self> {
+        Ok(Self::rooted_at(client, VaultCliPaths::secrets_dir()?))
+    }
+
+    fn rooted_at(client: crate::vault::client::VaultClient, secrets_root: PathBuf) -> Self {
         Self {
             encryption_manager: EncryptionManager::with_client(client.clone()),
             client,
+            secrets_root,
         }
+    }
+
+    /// A store over a scratch tree, for tests that stand up a stub Vault.
+    #[cfg(test)]
+    pub fn for_test(client: crate::vault::client::VaultClient, secrets_root: PathBuf) -> Self {
+        Self::rooted_at(client, secrets_root)
+    }
+
+    /// Seal a payload the way this store would, for tests that plant a file
+    /// directly rather than going through an issuance.
+    #[cfg(test)]
+    pub async fn encrypt_for_test(&self, plaintext: &[u8], context: &str) -> Vec<u8> {
+        self.encryption_manager
+            .encrypt_data(plaintext, context)
+            .await
+            .expect("encrypting")
+    }
+
+    fn cert_dir(&self, pki_mount: &str, cn: &str, serial: &str) -> PathBuf {
+        self.cn_dir(pki_mount, cn).join(serial)
+    }
+
+    fn cn_dir(&self, pki_mount: &str, cn: &str) -> PathBuf {
+        self.secrets_root.join(pki_mount).join(cn)
     }
 
     /// The key an artifact directory's files are encrypted under.
@@ -51,8 +83,7 @@ impl LocalStorage {
 
     /// Store certificate data encrypted locally
     pub async fn store_certificate(&self, cert_data: CertificateData<'_>) -> Result<()> {
-        let cert_dir =
-            VaultCliPaths::cert_storage_dir(cert_data.pki_mount, cert_data.cn, cert_data.serial)?;
+        let cert_dir = self.cert_dir(cert_data.pki_mount, cert_data.cn, cert_data.serial);
         VaultCliPaths::ensure_dir_exists(&cert_dir)?;
 
         let context = Self::context(cert_data.pki_mount, cert_data.cn);
@@ -230,7 +261,7 @@ impl LocalStorage {
     /// listing and an unreadable one are different answers.
     pub async fn scan(&self) -> Result<Partial<CertificateStorage>> {
         let mut result = Partial::new();
-        let secrets_dir = VaultCliPaths::secrets_dir()?;
+        let secrets_dir = &self.secrets_root;
         if !secrets_dir.exists() {
             return Ok(result);
         }
@@ -240,7 +271,7 @@ impl LocalStorage {
         // are not reachable through the records.
         let mut seals = Vec::new();
 
-        for mount_entry in read_subdirs(&secrets_dir)? {
+        for mount_entry in read_subdirs(secrets_dir)? {
             let pki_mount = mount_entry.file_name().to_string_lossy().to_string();
             for cn_entry in read_subdirs(&mount_entry.path())? {
                 let cn = cn_entry.file_name().to_string_lossy().to_string();
@@ -367,9 +398,9 @@ impl LocalStorage {
     /// would point at one artifact and delete another.
     pub async fn resolve_entry(&self, target: &EntryTarget<'_>) -> Result<StoredEntry> {
         let mut candidates = Vec::new();
-        let secrets_dir = VaultCliPaths::secrets_dir()?;
+        let secrets_dir = &self.secrets_root;
         if secrets_dir.exists() {
-            for mount_entry in read_subdirs(&secrets_dir)? {
+            for mount_entry in read_subdirs(secrets_dir)? {
                 let pki_mount = mount_entry.file_name().to_string_lossy().to_string();
                 if target.pki_mount.is_some_and(|m| m != pki_mount) {
                     continue;
@@ -439,7 +470,7 @@ impl LocalStorage {
         cn: &str,
         serial: Option<&str>,
     ) -> Result<(String, String, String, StorageCertificateMetadata)> {
-        let cn_dir = VaultCliPaths::cert_cn_dir(pki_mount, cn)?;
+        let cn_dir = self.cn_dir(pki_mount, cn);
         if !cn_dir.exists() {
             return Err(VaultCliError::CertNotFound(format!(
                 "Certificate not found: {pki_mount}/{cn}"
@@ -447,7 +478,7 @@ impl LocalStorage {
         }
 
         let cert_dir = match serial {
-            Some(serial) => VaultCliPaths::cert_storage_dir(pki_mount, cn, serial)?,
+            Some(serial) => self.cert_dir(pki_mount, cn, serial),
             None => self.latest_serial_dir(&cn_dir, pki_mount, cn).await?,
         };
 
@@ -602,6 +633,7 @@ impl EntryTarget<'_> {
 }
 
 /// One resolved artifact directory, whether or not anything in it decrypts.
+#[derive(Debug)]
 pub struct StoredEntry {
     pub pki_mount: String,
     pub cn: String,
@@ -673,4 +705,291 @@ fn read_subdirs(dir: &Path) -> Result<Vec<fs::DirEntry>> {
         }
     }
     Ok(dirs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::test_support::*;
+    use serde_json::json;
+
+    /// The whole point: an artifact on disk is listed, without any index
+    /// having been written or consulted.
+    #[tokio::test]
+    async fn an_artifact_on_disk_is_listed() {
+        let root = scratch("listed");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root);
+        write_entry(&storage, "leaf-client", "aa01", "").await;
+
+        let found = storage.scan().await.expect("scan").resolve(false).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].meta.cn, "leaf-client");
+        assert_eq!(found[0].meta.role, "client");
+    }
+
+    /// Derived fields come off the certificate, so a stored expiry written by
+    /// an older binary does not survive into the answer.
+    #[tokio::test]
+    async fn a_stale_stored_expiry_is_overridden_by_the_certificate() {
+        let root = scratch("stale-expiry");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root);
+        write_entry(&storage, "leaf-client", "aa01", "").await;
+
+        // What an older binary wrote: the whole record, with a fabricated
+        // expiry and the derived fields nested under `meta`.
+        let stale = json!({
+            "pki_mount": "pki",
+            "crypto": "ec",
+            "created": "2020-01-01T00:00:00Z",
+            "storage_path": "/gone",
+            "vault_status": "Active",
+            "last_vault_check": "2020-01-01T00:00:00Z",
+            "file_info": {},
+            "meta": {
+                "serial": "wrong",
+                "cn": "wrong",
+                "role": "client",
+                "crypto": "ec",
+                "created": "2020-01-01T00:00:00Z",
+                "expires": "2021-01-01T00:00:00Z",
+                "status": "Active",
+                "sans": [],
+            }
+        });
+        let entry_dir = root.join("pki").join("leaf-client").join("aa01");
+        storage
+            .encryption_manager
+            .encrypt_yaml_to_file(
+                &stale,
+                "cert-pki-leaf-client",
+                entry_dir.join("metadata.yaml.enc"),
+            )
+            .await
+            .expect("rewriting metadata");
+
+        let found = storage.scan().await.expect("scan").resolve(false).unwrap();
+        assert_eq!(found[0].meta.cn, "leaf-client", "cn came from the record");
+        assert_eq!(
+            found[0].meta.expires.format("%Y").to_string(),
+            "2126",
+            "expiry came from the record, not the certificate"
+        );
+    }
+
+    /// `read_dir` order is arbitrary, so the key has to be total: these two
+    /// share a notAfter and differ only below it.
+    #[tokio::test]
+    async fn artifacts_sharing_an_expiry_come_back_in_a_stable_order() {
+        let root = scratch("order");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root);
+        for serial in ["cc03", "aa01", "bb02"] {
+            write_entry(&storage, "leaf-client", serial, "").await;
+        }
+
+        let serials: Vec<_> = storage
+            .scan()
+            .await
+            .expect("scan")
+            .resolve(false)
+            .unwrap()
+            .iter()
+            .map(|c| c.meta.serial.clone())
+            .collect();
+        // Every record here carries the fixture's serial, so ordering falls to
+        // the directory name — which is what the total key exists to pin.
+        assert_eq!(serials.len(), 3);
+        let mut sorted = serials.clone();
+        sorted.sort();
+        assert_eq!(serials, sorted);
+    }
+
+    /// An artifact missing a required file is a corruption signal, not a
+    /// silent absence: refused by default, listed with the flag.
+    #[tokio::test]
+    async fn an_incomplete_directory_is_refused_and_then_allowed() {
+        let root = scratch("incomplete");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root);
+        write_entry(&storage, "leaf-client", "aa01", "").await;
+        write_entry(&storage, "leaf-client", "bb02", "").await;
+        fs::remove_file(
+            root.join("pki")
+                .join("leaf-client")
+                .join("bb02")
+                .join("certificate.pem.enc"),
+        )
+        .expect("removing the certificate");
+
+        let refused = storage
+            .scan()
+            .await
+            .expect("scan")
+            .resolve(false)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("bb02"), "{refused}");
+        assert!(
+            refused.contains("incomplete artifact directory"),
+            "{refused}"
+        );
+
+        let allowed = storage.scan().await.expect("scan").resolve(true).unwrap();
+        assert_eq!(allowed.len(), 1);
+    }
+
+    /// An artifact sealed by another cluster leads with that, and still
+    /// carries the key-history route: the identifier names the cluster, not
+    /// the material at the key's path.
+    #[tokio::test]
+    async fn a_foreign_cluster_leads_but_does_not_suppress_the_key_route() {
+        let root = scratch("foreign");
+        let sealing = stub_vault("sealing-cluster", &"ab".repeat(32)).await;
+        write_entry(&store(&sealing, &root), "leaf-client", "aa01", "").await;
+
+        // Same store, a different cluster and a different master key.
+        let other = stub_vault("other-cluster", &"cd".repeat(32)).await;
+        let refused = store(&other, &root)
+            .scan()
+            .await
+            .expect("scan")
+            .resolve(false)
+            .unwrap_err()
+            .to_string();
+
+        assert!(refused.contains("sealing-cluster"), "{refused}");
+        assert!(refused.contains("other-cluster"), "{refused}");
+        assert!(refused.contains("kv rollback"), "{refused}");
+        assert!(refused.contains("storage remove"), "{refused}");
+    }
+
+    /// Without a recorded cluster there is no mismatch to report, only the
+    /// key history: absence means unrecorded, never "sealed elsewhere".
+    #[tokio::test]
+    async fn an_unrecorded_cluster_is_not_a_mismatch() {
+        let root = scratch("unrecorded");
+        let sealing = stub_vault("sealing-cluster", &"ab".repeat(32)).await;
+        write_entry(&store(&sealing, &root), "leaf-client", "aa01", "").await;
+        fs::remove_file(
+            root.join("pki")
+                .join("leaf-client")
+                .join("aa01")
+                .join(SEALED_BY_FILE),
+        )
+        .expect("removing the marker");
+
+        let other = stub_vault("other-cluster", &"cd".repeat(32)).await;
+        let refused = store(&other, &root)
+            .scan()
+            .await
+            .expect("scan")
+            .resolve(false)
+            .unwrap_err()
+            .to_string();
+
+        assert!(!refused.contains("sealed by a different"), "{refused}");
+        assert!(refused.contains("kv rollback"), "{refused}");
+    }
+
+    /// The key hazard is graded on ciphertext length, so it holds for an
+    /// artifact that will not decrypt.
+    #[tokio::test]
+    async fn key_material_is_graded_by_length_not_presence() {
+        let root = scratch("key-material");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root);
+        write_entry(&storage, "leaf-client", "aa01", "").await;
+
+        let target = EntryTarget {
+            cn: "leaf-client",
+            pki_mount: None,
+            serial: Some("aa01"),
+        };
+        let key_file = root
+            .join("pki")
+            .join("leaf-client")
+            .join("aa01")
+            .join("private_key.pem.enc");
+        macro_rules! grade {
+            () => {
+                storage
+                    .resolve_entry(&target)
+                    .await
+                    .expect("resolve")
+                    .key_material()
+                    .expect("grading")
+            };
+        }
+
+        // No key file at all: a CSR-signed artifact keeps its key elsewhere.
+        assert!(!key_file.exists());
+        assert!(grade!() == KeyMaterial::None);
+
+        // An older entry wrote an empty key file rather than omitting it, so
+        // it has to read the same as an absent one.
+        let empty = storage
+            .encryption_manager
+            .encrypt_data(b"", "cert-pki-leaf-client")
+            .await
+            .expect("encrypting nothing");
+        fs::write(&key_file, &empty).expect("writing the empty key file");
+        assert_eq!(empty.len(), EMPTY_PAYLOAD_LEN);
+        assert!(grade!() == KeyMaterial::None);
+
+        // Any non-empty plaintext reads as key-bearing: the grading is on
+        // length, never on what the plaintext turns out to say.
+        let payload = storage
+            .encryption_manager
+            .encrypt_data(b"x", "cert-pki-leaf-client")
+            .await
+            .expect("encrypting a payload");
+        fs::write(&key_file, &payload).expect("writing a key file");
+        assert!(grade!() == KeyMaterial::Present);
+
+        // Shorter than a nonce and a tag holds nothing that could decrypt.
+        fs::write(&key_file, b"short").expect("writing a truncated key file");
+        assert!(grade!() == KeyMaterial::Malformed);
+    }
+
+    /// Ambiguity is an error, and a name matching nothing is too — that is
+    /// what makes an ungated removal safe.
+    #[tokio::test]
+    async fn resolution_is_unambiguous_or_an_error() {
+        let root = scratch("resolve");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root);
+        write_entry(&storage, "leaf-client", "aa01", "").await;
+        write_entry(&storage, "leaf-client", "bb02", "").await;
+
+        let ambiguous = storage
+            .resolve_entry(&EntryTarget {
+                cn: "leaf-client",
+                pki_mount: None,
+                serial: None,
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            ambiguous.contains("more than one entry matches"),
+            "{ambiguous}"
+        );
+        assert!(
+            ambiguous.contains("aa01") && ambiguous.contains("bb02"),
+            "{ambiguous}"
+        );
+
+        let missing = storage
+            .resolve_entry(&EntryTarget {
+                cn: "mistyped",
+                pki_mount: None,
+                serial: None,
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(missing.contains("no stored artifact matches"), "{missing}");
+    }
 }
