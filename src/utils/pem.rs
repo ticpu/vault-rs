@@ -275,49 +275,105 @@ fn normalize_pem(pem_data: &str) -> String {
 /// and the caller had no way to tell that from a chain of that length.
 pub fn parse_certificate_chain(pem_data: &str) -> Result<Vec<PemCertificate>> {
     let mut certificates = Vec::new();
-    let mut current_cert = String::new();
-    let mut in_cert = false;
 
-    for line in pem_data.lines() {
-        if line.starts_with("-----BEGIN CERTIFICATE-----") {
-            if in_cert {
-                return Err(VaultCliError::CertParsing(format!(
-                    "PEM block {} begins before the previous one ends",
-                    certificates.len() + 1
-                )));
-            }
-            in_cert = true;
-            current_cert.clear();
-            current_cert.push_str(line);
-            current_cert.push('\n');
-        } else if line.starts_with("-----END CERTIFICATE-----") {
-            current_cert.push_str(line);
-            current_cert.push('\n');
-
-            parse_x509_pem(current_cert.as_bytes()).map_err(|e| {
-                VaultCliError::CertParsing(format!(
-                    "PEM block {} does not parse: {e}",
-                    certificates.len() + 1
-                ))
-            })?;
-
-            certificates.push(PemCertificate::new(current_cert.clone()));
-            current_cert.clear();
-            in_cert = false;
-        } else if in_cert {
-            current_cert.push_str(line);
-            current_cert.push('\n');
+    for block in pem_blocks(pem_data)? {
+        if block.label != CERTIFICATE_LABEL {
+            continue;
         }
-    }
 
-    if in_cert {
-        return Err(VaultCliError::CertParsing(format!(
-            "PEM block {} has no END CERTIFICATE line",
-            certificates.len() + 1
-        )));
+        parse_x509_pem(block.text.as_bytes()).map_err(|e| {
+            VaultCliError::CertParsing(format!(
+                "PEM block {} does not parse: {e}",
+                certificates.len() + 1
+            ))
+        })?;
+        certificates.push(PemCertificate::new(block.text));
     }
 
     Ok(certificates)
+}
+
+pub const CERTIFICATE_LABEL: &str = "CERTIFICATE";
+
+/// One `-----BEGIN <label>-----` … `-----END <label>-----` block.
+#[derive(Debug, Clone)]
+pub struct PemBlock {
+    pub label: String,
+    /// The block itself, markers included, newline-terminated.
+    pub text: String,
+}
+
+/// Every labelled block in a PEM file, in the order they appear.
+///
+/// One scanner, because a second one written beside it for a different label
+/// would disagree with this one about the same file — the two already in this
+/// repository disagree on a BEGIN line with trailing characters. Blocks whose
+/// label the caller does not want are its business to skip: a file may
+/// legitimately hold a key, a chain and provenance together.
+pub fn pem_blocks(pem_data: &str) -> Result<Vec<PemBlock>> {
+    let mut blocks: Vec<PemBlock> = Vec::new();
+    let mut open: Option<(String, String)> = None;
+
+    for line in pem_data.lines() {
+        let trimmed = line.trim();
+
+        if let Some(label) = trimmed
+            .strip_prefix("-----BEGIN ")
+            .and_then(|rest| rest.strip_suffix("-----"))
+        {
+            if let Some((open_label, _)) = open {
+                return Err(VaultCliError::CertParsing(format!(
+                    "PEM block {} begins before the {open_label} block ends",
+                    blocks.len() + 1
+                )));
+            }
+            open = Some((label.to_string(), format!("{trimmed}\n")));
+            continue;
+        }
+
+        if let Some(label) = trimmed
+            .strip_prefix("-----END ")
+            .and_then(|rest| rest.strip_suffix("-----"))
+        {
+            // A stray END with nothing open is a malformed file, not a block:
+            // treating it as one fed a single line to the certificate parser
+            // and reported it as unparseable base64.
+            let Some((open_label, mut text)) = open.take() else {
+                return Err(VaultCliError::CertParsing(format!(
+                    "PEM block {} ends with no matching BEGIN {label}",
+                    blocks.len() + 1
+                )));
+            };
+            if open_label != label {
+                return Err(VaultCliError::CertParsing(format!(
+                    "PEM block {} opens as {open_label} and closes as {label}",
+                    blocks.len() + 1
+                )));
+            }
+            text.push_str(trimmed);
+            text.push('\n');
+            blocks.push(PemBlock {
+                label: open_label,
+                text,
+            });
+            continue;
+        }
+
+        // Anything outside a block is explanatory text, which the format
+        // permits and every reader here already skips.
+        if let Some((_, ref mut text)) = open {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+
+    match open {
+        Some((label, _)) => Err(VaultCliError::CertParsing(format!(
+            "PEM block {} has no END {label} line",
+            blocks.len() + 1
+        ))),
+        None => Ok(blocks),
+    }
 }
 
 #[cfg(test)]
@@ -420,5 +476,50 @@ mod tests {
 
         let filtered = no_root_chain.without_root().unwrap();
         assert_eq!(filtered.certificates().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod block_tests {
+    use super::*;
+
+    #[test]
+    fn blocks_keep_their_labels_and_order() {
+        let file = "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n\
+                    -----BEGIN VAULT-RS PROVENANCE-----\nBB==\n-----END VAULT-RS PROVENANCE-----\n";
+        let blocks = pem_blocks(file).expect("scans");
+
+        let labels: Vec<_> = blocks.iter().map(|b| b.label.as_str()).collect();
+        assert_eq!(labels, ["CERTIFICATE", "VAULT-RS PROVENANCE"]);
+        assert!(blocks[0].text.ends_with("-----END CERTIFICATE-----\n"));
+    }
+
+    /// Explanatory text before a block is permitted by the format, and every
+    /// reader here already skips it — including `--text` output, which puts an
+    /// openssl dump exactly there.
+    #[test]
+    fn text_outside_a_block_is_ignored() {
+        let file = "Certificate:\n    Data:\n-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n";
+        let blocks = pem_blocks(file).expect("scans");
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].text.starts_with("-----BEGIN"));
+    }
+
+    /// Previously fed one line to the certificate parser and reported it as
+    /// unparseable base64, which named neither the real problem nor the file.
+    #[test]
+    fn an_end_with_no_begin_names_the_real_problem() {
+        let err = pem_blocks("-----END CERTIFICATE-----\n")
+            .expect_err("a stray END is malformed")
+            .to_string();
+        assert!(err.contains("no matching BEGIN"), "{err}");
+    }
+
+    #[test]
+    fn a_block_closing_under_another_label_is_an_error() {
+        let err = pem_blocks("-----BEGIN CERTIFICATE-----\nAA==\n-----END PRIVATE KEY-----\n")
+            .expect_err("labels must match")
+            .to_string();
+        assert!(err.contains("closes as"), "{err}");
     }
 }
