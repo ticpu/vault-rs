@@ -46,6 +46,7 @@ vault-rs storage list                          # refuses if anything is unreadab
 vault-rs storage list --allow-partial          # list what could be read; the rest named on stderr
 vault-rs storage show example.com              # one artifact, including files and sealing cluster
 vault-rs storage show example.com --serial 3a1f…   # when one name is held more than once
+vault-rs storage import ./example.com.pem      # file an exported bundle back in
 ```
 
 An artifact that will not decrypt is a corruption signal, not a row: `storage list` names it on
@@ -69,22 +70,28 @@ candidates listed, never resolved to the first match.
 
 An artifact is encrypted under a key derived from the master key of the Vault cluster that sealed
 it, so copying `secrets/` to a host pointed at a different cluster produces a directory nothing can
-read. Move the certificate and key instead, then re-import:
+read. Export it and import it instead:
 
 ```bash
-# On the source host, while pointed at the cluster that sealed it
-vault-rs cert export example.com --format bundle > example.com.bundle.pem   # key + leaf + chain
-vault-rs cert export example.com --format p12 --output ./                   # or PKCS#12
+# On the source host, pointed at the cluster that sealed it
+vault-rs cert export example.com --format bundle --with-provenance --output ./   # key + leaf + chain
+vault-rs cert export example.com --format chain --with-provenance --output ./    # keyless artifact
 
-# Check what you are about to lose: the issuing role lives only in the store
-vault-rs storage show example.com
+# On the target host, pointed at wherever it should live now
+vault-rs storage import ./example.com.pem
 ```
 
-The store holds no import verb, and deliberately: an artifact is written by the issuance that
-produced it, so the way back in is to re-issue against the target cluster, or to keep the exported
-bundle as the artifact of record and skip the local store entirely (`--no-store` at issuance). If
-you only need the material off this machine, the bundle above is the complete artifact — the local
-copy adds the issuing role and nothing else the PKI cannot tell you.
+`--with-provenance` appends a `VAULT-RS PROVENANCE` block after the certificates, holding the two
+things no certificate records: the **mount** and the **issuing role**. Without it the file still
+imports, but you must name the mount yourself and the role is recorded as absent — the PKI never
+held it, so nothing can recover it later. openssl and anything else reading the file ignore the
+block; it is refused on `der`, `p12` and `key`, which have nowhere to put it, rather than silently
+dropped.
+
+Import takes everything else off the certificate itself, seals the artifact with the cluster you are
+now addressing, and reports where each field came from. It refuses onto an entry that already
+exists — overwriting could destroy a private key that exists nowhere else, so `storage remove` is a
+separate, explicitly named step.
 
 To read an old artifact again rather than move it, point back at the cluster that sealed it; the
 address is recorded next to the artifact and `storage show` prints it.
