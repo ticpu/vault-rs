@@ -20,8 +20,11 @@ url='https://github.com/ticpu/vault-rs'
 license=('GPL-3.0-only')
 depends=('gcc-libs' 'glibc')
 makedepends=('cargo' 'cmake' 'git')
+# Optional rather than a dependency: the verbs an operator reaches for daily
+# are answered over the API, and the binary is needed only for the ones this
+# tool does not model.
 optdepends=(
-	'vault: passthrough subcommands (read, write, kv, policy, ...)'
+	'vault: forwarded subcommands (policy, operator, ssh, transit, ...) and the vault-rs vault escape hatch'
 	'openssl: cert export --text and cert show --text'
 )
 # Cargo applies its own release profile; makepkg's LTO flags fight it.

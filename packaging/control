@@ -5,14 +5,18 @@ Priority: optional
 Architecture: amd64
 Depends: replaced-by-makefile
 Recommends: openssl
+Suggests: vault
 Maintainer: Jérôme Poulin <jeromepoulin@gmail.com>
 Homepage: https://github.com/ticpu/vault-rs
 Description: PKI certificate management for HashiCorp Vault
  Issues, signs, inspects, verifies and exports certificates from a Vault PKI
- mount, and forwards every verb it does not model to the vault CLI with the
- server address and token already resolved. Output is one record per line for
- grep and awk, with an exit code that distinguishes an expiring certificate
- from a failure so cron and monitoring can act on it. Certificates and keys it
- issues are cached locally under a key held in the operator's own KV mount.
- Requires the vault CLI for passthrough subcommands, and openssl for
- --text output.
+ mount. Reads and writes paths, the KV engine, seal status and this session's
+ token over the API itself, and forwards the verbs it does not model to the
+ vault CLI with the server address and token already resolved. Output is one
+ record per line for grep and awk, with an exit code that distinguishes an
+ expiring certificate from a failure so cron and monitoring can act on it.
+ Certificates and keys it issues are cached locally under a key held in the
+ operator's own KV mount.
+ .
+ The vault CLI is needed only for the forwarded verbs, such as policy,
+ operator and ssh; openssl only for --text output.

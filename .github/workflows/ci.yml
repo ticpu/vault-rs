@@ -47,13 +47,17 @@ jobs:
     # server, so the runner needs the official one. Without it they fail rather
     # than skip, which is the point: a suite that quietly does not exercise the
     # server reads exactly like one that passed.
+    # From HashiCorp's own release index rather than the GitHub API, which is
+    # rate limited per IP and shared across hosted runners.
     - name: Install Vault CLI
       run: |
         set -euo pipefail
-        version=$(curl -fsSL https://api.github.com/repos/hashicorp/vault/releases/latest | jq -r .tag_name | tr -d v)
-        curl -fsSLo vault.zip "https://releases.hashicorp.com/vault/${version}/vault_${version}_linux_amd64.zip"
+        url=$(curl -fsSL https://api.releases.hashicorp.com/v1/releases/vault/latest \
+          | jq -er '.builds[] | select(.os == "linux" and .arch == "amd64") | .url')
+        curl -fsSLo vault.zip "$url"
         unzip -q vault.zip vault
         sudo install -m0755 vault /usr/local/bin/vault
+        rm -f vault.zip vault
         vault version
 
     - name: Test
