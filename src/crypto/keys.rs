@@ -9,6 +9,32 @@ use sha2::{Digest, Sha256};
 const DEFAULT_KV_MOUNT: &str = "secret";
 const KV_PATH: &str = "vault-rs/encryption-key";
 
+/// Where the master key lives: the mount discovered for it, and whether that
+/// mount keeps versions. Carrying the layout with the location is what stops
+/// every consumer reading it back out of the path's shape, which inverts a
+/// consequence of the layout into evidence for it.
+struct KeyLocation {
+    mount: String,
+    versioned: bool,
+}
+
+impl KeyLocation {
+    fn new(mount: &str, reported: Option<&str>) -> Self {
+        Self {
+            mount: mount.trim_end_matches('/').to_string(),
+            versioned: reported == Some("2"),
+        }
+    }
+
+    /// Where the value itself is addressed.
+    fn data_path(&self) -> String {
+        match self.versioned {
+            true => format!("{}/data/{KV_PATH}", self.mount),
+            false => format!("{}/{KV_PATH}", self.mount),
+        }
+    }
+}
+
 /// Whether the mount holding the master key would keep the version an
 /// overwrite replaces. This decides whether losing the local store is a
 /// rollback away or total, and the two must not read alike.
@@ -189,11 +215,12 @@ impl KeyManager {
             return Ok(());
         }
 
-        let kv_path = self.get_kv_path().await?;
+        let location = self.key_location().await?;
+        let kv_path = location.data_path();
         // Whether an overwrite can be undone is a property of the mount, not of
         // the flag: the same command is a rollback away from reversible on a
         // mount that retains versions and total on one that does not.
-        let retention = self.version_retention(&kv_path).await?;
+        let retention = self.version_retention(&location).await?;
 
         if !destroy_existing {
             return Err(VaultCliError::Storage(format!(
@@ -232,43 +259,29 @@ impl KeyManager {
     ///
     /// Unreadable metadata is not "probably fine": it is the case where the
     /// answer is unknown, and the caller refuses on it.
-    async fn version_retention(&self, kv_path: &str) -> Result<VersionRetention> {
-        let Some((mount, key)) = self.kv_location().await else {
-            return Err(VaultCliError::Storage(format!(
-                "Cannot determine the mount holding '{kv_path}', so cannot tell whether \
-                 overwriting the key there could be undone"
-            )));
-        };
-
-        let versioned = kv_path.contains("/data/");
-        retention_at(&self.client, &mount, versioned, &key).await
+    async fn version_retention(&self, location: &KeyLocation) -> Result<VersionRetention> {
+        retention_at(&self.client, &location.mount, location.versioned, KV_PATH).await
     }
 
-    /// The mount and key path as `vault-rs kv` would take them, for messages
-    /// that have to name a recovery command. Best effort: a failure here must
-    /// not replace the error it was being attached to.
-    async fn kv_location(&self) -> Option<(String, String)> {
+    /// Where the key lives, for messages that have to name a recovery command.
+    /// Best effort: a failure here must not replace the error it was being
+    /// attached to.
+    async fn kv_location(&self) -> Option<KeyLocation> {
         // discard-ok: best effort for a message; the caller either falls back to
         // generic wording or turns None into its own error
-        let kv_path = self.get_kv_path().await.ok()?;
-        match kv_path.split_once("/data/") {
-            Some((mount, key)) => Some((mount.to_string(), key.to_string())),
-            // discard-ok: a KV v1 path has no /data/ segment; split on the mount
-            None => kv_path
-                .split_once('/')
-                .map(|(mount, key)| (mount.to_string(), key.to_string())),
-        }
+        self.key_location().await.ok()
     }
 
     /// What an operator staring at an AEAD failure needs and does not have:
     /// the one likely cause, and the command that shows whether the previous
     /// key is still there.
     pub async fn recovery_hint(&self) -> String {
-        let Some((mount, key)) = self.kv_location().await else {
+        let Some(location) = self.kv_location().await else {
             return "The master key in Vault may not be the one this artifact was sealed with; \
                     check that key's version history."
                 .to_string();
         };
+        let (mount, key) = (&location.mount, KV_PATH);
 
         format!(
             "The master key in Vault is probably not the one this artifact was sealed with.\n\
@@ -287,50 +300,39 @@ impl KeyManager {
         key
     }
 
-    /// Find available KV mounts and return the first one found
-    async fn find_kv_mount(&self) -> Result<Option<(String, String)>> {
+    /// Which mount holds the master key, and what that mount says about its own
+    /// layout.
+    ///
+    /// The key's mount is chosen rather than given, so this is the one place
+    /// that still reads the whole listing — a probe addressed at a path cannot
+    /// answer which mount ought to hold it. The listing reports each mount's
+    /// layout alongside, so the answer comes from the same request and travels
+    /// with the location instead of being read back off a path later.
+    async fn key_location(&self) -> Result<KeyLocation> {
         let mounts = self.client.list_mounts().await?;
 
-        // Look for KV mounts
-        for (mount_path, mount_info) in &mounts.data {
-            if mount_info.is_kv() {
-                let clean_mount = mount_path.trim_end_matches('/');
-                let version = mount_info.get_version().unwrap_or("1");
-
-                let path = if version == "2" {
-                    format!("{clean_mount}/data/{KV_PATH}")
-                } else {
-                    format!("{clean_mount}/{KV_PATH}")
-                };
-
-                return Ok(Some((clean_mount.to_string(), path)));
+        if let Some(preferred) = mounts.data.get(&format!("{DEFAULT_KV_MOUNT}/")) {
+            if preferred.is_kv() {
+                return Ok(KeyLocation::new(DEFAULT_KV_MOUNT, preferred.get_version()));
             }
         }
 
-        Ok(None)
-    }
+        // Lowest path wins, and the ordering is the point rather than the
+        // choice: the mount listing is unordered, so picking whichever came
+        // back first sends one run to a mount the next run does not look in,
+        // where finding no key reads as an empty store and mints a second one.
+        // Everything sealed under the first is then unreadable.
+        let mut candidates: Vec<_> = mounts
+            .data
+            .iter()
+            .filter(|(_, mount_info)| mount_info.is_kv())
+            .collect();
+        candidates.sort_by_key(|(a, _)| *a);
 
-    /// Get the appropriate KV path for reading/writing
-    async fn get_kv_path(&self) -> Result<String> {
-        // First check if default "secret" mount exists
-        let mounts = self.client.list_mounts().await?;
-
-        if let Some(secret_mount) = mounts.data.get(&format!("{DEFAULT_KV_MOUNT}/")) {
-            if secret_mount.is_kv() {
-                let version = secret_mount.get_version().unwrap_or("1");
-                if version == "2" {
-                    // KV v2 path
-                    return Ok(format!("{DEFAULT_KV_MOUNT}/data/{KV_PATH}"));
-                }
-                // KV v1 path
-                return Ok(format!("{DEFAULT_KV_MOUNT}/{KV_PATH}"));
-            }
-        }
-
-        // If no "secret" mount, look for any KV mount
-        if let Some((mount_name, path)) = self.find_kv_mount().await? {
-            tracing::info!("Using KV mount '{}' for encryption key storage", mount_name);
-            return Ok(path);
+        if let Some((mount_path, mount_info)) = candidates.first() {
+            let mount = mount_path.trim_end_matches('/');
+            tracing::info!("Using KV mount '{mount}' for encryption key storage");
+            return Ok(KeyLocation::new(mount, mount_info.get_version()));
         }
 
         Err(VaultCliError::Storage(
@@ -344,7 +346,8 @@ impl KeyManager {
     /// malformed: the caller mints on `None`, so anything that cannot be read
     /// with certainty has to stop it rather than look like an empty store.
     async fn retrieve_key_from_vault(&self) -> Result<Option<[u8; 32]>> {
-        let kv_path = self.get_kv_path().await?;
+        let location = self.key_location().await?;
+        let kv_path = location.data_path();
 
         let data = match self.client.get(&kv_path).await {
             Ok(data) => data,
@@ -355,12 +358,10 @@ impl KeyManager {
         };
 
         // Handle both KV v1 and v2 response formats
-        let key_hex = if kv_path.contains("/data/") {
-            // KV v2 format: data.data.key
-            data["data"]["data"]["key"].as_str()
-        } else {
-            // KV v1 format: data.key
-            data["data"]["key"].as_str()
+        // The versioned layout nests the value one level deeper.
+        let key_hex = match location.versioned {
+            true => data["data"]["data"]["key"].as_str(),
+            false => data["data"]["key"].as_str(),
         }
         .ok_or_else(|| {
             VaultCliError::Storage(format!(
@@ -388,7 +389,8 @@ impl KeyManager {
 
     /// Store key in Vault KV store
     async fn store_key_in_vault(&self, key: &[u8; 32]) -> Result<()> {
-        let kv_path = self.get_kv_path().await?;
+        let location = self.key_location().await?;
+        let kv_path = location.data_path();
         let key_hex = hex::encode(key);
 
         let key_data = json!({
@@ -397,13 +399,9 @@ impl KeyManager {
             "description": "vault-rs master encryption key"
         });
 
-        // For KV v2, we need to wrap in "data", for KV v1 we don't
-        let payload = if kv_path.contains("/data/") {
-            // KV v2 format
-            json!({ "data": key_data })
-        } else {
-            // KV v1 format
-            key_data
+        let payload = match location.versioned {
+            true => json!({ "data": key_data }),
+            false => key_data,
         };
 
         self.client.post(&kv_path, payload).await?;
@@ -458,7 +456,7 @@ mod tests {
         )
     }
 
-    /// `sys/mounts` shaped so `get_kv_path` resolves to the `secret` mount.
+    /// `sys/mounts` shaped so the key resolves to the `secret` mount.
     async fn mount_kv(server: &MockServer, version: &str) {
         let body = json!({
             "data": { "secret/": { "type": "kv", "options": { "version": version } } }
@@ -797,5 +795,36 @@ mod tests {
         assert!(notice.contains("master key"), "{notice}");
         assert!(notice.contains("Could not confirm"), "{notice}");
         assert!(notice.contains("403"), "{notice}");
+    }
+
+    /// The listing is unordered, so a fallback that took whichever mount came
+    /// back first would send one run to a mount the next run does not look in
+    /// — minting a second key and stranding everything sealed under the first.
+    #[tokio::test]
+    async fn the_fallback_mount_is_the_same_one_every_time() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/sys/mounts"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": {
+                    "zulu/": { "type": "kv", "options": { "version": "2" } },
+                    "alpha/": { "type": "kv", "options": { "version": "2" } },
+                    "mike/": { "type": "kv", "options": { "version": "2" } }
+                }
+            })))
+            .mount(&server)
+            .await;
+        respond_to_read(
+            &server,
+            "/v1/alpha/data/vault-rs/encryption-key",
+            stored_key(&"ab".repeat(32), true),
+        )
+        .await;
+        expect_writes(&server, "/v1/alpha/data/vault-rs/encryption-key", 0).await;
+
+        for _ in 0..8 {
+            let key = manager(&server).get_master_key().await.expect("read");
+            assert_eq!(key, [0xab; 32], "a different mount was chosen");
+        }
     }
 }
