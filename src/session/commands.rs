@@ -1,4 +1,4 @@
-use crate::cli::args::AuthCommands;
+use crate::cli::args::SessionCommands;
 use crate::utils::dns_discovery::get_vault_addr;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
@@ -7,15 +7,17 @@ use crate::vault::{
     client::VaultClient,
 };
 
-pub async fn handle_auth_commands(command: AuthCommands, output: &OutputFormat) -> Result<()> {
+pub async fn handle_session_commands(
+    command: SessionCommands,
+    output: &OutputFormat,
+) -> Result<()> {
     match command {
-        AuthCommands::Login { method, username } => login_command(method, username).await,
-        AuthCommands::Logout => logout_command().await,
-        AuthCommands::Status => status_command(output).await,
-        AuthCommands::InitEncryption {
+        SessionCommands::Login { method, username } => login_command(method, username).await,
+        SessionCommands::Logout => logout_command().await,
+        SessionCommands::Status => status_command(output).await,
+        SessionCommands::InitEncryption {
             destroy_all_my_keys,
         } => init_encryption_command(destroy_all_my_keys).await,
-        AuthCommands::ListSecrets => list_secrets_command(output).await,
     }
 }
 
@@ -150,16 +152,5 @@ async fn init_encryption_command(destroy_existing: bool) -> Result<()> {
         .init_encryption_key(destroy_existing)
         .await?;
     eprintln!("Encryption key initialized in personal vault");
-    Ok(())
-}
-
-async fn list_secrets_command(output: &OutputFormat) -> Result<()> {
-    let client = VaultClient::new().await?;
-
-    // Asserting a permission verdict for what may be a refused connection,
-    // and exiting 1 where 1 means a match, not an error.
-    let mounts = client.list_mounts().await?;
-
-    output.print_table(&mounts.as_table_data());
     Ok(())
 }

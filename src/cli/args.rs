@@ -42,10 +42,10 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Authentication management
-    Auth {
+    /// This machine's Vault session: login, token state, encryption key
+    Session {
         #[command(subcommand)]
-        command: AuthCommands,
+        command: SessionCommands,
     },
     /// Certificate operations
     Cert {
@@ -178,8 +178,13 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Interact with secrets engines (passthrough to vault)
+    /// Interact with secrets engines; `list` is native, the rest is forwarded
     Secrets {
+        #[command(subcommand)]
+        command: SecretsCommands,
+    },
+    /// Interact with auth methods (passthrough to vault)
+    Auth {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -205,8 +210,19 @@ pub enum Commands {
     },
 }
 
+/// Vault's own secrets-engine verbs. Only the listing is modelled; everything
+/// else reaches the same engine through the forwarding command, which is what
+/// keeps `secrets enable` working without this enum growing a variant per verb.
 #[derive(Subcommand)]
-pub enum AuthCommands {
+pub enum SecretsCommands {
+    /// List enabled secret engines
+    List,
+    #[command(external_subcommand)]
+    Forwarded(Vec<String>),
+}
+
+#[derive(Subcommand)]
+pub enum SessionCommands {
     /// Login to Vault
     Login {
         /// Authentication method
@@ -228,8 +244,6 @@ pub enum AuthCommands {
         #[arg(long)]
         destroy_all_my_keys: bool,
     },
-    /// List available secret engines
-    ListSecrets,
 }
 
 #[derive(Subcommand)]

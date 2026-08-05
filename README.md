@@ -195,6 +195,9 @@ monitoring probe.
 ### Vault Integration
 
 - **Command passthrough**: every Vault verb this tool does not wrap itself is forwarded to the official `vault` binary with the address and token already resolved. Reasoning about an issuance means reading role and issuer configuration no curated command anticipates, and the passthrough keeps that in one tool and one login instead of two. `vault-rs --help` lists what is currently forwarded
+- **Partly-modelled verbs split by subcommand**: `vault-rs secrets list` is answered directly; `vault-rs secrets enable` and every other subcommand is forwarded. `vault-rs --help secrets` says which
+- **`session` is this machine, everything else is the server**: `vault-rs session login/logout/status` and `session init-encryption` act on the local token and encryption key. `vault-rs auth …` and `vault-rs secrets …` reach Vault's own auth methods and engines
+- **Logging out revokes**: `vault-rs session logout` revokes the token server-side and removes it locally. The local token goes even when revocation fails — an expired token or an unreachable server should not leave the credential on disk — and the command exits non-zero so a script can tell
 - **Token management**: Secure token storage and automatic refresh
 - **Mount discovery**: Automatic PKI mount detection and validation
 
@@ -212,8 +215,8 @@ sudo cp target/release/vault-rs /usr/local/bin/
 
 ```bash
 # Login and initialize encryption
-vault-rs auth login --method ldap --username yourname
-vault-rs auth init-encryption
+vault-rs session login --method ldap --username yourname
+vault-rs session init-encryption
 
 # Create a certificate
 vault-rs cert create -m internal --role server example.com --alt-names "*.example.com,api.example.com"
@@ -287,7 +290,7 @@ vault-rs -vv cert list
 
 ## Security Model
 
-1. **Master key** stored at a fixed `vault-rs/encryption-key` path in an auto-discovered KV mount; `auth init-encryption` refuses to overwrite an existing key unless `--destroy-all-my-keys` is passed, which makes every locally stored artifact permanently undecryptable
+1. **Master key** stored at a fixed `vault-rs/encryption-key` path in an auto-discovered KV mount; `session init-encryption` refuses to overwrite an existing key unless `--destroy-all-my-keys` is passed, which makes every locally stored artifact permanently undecryptable
 2. **All certificates** encrypted locally with AES-GCM using derived keys
 3. **Secure file permissions** (600) on all sensitive files
 4. **No plaintext storage** of certificates or private keys

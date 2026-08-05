@@ -33,9 +33,9 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
     crate::utils::paths::VaultCliPaths::ensure_all_dirs()?;
 
     match cli.command {
-        Commands::Auth { command } => crate::auth::handle_auth_commands(command, &output)
+        Commands::Session { command } => crate::session::handle_session_commands(command, &output)
             .await
-            .context("auth"),
+            .context("session"),
         Commands::Cert { command } => handle_cert_command(command, &output).await,
         Commands::Storage { command } => handle_storage_command(command, &output).await,
         Commands::Cache { command } => crate::cache::handle_cache_commands(command, &output)
@@ -72,7 +72,11 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
         Commands::Pki { ref args } => handle_vault_command("pki", args).await,
         Commands::Plugin { ref args } => handle_vault_command("plugin", args).await,
         Commands::Policy { ref args } => handle_vault_command("policy", args).await,
-        Commands::Secrets { ref args } => handle_vault_command("secrets", args).await,
+        Commands::Secrets { command } => match command {
+            SecretsCommands::List => crate::secrets::list(&output).await.context("secrets list"),
+            SecretsCommands::Forwarded(ref args) => handle_vault_command("secrets", args).await,
+        },
+        Commands::Auth { ref args } => handle_vault_command("auth", args).await,
         Commands::Ssh { ref args } => handle_vault_command("ssh", args).await,
         Commands::Token { ref args } => handle_vault_command("token", args).await,
         Commands::Transform { ref args } => handle_vault_command("transform", args).await,

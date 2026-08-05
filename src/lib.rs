@@ -1,8 +1,9 @@
-pub mod auth;
 pub mod cache;
 pub mod cert;
 pub mod cli;
 pub mod crypto;
+pub mod secrets;
+pub mod session;
 pub mod storage;
 pub mod utils;
 pub mod vault;

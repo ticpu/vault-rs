@@ -91,7 +91,7 @@ impl KeyManager {
                  Overwriting it makes every certificate and private key in the local store \
                  undecryptable. {}\n\n\
                  If that is genuinely what you want: \
-                 {PROGRAM_NAME} auth init-encryption --destroy-all-my-keys",
+                 {PROGRAM_NAME} session init-encryption --destroy-all-my-keys",
                 retention.describe()
             )));
         }
@@ -262,7 +262,7 @@ impl KeyManager {
         }
 
         Err(VaultCliError::Storage(
-            format!("No KV mount found in Vault.\n\nTo enable encrypted local storage, create a KV mount:\n  {PROGRAM_NAME} secrets enable -path=secret kv-v2\n\nAlternatively, use --no-store with certificate creation to skip local storage.\nUse '{PROGRAM_NAME} auth list-secrets' to see available secret engines.")
+            format!("No KV mount found in Vault.\n\nTo enable encrypted local storage, create a KV mount:\n  {PROGRAM_NAME} secrets enable -path=secret kv-v2\n\nAlternatively, use --no-store with certificate creation to skip local storage.\nUse '{PROGRAM_NAME} secrets list' to see available secret engines.")
         ))
     }
 
