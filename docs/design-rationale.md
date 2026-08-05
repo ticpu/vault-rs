@@ -101,9 +101,49 @@ caller is therefore dead until someone names the consumer, and a static analyzer
 reporting a fact rather than guessing. Treating it as surface preserves whichever forked, unfixed copy
 of a code path happened to be marked `pub`.
 
-## The local store is a convenience copy, not the record
+## Uniform encryption over per-artifact classification
 
-Artifacts are cached locally under uniform encryption and decrypted only on request; the PKI
-remains the authority, so nothing depends on the copy surviving. Encryption ignores whether a given
-artifact is secret because the same store holds generated keys, and a policy branching per artifact
+Every artifact in the local store is encrypted alike, whether or not what it holds is secret. The
+store keeps generated private keys beside public certificates, and a policy branching per artifact
 is one classification mistake away from writing a key in the clear.
+
+## The directory is the store; no index stands in for it
+
+Reads take each record from the artifact's own files and no summary of the store is kept; should
+decrypting and parsing every artifact on every listing stop being affordable, a summary is allowed
+only in the shape the metadata cache already has — schema-versioned, discarded when it does not
+match, and never consulted as the record. The PKI holds every certificate here, so this copy is
+disposable, except for a private key generated during issuance, which is returned once and kept
+nowhere else. An index would be a second record free to disagree with the first, silently and in the
+direction that matters: an entry missing from it is unreachable while its files sit on disk. Nothing
+readable from the certificate is written beside it either, so a corrected derivation reaches
+artifacts already stored and no second copy is left to mislead a hand decryption.
+
+## An artifact records the cluster that sealed it
+
+The master key comes from whichever Vault was addressed when the artifact was written, while the
+path records only mount, common name and serial. The cluster's own identifier is kept beside the
+artifact in the clear, because the moment it is wanted is the moment nothing in that directory
+decrypts: without it, an artifact sealed elsewhere is indistinguishable from one whose key was
+overwritten, and the operator is sent to a version history with nothing in it. The identifier names
+the cluster and not the material at the key's path — replication serves one cluster's secrets under
+another's identity — so a mismatch ranks the suspicions rather than settling them, and never
+suppresses the key-version route. The address is recorded with it as a hint, never as the identity,
+since a cluster outlives any name pointing at it.
+
+## Undecryptable is not corrupt
+
+An artifact that will not decrypt is reported with the cause the record can establish and the routes
+that follow from it, and nothing else deletes it. A master key overwritten in place leaves every
+artifact in the store undecryptable and every one of them intact: the files are whole, and restoring
+the previous key version reads them again. A bulk operation that takes that state for corruption
+destroys what the rollback would have recovered.
+
+## An option that destroys unrecoverable material is named for what it destroys
+
+Where deleting something local cannot be undone, consent is given by an option that says what is
+lost, not by a general-purpose yes: a blanket force reads identically in every command and in shell
+history, so the operator dropping a certificate the PKI still holds types what the operator dropping
+the only copy of a private key types. Consent is graded to the loss. Key material takes an option
+named for it; an artifact holding only the provenance the PKI never recorded is deleted after saying
+what goes with it, since a gate raised for the small loss trains the reflex that opens the large one.
