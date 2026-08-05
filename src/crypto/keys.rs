@@ -12,7 +12,7 @@ const KV_PATH: &str = "vault-rs/encryption-key";
 /// Whether the mount holding the master key would keep the version an
 /// overwrite replaces. This decides whether losing the local store is a
 /// rollback away or total, and the two must not read alike.
-enum VersionRetention {
+pub enum VersionRetention {
     Retained {
         current: u64,
         mount: String,
@@ -26,7 +26,7 @@ enum VersionRetention {
 }
 
 impl VersionRetention {
-    fn describe(&self) -> String {
+    pub fn describe(&self) -> String {
         match self {
             Self::Retained { current, mount, key } => format!(
                 "This mount retains prior versions, so version {current} would remain and could \
@@ -37,6 +37,116 @@ impl VersionRetention {
             }
         }
     }
+}
+
+/// Whether replacing the value at `mount`/`key` leaves the current one
+/// recoverable. Addressed by mount and key so a caller holding only a path can
+/// ask it, and so nothing has to scan every mount to find out.
+///
+/// Unreadable metadata is not "probably fine": it is the case where the answer
+/// is unknown, and callers refuse on it.
+pub async fn retention_at(
+    client: &VaultClient,
+    mount: &str,
+    versioned: bool,
+    key: &str,
+) -> Result<VersionRetention> {
+    let mount = mount.trim_end_matches('/').to_string();
+    let key = key.to_string();
+
+    if !versioned {
+        return Ok(VersionRetention::None {
+            why: "this mount keeps no version history".to_string(),
+            mount,
+            key,
+        });
+    }
+
+    let metadata_path = format!("{mount}/metadata/{key}");
+    let metadata = client.get(&metadata_path).await.map_err(|e| {
+        VaultCliError::Storage(format!(
+            "Cannot read '{metadata_path}' ({e}), so cannot tell whether overwriting the key \
+             there could be undone"
+        ))
+    })?;
+
+    let max_versions = metadata["data"]["max_versions"].as_u64().ok_or_else(|| {
+        VaultCliError::Storage(format!(
+            "'{metadata_path}' does not report max_versions, so cannot tell whether overwriting \
+             the key there could be undone"
+        ))
+    })?;
+
+    // 0 means the mount default, which retains history; 1 means the write that
+    // adds the new version drops the one it replaces.
+    if max_versions == 1 {
+        return Ok(VersionRetention::None {
+            why: "max_versions is 1, so writing a new version drops the current one".to_string(),
+            mount,
+            key,
+        });
+    }
+
+    let current = metadata["data"]["current_version"].as_u64().unwrap_or(0);
+    Ok(VersionRetention::Retained {
+        current,
+        mount,
+        key,
+    })
+}
+
+/// Whether a path a generic verb was handed is where this tool keeps its master
+/// key, and what the mount being written says about getting the current one
+/// back.
+///
+/// `None` means checked and not that path — never "could not check". The tail
+/// comparison costs nothing and gates the rest, so an ordinary write asks the
+/// server nothing; only a match pays for the mount's answer. What holds the key
+/// is never resolved here: that needs a listing of every mount, a permission the
+/// write itself does not require.
+pub async fn master_key_notice(client: &VaultClient, path: &str) -> Option<String> {
+    if !path.trim_end_matches('/').ends_with(KV_PATH) {
+        return None;
+    }
+
+    let guarded =
+        format!("`{PROGRAM_NAME} session init-encryption` is the guarded way to replace it.");
+    let lead = format!(
+        "'{path}' matches where {PROGRAM_NAME} stores its master key. Replacing it \
+                        makes every locally sealed artifact unreadable."
+    );
+
+    let recovery = match recoverability(client, path).await {
+        Ok(retention) => retention.describe(),
+        // Silence would be indistinguishable from a checked negative, so the
+        // notice degrades and marks what it could not establish.
+        Err(e) => format!(
+            "Could not confirm whether this mount retains versions: {e}\n\
+             If it does not, this is permanent."
+        ),
+    };
+
+    Some(format!("{lead}\n{recovery}\n{guarded}"))
+}
+
+/// The retention answer for a path, asked entirely of the mount serving it.
+async fn recoverability(client: &VaultClient, path: &str) -> Result<VersionRetention> {
+    let mount_version = client.mount_version(path).await?;
+    let mount = mount_version.mount.trim_end_matches('/');
+    let versioned = mount_version.version == 2;
+
+    // Everything after the mount, and after the versioned layout's own prefix.
+    let key = path
+        .trim_start_matches('/')
+        .strip_prefix(mount)
+        .unwrap_or(path)
+        .trim_start_matches('/');
+    let key = match versioned {
+        true => key.strip_prefix("data/").unwrap_or(key),
+        false => key,
+    };
+
+    retention_at(client, mount, versioned, key).await
 }
 
 pub struct KeyManager {
@@ -130,46 +240,8 @@ impl KeyManager {
             )));
         };
 
-        let Some(data_path) = kv_path.split_once("/data/") else {
-            return Ok(VersionRetention::None {
-                why: "this is a KV v1 mount, which keeps no version history".to_string(),
-                mount,
-                key,
-            });
-        };
-
-        let metadata_path = format!("{}/metadata/{}", data_path.0, data_path.1);
-        let metadata = self.client.get(&metadata_path).await.map_err(|e| {
-            VaultCliError::Storage(format!(
-                "Cannot read '{metadata_path}' ({e}), so cannot tell whether overwriting the key \
-                 there could be undone"
-            ))
-        })?;
-
-        let max_versions = metadata["data"]["max_versions"].as_u64().ok_or_else(|| {
-            VaultCliError::Storage(format!(
-                "'{metadata_path}' does not report max_versions, so cannot tell whether \
-                 overwriting the key there could be undone"
-            ))
-        })?;
-
-        // 0 means the mount default, which retains history; 1 means the write
-        // that adds the new version drops the one it replaces.
-        if max_versions == 1 {
-            return Ok(VersionRetention::None {
-                why: "max_versions is 1, so writing a new version drops the current one"
-                    .to_string(),
-                mount,
-                key,
-            });
-        }
-
-        let current = metadata["data"]["current_version"].as_u64().unwrap_or(0);
-        Ok(VersionRetention::Retained {
-            current,
-            mount,
-            key,
-        })
+        let versioned = kv_path.contains("/data/");
+        retention_at(&self.client, &mount, versioned, &key).await
     }
 
     /// The mount and key path as `vault-rs kv` would take them, for messages
@@ -601,7 +673,7 @@ mod tests {
             .await
             .expect_err("KV v1 has no history")
             .to_string();
-        assert!(err.contains("KV v1"), "{err}");
+        assert!(err.contains("no version history"), "{err}");
     }
 
     /// Not knowing whether the overwrite could be undone is not the same as
@@ -636,5 +708,94 @@ mod tests {
             .init_encryption_key(true)
             .await
             .expect("the flag permits the overwrite");
+    }
+
+    const PROBE_V2: &str = "/v1/sys/internal/ui/mounts/secret/data/vault-rs/encryption-key";
+
+    async fn probe_says(server: &MockServer, at: &str, version: &str) {
+        Mock::given(method("GET"))
+            .and(path(at))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": { "path": "secret/", "options": { "version": version } }
+            })))
+            .mount(server)
+            .await;
+    }
+
+    fn test_client(server: &MockServer) -> VaultClient {
+        VaultClient::for_test(server.uri(), "test-token".to_string()).expect("test client")
+    }
+
+    /// Silence has to mean checked and not the path. An ordinary write must
+    /// also ask the server nothing, or every write pays for the rare one.
+    #[tokio::test]
+    async fn an_ordinary_path_gets_no_notice_and_no_request() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        assert!(
+            master_key_notice(&test_client(&server), "secret/data/app/config")
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_master_key_path_is_announced_with_the_route_back() {
+        let server = MockServer::start().await;
+        probe_says(&server, PROBE_V2, "2").await;
+        mount_retention(&server, 0).await;
+
+        let notice =
+            master_key_notice(&test_client(&server), "secret/data/vault-rs/encryption-key")
+                .await
+                .expect("the master key path is announced");
+        assert!(notice.contains("master key"), "{notice}");
+        assert!(notice.contains("session init-encryption"), "{notice}");
+        assert!(notice.contains("version 7"), "{notice}");
+    }
+
+    /// A mount keeping no history must not be offered a restore that cannot
+    /// happen.
+    #[tokio::test]
+    async fn a_mount_without_history_is_told_the_loss_is_permanent() {
+        let server = MockServer::start().await;
+        probe_says(
+            &server,
+            "/v1/sys/internal/ui/mounts/secret/vault-rs/encryption-key",
+            "1",
+        )
+        .await;
+
+        let notice = master_key_notice(&test_client(&server), "secret/vault-rs/encryption-key")
+            .await
+            .expect("announced");
+        assert!(notice.contains("no recovery"), "{notice}");
+    }
+
+    /// The confirmation reads paths the write does not, so a caller allowed to
+    /// write may still be refused it. Falling silent there would make the
+    /// absence of a warning a claim nothing established.
+    #[tokio::test]
+    async fn a_denied_confirmation_degrades_the_notice_rather_than_dropping_it() {
+        let server = MockServer::start().await;
+        probe_says(&server, PROBE_V2, "2").await;
+        Mock::given(method("GET"))
+            .and(path(V2_META))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+
+        let notice =
+            master_key_notice(&test_client(&server), "secret/data/vault-rs/encryption-key")
+                .await
+                .expect("a denied confirmation still warns");
+        assert!(notice.contains("master key"), "{notice}");
+        assert!(notice.contains("Could not confirm"), "{notice}");
+        assert!(notice.contains("403"), "{notice}");
     }
 }

@@ -54,10 +54,27 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
             crate::cli::completions::handle_completion_helper_command(command, &output).await?;
             Ok(())
         }
-        Commands::Read { ref args } => handle_vault_command("read", args).await,
-        Commands::Write { ref args } => handle_vault_command("write", args).await,
-        Commands::Delete { ref args } => handle_vault_command("delete", args).await,
-        Commands::List { ref args } => handle_vault_command("list", args).await,
+        Commands::Read {
+            ref path,
+            ref args,
+            ref field,
+        } => crate::logical::commands::read(path, args, field.as_deref(), &output)
+            .await
+            .with_context(|| format!("reading {path}")),
+        Commands::Write {
+            ref path,
+            ref args,
+            force,
+            ref field,
+        } => crate::logical::commands::write(path, args, force, field.as_deref(), &output)
+            .await
+            .with_context(|| format!("writing {path}")),
+        Commands::Delete { ref path } => crate::logical::commands::delete(path)
+            .await
+            .with_context(|| format!("deleting {path}")),
+        Commands::List { ref path } => crate::logical::commands::list(path, &output)
+            .await
+            .with_context(|| format!("listing {path}")),
         Commands::Patch { ref args } => handle_vault_command("patch", args).await,
         Commands::Unwrap { ref args } => handle_vault_command("unwrap", args).await,
         Commands::Status { ref args } => handle_vault_command("status", args).await,

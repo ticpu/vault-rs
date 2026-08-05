@@ -73,25 +73,39 @@ pub enum Commands {
         #[command(subcommand)]
         command: CompletionHelperCommands,
     },
-    /// Read data and retrieves secrets (passthrough to vault, preset VAULT_ADDR/VAULT_TOKEN)
+    /// Read data from a path
     Read {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        /// Path to read
+        path: String,
+        /// Query parameters as key=value; @file and - read from a file or stdin
         args: Vec<String>,
+        /// Print only this field's value, bare
+        #[arg(long)]
+        field: Option<String>,
     },
-    /// Write data, configuration, and secrets (passthrough to vault)
+    /// Write data to a path
     Write {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        /// Path to write
+        path: String,
+        /// Data as key=value; @file and - read from a file or stdin, and an
+        /// argument with no = supplies the whole body as JSON
         args: Vec<String>,
+        /// Write with no data, for paths that expect none
+        #[arg(long, short)]
+        force: bool,
+        /// Print only this field's value from the response, bare
+        #[arg(long)]
+        field: Option<String>,
     },
-    /// Delete secrets and configuration (passthrough to vault)
+    /// Delete data at a path
     Delete {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+        /// Path to delete
+        path: String,
     },
-    /// List data or secrets (passthrough to vault)
+    /// List keys under a path
     List {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+        /// Path to list
+        path: String,
     },
     /// Patch data, configuration, and secrets (passthrough to vault)
     Patch {

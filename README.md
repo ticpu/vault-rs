@@ -194,6 +194,7 @@ monitoring probe.
 
 ### Vault Integration
 
+- **`read`, `write`, `list`, `delete` are answered directly**, so `--json`, `--raw` and `--field` work on them and the official binary is not needed. Data keeps vault's own spelling — `key=value`, `key=@file`, `key=-` for stdin, a bare `@file`/`-` for a whole JSON body, and a repeated key for a list
 - **Command passthrough**: every Vault verb this tool does not wrap itself is forwarded to the official `vault` binary with the address and token already resolved. Reasoning about an issuance means reading role and issuer configuration no curated command anticipates, and the passthrough keeps that in one tool and one login instead of two. `vault-rs --help` lists what is currently forwarded
 - **Partly-modelled verbs split by subcommand**: `vault-rs secrets list` is answered directly; `vault-rs secrets enable` and every other subcommand is forwarded. `vault-rs --help secrets` says which
 - **`vault-rs vault <args…>`**: runs the official binary verbatim with this session's address and token. The token lives in `$XDG_RUNTIME_DIR/vault-rs/` and is never exported, so this is how you reach anything vault-rs does not model — invoking `vault` yourself would not be authenticated

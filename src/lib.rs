@@ -2,6 +2,7 @@ pub mod cache;
 pub mod cert;
 pub mod cli;
 pub mod crypto;
+pub mod logical;
 pub mod secrets;
 pub mod session;
 pub mod storage;
