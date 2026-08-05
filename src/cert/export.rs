@@ -67,6 +67,20 @@ async fn find_certificate_in_storage(
     Ok(None)
 }
 
+/// The stored private key, or nothing where the artifact holds none.
+///
+/// A CSR-signed artifact keeps its key with the requester, and one written
+/// before this build stopped storing an empty key file decrypts to an empty
+/// string rather than to a key. Both have to reach the caller as an absence:
+/// wrapping them as `Some(empty)` is how a bundle asked for with a key comes
+/// out without one and says nothing about it.
+fn stored_key(pem: String) -> Option<PemPrivateKey> {
+    match pem.trim().is_empty() {
+        true => None,
+        false => Some(PemPrivateKey::new(pem)),
+    }
+}
+
 /// Get certificate data from local storage by certificate record
 async fn get_certificate_data_from_storage(
     storage: &LocalStorage,
@@ -111,11 +125,11 @@ async fn get_certificate_bundle_from_storage(
     let (certificate_pem, private_key, ca_chain_pem) =
         get_certificate_data_from_storage(&storage, &cert_record).await?;
 
-    let pem_key = PemPrivateKey::new(private_key);
+    let pem_key = stored_key(private_key);
     let pem_cert = PemCertificate::new(certificate_pem);
     let ca_chain = build_ca_chain(&ca_chain_pem)?;
 
-    Ok((Some(pem_key), pem_cert, ca_chain))
+    Ok((pem_key, pem_cert, ca_chain))
 }
 
 async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) -> Result<()> {
@@ -144,6 +158,18 @@ async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) ->
                 ))
             })?;
 
+    // Empty is what a CSR-signed artifact yields, and what an artifact written
+    // before this build stopped storing an empty key file yields too. Caught
+    // here rather than left to openssl, which fails with "Could not find
+    // private key from -inkey file" and names neither the artifact nor why.
+    if private_key.trim().is_empty() {
+        return Err(VaultCliError::InvalidInput(format!(
+            "'{}' is stored without a private key, so a PKCS#12 bundle cannot be built from it. \
+             Use --format chain for a keyless artifact.",
+            request.identifier
+        )));
+    }
+
     let private_key = PemPrivateKey::new(private_key);
     let certificate = PemCertificate::new(certificate_pem);
     let ca_chain = build_ca_chain(&ca_chain_pem)?;
@@ -154,8 +180,7 @@ async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) ->
 
     fs::create_dir_all(dir)?;
 
-    // Read before moving into the bundle: get_certificate_data_from_storage
-    // always returns a key, so there is no missing-key case left to check here.
+    // Read before moving into the bundle; emptiness was rejected above.
     let private_key_pem = private_key.pem_data().to_string();
     let bundle = PemCertificateBundle::new(Some(private_key), certificate, ca_chain);
 
@@ -190,8 +215,16 @@ async fn export_bundle(client: &VaultClient, request: &ExportCertificateRequest)
                 ))
             })?;
 
+    let private_key = private_key.ok_or_else(|| {
+        VaultCliError::InvalidInput(format!(
+            "'{}' is stored without a private key, so a bundle cannot be assembled from it. \
+             Use --format chain for a keyless artifact.",
+            request.identifier
+        ))
+    })?;
+
     let ca_chain = ca_chain_from_storage.without_root()?;
-    let bundle = PemCertificateBundle::new(private_key, cert_from_storage, ca_chain);
+    let bundle = PemCertificateBundle::new(Some(private_key), cert_from_storage, ca_chain);
     let output_content = bundle.output(request.text);
     write_output_or_print(
         request.output_dir.as_deref(),
@@ -430,6 +463,18 @@ mod tests {
             "root is self-signed and dropped from the CA chain, leaf remains"
         );
         assert_eq!(chain.certificates()[0].pem_data(), leaf.pem_data());
+    }
+
+    /// A stored artifact with no key must present as having none. Reporting
+    /// it as an empty key produces a bundle without one, at exit 0, from a
+    /// command documented to need a key.
+    #[test]
+    fn a_keyless_artifact_reports_no_key_rather_than_an_empty_one() {
+        assert!(stored_key(String::new()).is_none());
+        assert!(stored_key("\n  \n".to_string()).is_none());
+        // Anything with content is carried through: the store decides what a
+        // key is, this only decides whether one is there.
+        assert!(stored_key("key material".to_string()).is_some());
     }
 
     #[test]
