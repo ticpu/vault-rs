@@ -183,6 +183,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: SecretsCommands,
     },
+    /// Run the official vault binary with this session's address and token
+    Vault {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Interact with auth methods (passthrough to vault)
     Auth {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]

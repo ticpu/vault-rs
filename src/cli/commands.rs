@@ -29,6 +29,11 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
     // Create output formatter
     let output = OutputFormat::new(cli.raw, cli.json);
 
+    // Before anything builds a client: the address is fixed for the whole run.
+    if let Some(ref addr) = cli.vault_addr {
+        crate::utils::dns_discovery::set_vault_addr_override(addr.clone());
+    }
+
     // Ensure directories exist
     crate::utils::paths::VaultCliPaths::ensure_all_dirs()?;
 
@@ -77,6 +82,15 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
             SecretsCommands::Forwarded(ref args) => handle_vault_command("secrets", args).await,
         },
         Commands::Auth { ref args } => handle_vault_command("auth", args).await,
+        Commands::Vault { ref args } => match args.split_first() {
+            Some((subcommand, rest)) => handle_vault_command(subcommand, rest).await,
+            None => Err(VaultCliError::InvalidInput(format!(
+                "{} vault takes the vault command to run, e.g. `{} vault read sys/mounts`",
+                crate::utils::PROGRAM_NAME,
+                crate::utils::PROGRAM_NAME
+            ))
+            .into()),
+        },
         Commands::Ssh { ref args } => handle_vault_command("ssh", args).await,
         Commands::Token { ref args } => handle_vault_command("token", args).await,
         Commands::Transform { ref args } => handle_vault_command("transform", args).await,

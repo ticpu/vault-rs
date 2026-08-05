@@ -276,9 +276,9 @@ impl KeyManager {
 
         let data = match self.client.get(&kv_path).await {
             Ok(data) => data,
-            // Vault answers 404 both for a path never written and for a
-            // soft-deleted KV v2 version; either way there is no key here.
-            Err(VaultCliError::CertNotFound(_)) => return Ok(None),
+            // Vault answers alike for a path never written and for a version
+            // withdrawn; either way there is no key here.
+            Err(e) if e.is_not_found() => return Ok(None),
             Err(e) => return Err(e),
         };
 

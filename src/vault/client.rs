@@ -4,6 +4,8 @@ use crate::vault::mounts::MountsResponse;
 use crate::vault::pki::RoleConfig;
 use reqwest::{Client, Response};
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 const OID_RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
 const OID_EC_PUBLIC_KEY: &str = "1.2.840.10045.2.1";
@@ -37,11 +39,24 @@ pub struct IssueCertificateRequest<'a> {
     pub ttl: Option<&'a str>,
 }
 
+/// Which storage layout a mount uses, as the mount itself reported it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MountVersion {
+    /// The mount answering for the path, with its trailing separator kept as
+    /// Vault reports it.
+    pub mount: String,
+    pub version: u8,
+}
+
 #[derive(Clone)]
 pub struct VaultClient {
     client: Client,
     vault_addr: String,
     token: String,
+    namespace: Option<String>,
+    /// Answers already had from the version probe. Guards a lookup table and
+    /// nothing else: the lock is never held across a request.
+    mount_versions: Arc<Mutex<HashMap<String, MountVersion>>>,
 }
 
 impl VaultClient {
@@ -58,6 +73,11 @@ impl VaultClient {
             client,
             vault_addr,
             token,
+            // discard-ok: an unset namespace is the ordinary single-tenant case
+            namespace: std::env::var("VAULT_NAMESPACE")
+                .ok()
+                .filter(|n| !n.is_empty()),
+            mount_versions: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -69,7 +89,24 @@ impl VaultClient {
             client: super::create_http_client()?,
             vault_addr,
             token,
+            namespace: None,
+            mount_versions: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// Every request carries the token and, where the session names one, the
+    /// namespace. Building requests anywhere else drops both.
+    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        let mut builder = self
+            .client
+            .request(method, format!("{}/v1/{}", self.vault_addr, path))
+            .header("X-Vault-Token", &self.token);
+
+        if let Some(namespace) = &self.namespace {
+            builder = builder.header("X-Vault-Namespace", namespace);
+        }
+
+        builder
     }
 
     /// Where this client is pointed, for recording which Vault sealed an
@@ -80,57 +117,55 @@ impl VaultClient {
 
     /// Health check
     pub async fn health(&self) -> Result<Value> {
-        let url = format!("{}/v1/sys/health", self.vault_addr);
-        let response = self.client.get(&url).send().await?;
+        self.get("sys/health").await
+    }
 
-        if response.status().is_success() {
-            Ok(response.json().await?)
-        } else {
-            Err(VaultCliError::VaultApi(
-                response.error_for_status().unwrap_err(),
-            ))
-        }
+    /// The cluster this client is addressing.
+    ///
+    /// A failed read propagates: a caller comparing which cluster sealed an
+    /// artifact demotes it to best-effort at its own call site, where the
+    /// choice is visible, and one reporting server status must not print an
+    /// unreachable Vault as an absent field.
+    pub async fn cluster_id(&self) -> Result<Option<String>> {
+        Ok(self
+            .health()
+            .await?
+            .get("cluster_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string))
     }
 
     /// Generic GET request to Vault API
     pub async fn get(&self, path: &str) -> Result<Value> {
-        let url = format!("{}/v1/{}", self.vault_addr, path);
-        let response = self
-            .client
-            .get(&url)
-            .header("X-Vault-Token", &self.token)
-            .send()
-            .await?;
+        let response = self.request(reqwest::Method::GET, path).send().await?;
 
-        self.handle_response(response).await
+        self.handle_response(path, response).await
     }
 
     /// Generic POST request to Vault API
     pub async fn post(&self, path: &str, data: Value) -> Result<Value> {
-        let url = format!("{}/v1/{}", self.vault_addr, path);
         let response = self
-            .client
-            .post(&url)
-            .header("X-Vault-Token", &self.token)
+            .request(reqwest::Method::POST, path)
             .header("Content-Type", "application/json")
             .json(&data)
             .send()
             .await?;
 
-        self.handle_response(response).await
+        self.handle_response(path, response).await
+    }
+
+    /// Generic DELETE request to Vault API
+    pub async fn delete(&self, path: &str) -> Result<Value> {
+        let response = self.request(reqwest::Method::DELETE, path).send().await?;
+
+        self.handle_response(path, response).await
     }
 
     /// Generic LIST request to Vault API
     pub async fn list(&self, path: &str) -> Result<Value> {
-        let url = format!("{}/v1/{}", self.vault_addr, path);
-        let response = self
-            .client
-            .request(list_method()?, &url)
-            .header("X-Vault-Token", &self.token)
-            .send()
-            .await?;
+        let response = self.request(list_method()?, path).send().await?;
 
-        self.handle_response(response).await
+        self.handle_response(path, response).await
     }
 
     /// List all secret engines (mounts)
@@ -171,21 +206,19 @@ impl VaultClient {
 
     /// Get CA chain for a PKI mount (returns raw PEM data)
     pub async fn get_ca_chain(&self, pki_mount: &str) -> Result<String> {
-        let url = format!("{}/v1/{}/ca_chain", self.vault_addr, pki_mount);
-        let response = self
-            .client
-            .get(&url)
-            .header("X-Vault-Token", &self.token)
-            .send()
-            .await?;
+        self.get_pem(&format!("{pki_mount}/ca_chain")).await
+    }
 
-        if response.status().is_success() {
-            let pem_data = response.text().await?;
-            Ok(pem_data)
-        } else {
-            Err(VaultCliError::VaultApi(
-                response.error_for_status().unwrap_err(),
-            ))
+    /// A response whose body is a certificate rather than a JSON envelope.
+    /// Refusals still carry their status, so a denied read is not reported as
+    /// an empty chain.
+    async fn get_pem(&self, path: &str) -> Result<String> {
+        let response = self.request(reqwest::Method::GET, path).send().await?;
+
+        let status = response.status();
+        match status.is_success() {
+            true => Ok(response.text().await?),
+            false => Err(Self::refusal(path, status.as_u16(), response).await),
         }
     }
 
@@ -194,35 +227,12 @@ impl VaultClient {
     /// `/ca/pem`, not `/cert/ca`: the latter wraps the certificate in a JSON
     /// envelope, so reading it as text yields a body no PEM parser accepts.
     pub async fn get_ca_certificate(&self, pki_mount: &str) -> Result<String> {
-        let url = format!("{}/v1/{}/ca/pem", self.vault_addr, pki_mount);
-        let response = self
-            .client
-            .get(&url)
-            .header("X-Vault-Token", &self.token)
-            .send()
-            .await?;
-
-        if response.status().is_success() {
-            let pem_data = response.text().await?;
-            Ok(pem_data)
-        } else {
-            Err(VaultCliError::VaultApi(
-                response.error_for_status().unwrap_err(),
-            ))
-        }
+        self.get_pem(&format!("{pki_mount}/ca/pem")).await
     }
 
     /// List roles for a PKI mount
     pub async fn list_roles(&self, pki_mount: &str) -> Result<Vec<String>> {
-        let url = format!("{}/v1/{}/roles", self.vault_addr, pki_mount);
-        let response = self
-            .client
-            .request(list_method()?, &url)
-            .header("X-Vault-Token", &self.token)
-            .send()
-            .await?;
-
-        let response = self.handle_response(response).await?;
+        let response = self.list(&format!("{pki_mount}/roles")).await?;
 
         Ok(super::extract_keys_array(&response))
     }
@@ -334,30 +344,316 @@ impl VaultClient {
     }
 
     /// Handle HTTP response from Vault
-    async fn handle_response(&self, response: Response) -> Result<Value> {
+    async fn handle_response(&self, path: &str, response: Response) -> Result<Value> {
         let status = response.status();
 
-        if status.is_success() {
-            Ok(response.json().await?)
-        } else if status == 404 {
-            Err(VaultCliError::CertNotFound(
-                "Resource not found".to_string(),
-            ))
-        } else if status == 403 {
-            Err(VaultCliError::Auth(
-                "Access denied - token may be invalid, expired, or lack required permissions"
-                    .to_string(),
-            ))
-        } else {
-            let error_text = response
-                .text()
-                .await
-                // discard-ok: building a message from an already-failed response;
-                // the status above is the signal, the body is a courtesy
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(VaultCliError::Storage(format!(
-                "Vault API error: {error_text}"
-            )))
+        if !status.is_success() {
+            return Err(Self::refusal(path, status.as_u16(), response).await);
         }
+
+        // A write that stores nothing back answers with no content at all, and
+        // decoding that as JSON fails after the write already happened.
+        let body = response.text().await?;
+        match body.trim().is_empty() {
+            true => Ok(Value::Null),
+            false => Ok(serde_json::from_str(&body)?),
+        }
+    }
+
+    /// A refusal, with whatever the server said about it. Vault reports these
+    /// in an envelope; a body in any other shape is kept whole rather than
+    /// discarded for not matching.
+    async fn refusal(path: &str, status: u16, response: Response) -> VaultCliError {
+        let body = response
+            .text()
+            .await
+            // discard-ok: building a message from an already-failed response;
+            // the status is the signal, the body is a courtesy
+            .unwrap_or_default();
+
+        let errors = match serde_json::from_str::<Value>(&body) {
+            Ok(envelope) => match envelope.get("errors").and_then(|e| e.as_array()) {
+                Some(reported) => reported
+                    .iter()
+                    .filter_map(|e| e.as_str().map(str::to_string))
+                    .collect(),
+                None => vec![body],
+            },
+            // discard-ok: a body that is not JSON is still what the server said
+            Err(_) => match body.trim().is_empty() {
+                true => Vec::new(),
+                false => vec![body],
+            },
+        };
+
+        VaultCliError::VaultStatus {
+            status,
+            path: path.to_string(),
+            errors,
+        }
+    }
+
+    /// Which storage layout the mount answering for `path` uses.
+    ///
+    /// Asked of that mount rather than derived from the path's shape, and
+    /// rather than found by listing every mount — the listing needs a
+    /// permission the operation itself does not, and answers for a mount the
+    /// caller never named. A server too old to answer has only the one layout.
+    pub async fn mount_version(&self, path: &str) -> Result<MountVersion> {
+        let path = path.trim_start_matches('/').to_string();
+        if let Some(known) = self.cached_mount_version(&path) {
+            return Ok(known);
+        }
+
+        let probe = format!("sys/internal/ui/mounts/{path}");
+        let resolved = match self.get(&probe).await {
+            Ok(answer) => MountVersion {
+                mount: answer["data"]["path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                version: match answer["data"]["options"]["version"].as_str() {
+                    Some("2") => 2,
+                    _ => 1,
+                },
+            },
+            // A Vault without this endpoint predates the versioned layout.
+            Err(e) if e.is_not_found() => MountVersion {
+                mount: String::new(),
+                version: 1,
+            },
+            Err(e) => return Err(e),
+        };
+
+        // discard-ok: a poisoned memo table costs a repeat request, nothing more
+        if let Ok(mut cache) = self.mount_versions.lock() {
+            cache.insert(path, resolved.clone());
+        }
+        Ok(resolved)
+    }
+
+    fn cached_mount_version(&self, path: &str) -> Option<MountVersion> {
+        // discard-ok: see mount_version; a failed lock just misses the cache
+        self.mount_versions.lock().ok()?.get(path).cloned()
+    }
+}
+
+/// Every test here asks what the caller is told. A refusal that arrives as
+/// prose cannot be told apart from another refusal with the same wording, and
+/// a body that is absent because nothing was stored is not a malformed one.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn client(server: &MockServer) -> VaultClient {
+        VaultClient::for_test(server.uri(), "test-token".to_string()).expect("test client")
+    }
+
+    async fn answer(server: &MockServer, verb: &str, at: &str, response: ResponseTemplate) {
+        Mock::given(method(verb))
+            .and(path(at))
+            .respond_with(response)
+            .mount(server)
+            .await;
+    }
+
+    /// A write to an unversioned mount stores nothing back and answers with no
+    /// content; reading that as JSON failed after the write had happened.
+    #[tokio::test]
+    async fn a_write_answered_with_no_content_is_not_a_parse_failure() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "POST",
+            "/v1/secret/thing",
+            ResponseTemplate::new(204),
+        )
+        .await;
+
+        let written = client(&server)
+            .post("secret/thing", json!({ "key": "value" }))
+            .await
+            .expect("a 204 is a successful write");
+        assert_eq!(written, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn a_refusal_carries_its_status_and_the_path_it_was_for() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "GET",
+            "/v1/secret/data/x",
+            ResponseTemplate::new(403),
+        )
+        .await;
+
+        let err = client(&server)
+            .get("secret/data/x")
+            .await
+            .expect_err("denied");
+        assert!(!err.is_not_found(), "a refusal is not an absence");
+        let rendered = err.to_string();
+        assert!(rendered.contains("403"), "{rendered}");
+        assert!(rendered.contains("secret/data/x"), "{rendered}");
+    }
+
+    /// The server's own reason beats anything this side can infer from a status.
+    #[tokio::test]
+    async fn a_refusal_reports_what_the_server_said() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "GET",
+            "/v1/secret/data/x",
+            ResponseTemplate::new(403).set_body_json(json!({ "errors": ["permission denied"] })),
+        )
+        .await;
+
+        let err = client(&server)
+            .get("secret/data/x")
+            .await
+            .expect_err("denied")
+            .to_string();
+        assert!(err.contains("permission denied"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_absent_path_is_distinguishable_from_every_other_refusal() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "GET",
+            "/v1/secret/data/gone",
+            ResponseTemplate::new(404),
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            "/v1/secret/data/sealed",
+            ResponseTemplate::new(503),
+        )
+        .await;
+
+        let client = client(&server);
+        assert!(client
+            .get("secret/data/gone")
+            .await
+            .expect_err("absent")
+            .is_not_found());
+        assert!(!client
+            .get("secret/data/sealed")
+            .await
+            .expect_err("sealed")
+            .is_not_found());
+    }
+
+    async fn probe_answers(server: &MockServer, at: &str, body: Value) {
+        answer(
+            server,
+            "GET",
+            &format!("/v1/sys/internal/ui/mounts/{at}"),
+            ResponseTemplate::new(200).set_body_json(body),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn the_mount_reports_its_own_storage_version() {
+        let server = MockServer::start().await;
+        probe_answers(
+            &server,
+            "versioned/thing",
+            json!({ "data": { "path": "versioned/", "options": { "version": "2" } } }),
+        )
+        .await;
+        probe_answers(
+            &server,
+            "flat/thing",
+            json!({ "data": { "path": "flat/", "options": null } }),
+        )
+        .await;
+
+        let client = client(&server);
+        assert_eq!(
+            client
+                .mount_version("versioned/thing")
+                .await
+                .expect("probe"),
+            MountVersion {
+                mount: "versioned/".to_string(),
+                version: 2
+            }
+        );
+        assert_eq!(
+            client.mount_version("flat/thing").await.expect("probe"),
+            MountVersion {
+                mount: "flat/".to_string(),
+                version: 1
+            }
+        );
+    }
+
+    /// A server without the endpoint predates the versioned layout, so it has
+    /// only the one. Every other refusal is reported.
+    #[tokio::test]
+    async fn an_absent_probe_endpoint_means_the_older_layout_but_a_refusal_does_not() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "GET",
+            "/v1/sys/internal/ui/mounts/old/thing",
+            ResponseTemplate::new(404),
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            "/v1/sys/internal/ui/mounts/denied/thing",
+            ResponseTemplate::new(403),
+        )
+        .await;
+
+        let client = client(&server);
+        assert_eq!(
+            client
+                .mount_version("old/thing")
+                .await
+                .expect("older")
+                .version,
+            1
+        );
+        client
+            .mount_version("denied/thing")
+            .await
+            .expect_err("a refusal is not an answer");
+    }
+
+    /// The same path is asked once; a second call is served from what the mount
+    /// already said.
+    #[tokio::test]
+    async fn a_mount_version_is_asked_once() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/sys/internal/ui/mounts/versioned/thing"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                json!({ "data": { "path": "versioned/", "options": { "version": "2" } } }),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = client(&server);
+        client
+            .mount_version("versioned/thing")
+            .await
+            .expect("probe");
+        client
+            .mount_version("versioned/thing")
+            .await
+            .expect("cached");
     }
 }

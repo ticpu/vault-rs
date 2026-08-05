@@ -403,12 +403,12 @@ impl LocalStorage {
         )
     }
 
+    /// The cluster being addressed, demoted to best-effort here: every caller
+    /// is explaining why something else failed, and losing the comparison is
+    /// better than replacing that explanation with this failure.
     async fn cluster_id(&self) -> Option<String> {
-        match self.client.health().await {
-            Ok(health) => health
-                .get("cluster_id")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
+        match self.client.cluster_id().await {
+            Ok(cluster_id) => cluster_id,
             Err(e) => {
                 tracing::warn!("Could not read the cluster identity to compare it: {e}");
                 None

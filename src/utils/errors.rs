@@ -39,6 +39,17 @@ pub enum VaultCliError {
         source: SerialNumberParseError,
     },
 
+    /// A refusal from Vault with the status it carried. The status stays on the
+    /// error because one code covers answers that differ per engine — an
+    /// unwritten path and a withdrawn version arrive alike — and a caller left
+    /// matching on message text cannot tell them apart.
+    #[error("Vault returned {status} for '{path}'{}", render_errors(.errors))]
+    VaultStatus {
+        status: u16,
+        path: String,
+        errors: Vec<String>,
+    },
+
     #[error("Certificate not found: {0}")]
     CertNotFound(String),
 
@@ -52,6 +63,23 @@ pub enum VaultCliError {
 
     #[error("UTF-8 conversion error")]
     Utf8(#[from] std::string::FromUtf8Error),
+}
+
+/// What the server said, appended only when it said anything.
+fn render_errors(errors: &[String]) -> String {
+    match errors.is_empty() {
+        true => String::new(),
+        false => format!(": {}", errors.join("; ")),
+    }
+}
+
+impl VaultCliError {
+    /// Whether Vault answered that there is nothing at the path. What that
+    /// means is the caller's to decide — engines use the one status for a path
+    /// never written and for a version withdrawn.
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::VaultStatus { status: 404, .. })
+    }
 }
 
 pub type Result<T> = std::result::Result<T, VaultCliError>;

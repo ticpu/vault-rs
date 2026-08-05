@@ -196,6 +196,9 @@ monitoring probe.
 
 - **Command passthrough**: every Vault verb this tool does not wrap itself is forwarded to the official `vault` binary with the address and token already resolved. Reasoning about an issuance means reading role and issuer configuration no curated command anticipates, and the passthrough keeps that in one tool and one login instead of two. `vault-rs --help` lists what is currently forwarded
 - **Partly-modelled verbs split by subcommand**: `vault-rs secrets list` is answered directly; `vault-rs secrets enable` and every other subcommand is forwarded. `vault-rs --help secrets` says which
+- **`vault-rs vault <args…>`**: runs the official binary verbatim with this session's address and token. The token lives in `$XDG_RUNTIME_DIR/vault-rs/` and is never exported, so this is how you reach anything vault-rs does not model — invoking `vault` yourself would not be authenticated
+- **`--vault-addr` applies to one invocation**, outranking `VAULT_ADDR`. Useful for reaching the cluster that sealed an artifact (`vault-rs storage show` names it) without exporting anything into the shell you are in
+- **`VAULT_NAMESPACE` is sent on every request**, not only on forwarded ones
 - **`session` is this machine, everything else is the server**: `vault-rs session login/logout/status` and `session init-encryption` act on the local token and encryption key. `vault-rs auth …` and `vault-rs secrets …` reach Vault's own auth methods and engines
 - **Logging out revokes**: `vault-rs session logout` revokes the token server-side and removes it locally. The local token goes even when revocation fails — an expired token or an unreachable server should not leave the credential on disk — and the command exits non-zero so a script can tell
 - **Token management**: Secure token storage and automatic refresh

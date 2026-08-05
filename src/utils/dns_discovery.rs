@@ -12,7 +12,24 @@ struct CachedVaultAddr {
     ttl_seconds: u64,
 }
 
+/// The address named on the command line, outranking the environment for this
+/// invocation. Following an artifact back to the cluster that sealed it should
+/// not mean exporting a variable into the shell that produced the confusion.
+static ADDRESS_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Set once, before anything builds a client. A second call is the caller's
+/// bug, not a race: nothing here is meant to change mid-run.
+pub fn set_vault_addr_override(addr: String) {
+    if ADDRESS_OVERRIDE.set(addr).is_err() {
+        tracing::warn!("The Vault address was already fixed for this run; ignoring the second");
+    }
+}
+
 pub async fn get_vault_addr() -> Result<String> {
+    if let Some(addr) = ADDRESS_OVERRIDE.get() {
+        return Ok(addr.clone());
+    }
+
     // First try environment variable
     // discard-ok: an unset variable is the case this branch exists for
     if let Ok(vault_addr) = env::var("VAULT_ADDR") {
