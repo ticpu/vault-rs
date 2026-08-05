@@ -30,7 +30,7 @@ impl VersionRetention {
         match self {
             Self::Retained { current, mount, key } => format!(
                 "This mount retains prior versions, so version {current} would remain and could \
-                 be restored with:\n  {PROGRAM_NAME} kv rollback -mount={mount} -version={current} {key}"
+                 be restored with:\n  {PROGRAM_NAME} kv rollback --mount {mount} --version {current} {key}"
             ),
             Self::None { why, .. } => {
                 format!("{why}, so this would be permanent: there is no recovery.")
@@ -217,7 +217,7 @@ impl KeyManager {
                  --destroy-all-my-keys consents to losing the local store, not to losing it \
                  irreversibly.\n\n\
                  To go ahead anyway, remove the key yourself so the decision is explicit:\n  \
-                 {PROGRAM_NAME} kv delete -mount={mount} {key}"
+                 {PROGRAM_NAME} kv delete --mount {mount} {key}"
             )));
         }
 
@@ -273,10 +273,10 @@ impl KeyManager {
         format!(
             "The master key in Vault is probably not the one this artifact was sealed with.\n\
              Check whether the previous key is still there:\n  \
-             {PROGRAM_NAME} kv metadata get -mount={mount} {key}\n\
+             {PROGRAM_NAME} kv metadata get --mount {mount} {key}\n\
              If an earlier version holds it, restoring that version makes these artifacts \
              readable again without destroying the current one:\n  \
-             {PROGRAM_NAME} kv rollback -mount={mount} -version=N {key}"
+             {PROGRAM_NAME} kv rollback --mount {mount} --version N {key}"
         )
     }
 
@@ -636,7 +636,7 @@ mod tests {
             .expect_err("a key is present")
             .to_string();
         assert!(err.contains("kv rollback"), "{err}");
-        assert!(err.contains("version=7"), "{err}");
+        assert!(err.contains("--version 7"), "{err}");
         assert!(!err.contains("no recovery"), "{err}");
     }
 

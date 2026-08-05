@@ -58,23 +58,35 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
             ref path,
             ref args,
             ref field,
-        } => crate::logical::commands::read(path, args, field.as_deref(), &output)
-            .await
-            .with_context(|| format!("reading {path}")),
+        } => {
+            let client = VaultClient::new().await?;
+            crate::logical::commands::read(&client, path, args, field.as_deref(), &output)
+                .await
+                .with_context(|| format!("reading {path}"))
+        }
         Commands::Write {
             ref path,
             ref args,
             force,
             ref field,
-        } => crate::logical::commands::write(path, args, force, field.as_deref(), &output)
-            .await
-            .with_context(|| format!("writing {path}")),
-        Commands::Delete { ref path } => crate::logical::commands::delete(path)
-            .await
-            .with_context(|| format!("deleting {path}")),
-        Commands::List { ref path } => crate::logical::commands::list(path, &output)
-            .await
-            .with_context(|| format!("listing {path}")),
+        } => {
+            let client = VaultClient::new().await?;
+            crate::logical::commands::write(&client, path, args, force, field.as_deref(), &output)
+                .await
+                .with_context(|| format!("writing {path}"))
+        }
+        Commands::Delete { ref path } => {
+            let client = VaultClient::new().await?;
+            crate::logical::commands::delete(&client, path)
+                .await
+                .with_context(|| format!("deleting {path}"))
+        }
+        Commands::List { ref path } => {
+            let client = VaultClient::new().await?;
+            crate::logical::commands::list(&client, path, &output)
+                .await
+                .with_context(|| format!("listing {path}"))
+        }
         Commands::Patch { ref args } => handle_vault_command("patch", args).await,
         Commands::Unwrap { ref args } => handle_vault_command("unwrap", args).await,
         Commands::Status { ref args } => handle_vault_command("status", args).await,
@@ -86,7 +98,7 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
         Commands::Audit { ref args } => handle_vault_command("audit", args).await,
         Commands::Debug { ref args } => handle_vault_command("debug", args).await,
         Commands::Events { ref args } => handle_vault_command("events", args).await,
-        Commands::Kv { ref args } => handle_vault_command("kv", args).await,
+        Commands::Kv { command } => handle_kv_command(command, &output).await,
         Commands::Lease { ref args } => handle_vault_command("lease", args).await,
         Commands::Monitor { ref args } => handle_vault_command("monitor", args).await,
         Commands::Namespace { ref args } => handle_vault_command("namespace", args).await,
@@ -569,6 +581,91 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
             Ok(())
         }
     }
+}
+
+/// One client for the whole invocation, so the mount each verb resolves is
+/// asked for once rather than per call.
+async fn handle_kv_command(command: KvCommands, output: &OutputFormat) -> Result<()> {
+    use crate::logical::kv::{self, Target};
+
+    if let KvCommands::Forwarded(ref args) = command {
+        return handle_vault_command("kv", args).await;
+    }
+
+    let client = VaultClient::new().await?;
+
+    match command {
+        KvCommands::Get {
+            ref path,
+            ref mount,
+            version,
+            ref field,
+        } => {
+            let target = Target::resolve(&client, mount.as_deref(), path).await?;
+            kv::get(&client, &target, version, field.as_deref(), output).await
+        }
+        KvCommands::Put {
+            ref path,
+            ref args,
+            ref mount,
+            cas,
+        } => {
+            let target = Target::resolve(&client, mount.as_deref(), path).await?;
+            kv::put(&client, &target, args, cas, output).await
+        }
+        KvCommands::List {
+            ref path,
+            ref mount,
+        } => {
+            let target = Target::resolve(&client, mount.as_deref(), path).await?;
+            kv::list(&client, &target, output).await
+        }
+        KvCommands::Delete {
+            ref path,
+            ref mount,
+            ref version,
+        } => {
+            let target = Target::resolve(&client, mount.as_deref(), path).await?;
+            kv::delete(&client, &target, version).await
+        }
+        KvCommands::Undelete {
+            ref path,
+            ref mount,
+            ref version,
+        } => {
+            let target = Target::resolve(&client, mount.as_deref(), path).await?;
+            kv::undelete(&client, &target, version).await
+        }
+        KvCommands::Destroy {
+            ref path,
+            ref mount,
+            ref version,
+        } => {
+            let target = Target::resolve(&client, mount.as_deref(), path).await?;
+            kv::destroy(&client, &target, version).await
+        }
+        KvCommands::Rollback {
+            ref path,
+            ref mount,
+            version,
+        } => {
+            let target = Target::resolve(&client, mount.as_deref(), path).await?;
+            kv::rollback(&client, &target, version).await
+        }
+        KvCommands::Metadata { ref command } => match command {
+            KvMetadataCommands::Get { path, mount } => {
+                let target = Target::resolve(&client, mount.as_deref(), path).await?;
+                kv::metadata_get(&client, &target, output).await
+            }
+            KvMetadataCommands::Delete { path, mount } => {
+                let target = Target::resolve(&client, mount.as_deref(), path).await?;
+                kv::metadata_delete(&client, &target).await
+            }
+        },
+        // Handled above, before a client was built.
+        KvCommands::Forwarded(_) => unreachable!("forwarded before resolving a mount"),
+    }
+    .context("kv")
 }
 
 async fn handle_vault_command(subcommand: &str, args: &[String]) -> Result<()> {

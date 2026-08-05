@@ -152,10 +152,10 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Interact with Vault's Key-Value storage (passthrough to vault)
+    /// Interact with Vault's Key-Value storage; unmodelled subcommands forward
     Kv {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+        #[command(subcommand)]
+        command: KvCommands,
     },
     /// Interact with leases (passthrough to vault)
     Lease {
@@ -238,6 +238,119 @@ pub enum SecretsCommands {
     List,
     #[command(external_subcommand)]
     Forwarded(Vec<String>),
+}
+
+/// `--mount` deliberately has no short form. Vault spells it `-mount=secret`,
+/// and clap reads a single dash as a short flag, so `-m ount=secret` would be a
+/// silently wrong mount where an error is wanted.
+#[derive(Subcommand)]
+pub enum KvCommands {
+    /// Read a secret
+    Get {
+        /// Secret path, as mount/path unless --mount names the mount
+        path: String,
+        /// Mount holding the secret
+        #[arg(long)]
+        mount: Option<String>,
+        /// Read this version instead of the current one
+        #[arg(long)]
+        version: Option<u64>,
+        /// Print only this field's value, bare
+        #[arg(long)]
+        field: Option<String>,
+    },
+    /// Write a secret
+    Put {
+        /// Secret path, as mount/path unless --mount names the mount
+        path: String,
+        /// Data as key=value; @file and - read from a file or stdin
+        args: Vec<String>,
+        /// Mount holding the secret
+        #[arg(long)]
+        mount: Option<String>,
+        /// Write only if the current version matches
+        #[arg(long)]
+        cas: Option<u64>,
+    },
+    /// List keys under a path
+    List {
+        /// Path to list, as mount/path unless --mount names the mount
+        path: String,
+        /// Mount holding the secrets
+        #[arg(long)]
+        mount: Option<String>,
+    },
+    /// Delete a secret, or the named versions of it
+    Delete {
+        /// Secret path, as mount/path unless --mount names the mount
+        path: String,
+        /// Mount holding the secret
+        #[arg(long)]
+        mount: Option<String>,
+        /// Versions to delete; without any, the secret itself
+        #[arg(long)]
+        version: Vec<u64>,
+    },
+    /// Restore versions a delete withdrew
+    Undelete {
+        /// Secret path, as mount/path unless --mount names the mount
+        path: String,
+        /// Mount holding the secret
+        #[arg(long)]
+        mount: Option<String>,
+        /// Versions to restore
+        #[arg(long, required = true)]
+        version: Vec<u64>,
+    },
+    /// Destroy versions permanently
+    Destroy {
+        /// Secret path, as mount/path unless --mount names the mount
+        path: String,
+        /// Mount holding the secret
+        #[arg(long)]
+        mount: Option<String>,
+        /// Versions to destroy
+        #[arg(long, required = true)]
+        version: Vec<u64>,
+    },
+    /// Restore a prior version by writing it back as a new one
+    Rollback {
+        /// Secret path, as mount/path unless --mount names the mount
+        path: String,
+        /// Mount holding the secret
+        #[arg(long)]
+        mount: Option<String>,
+        /// Version to restore
+        #[arg(long)]
+        version: u64,
+    },
+    /// Secret metadata and version history
+    Metadata {
+        #[command(subcommand)]
+        command: KvMetadataCommands,
+    },
+    #[command(external_subcommand)]
+    Forwarded(Vec<String>),
+}
+
+#[derive(Subcommand)]
+pub enum KvMetadataCommands {
+    /// Show a secret's version history
+    Get {
+        /// Secret path, as mount/path unless --mount names the mount
+        path: String,
+        /// Mount holding the secret
+        #[arg(long)]
+        mount: Option<String>,
+    },
+    /// Delete a secret and every version of it
+    Delete {
+        /// Secret path, as mount/path unless --mount names the mount
+        path: String,
+        /// Mount holding the secret
+        #[arg(long)]
+        mount: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

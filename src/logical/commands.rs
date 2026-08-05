@@ -12,20 +12,19 @@ use serde_json::{Map, Value};
 /// which is how a versioned read names its version and a counter query its
 /// range; without them the path alone cannot ask those questions.
 pub async fn read(
+    client: &VaultClient,
     path: &str,
     args: &[String],
     field: Option<&str>,
     output: &OutputFormat,
 ) -> Result<()> {
-    let client = VaultClient::new().await?;
     let query = data::parse(args, &mut std::io::stdin())?;
     let secret = client.get(&with_query(path, &query)).await?;
 
-    report(&secret, field, output)
+    report_secret(&secret, field, output)
 }
 
-pub async fn list(path: &str, output: &OutputFormat) -> Result<()> {
-    let client = VaultClient::new().await?;
+pub async fn list(client: &VaultClient, path: &str, output: &OutputFormat) -> Result<()> {
     let listed = client.list(path).await?;
 
     if output.json {
@@ -42,6 +41,7 @@ pub async fn list(path: &str, output: &OutputFormat) -> Result<()> {
 /// and the generic verb has to behave like the generic verb. What it owes is
 /// notice, which `announce` gives before anything is sent.
 pub async fn write(
+    client: &VaultClient,
     path: &str,
     args: &[String],
     force: bool,
@@ -55,9 +55,8 @@ pub async fn write(
         )));
     }
 
-    let client = VaultClient::new().await?;
     let body = data::parse(args, &mut std::io::stdin())?;
-    announce(&client, path).await;
+    announce(client, path).await;
 
     let written = client.post(path, Value::Object(body)).await?;
     if written.is_null() {
@@ -65,12 +64,11 @@ pub async fn write(
         return Ok(());
     }
 
-    report(&written, field, output)
+    report_secret(&written, field, output)
 }
 
-pub async fn delete(path: &str) -> Result<()> {
-    let client = VaultClient::new().await?;
-    announce(&client, path).await;
+pub async fn delete(client: &VaultClient, path: &str) -> Result<()> {
+    announce(client, path).await;
 
     client.delete(path).await?;
     eprintln!("Deleted {path}");
@@ -109,7 +107,7 @@ fn with_query(path: &str, query: &Map<String, Value>) -> String {
 
 /// What the caller asked for: one field bare, the whole envelope as JSON, or
 /// the record as columns.
-fn report(secret: &Value, field: Option<&str>, output: &OutputFormat) -> Result<()> {
+pub fn report_secret(secret: &Value, field: Option<&str>, output: &OutputFormat) -> Result<()> {
     let data = secret.get("data").unwrap_or(secret);
 
     if let Some(field) = field {
