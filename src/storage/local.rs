@@ -271,11 +271,37 @@ impl LocalStorage {
         // are not reachable through the records.
         let mut seals = Vec::new();
 
-        for mount_entry in read_subdirs(secrets_dir)? {
+        let (mounts, stray) = read_level(secrets_dir)?;
+        report_stray(&mut result, "", stray);
+
+        for mount_entry in mounts {
             let pki_mount = mount_entry.file_name().to_string_lossy().to_string();
-            for cn_entry in read_subdirs(&mount_entry.path())? {
+            let (cns, stray) = read_level(&mount_entry.path())?;
+            report_stray(&mut result, &pki_mount, stray);
+
+            for cn_entry in cns {
                 let cn = cn_entry.file_name().to_string_lossy().to_string();
-                for serial_entry in read_subdirs(&cn_entry.path())? {
+                let (serials, stray) = read_level(&cn_entry.path())?;
+
+                // Artifact files directly under the common name, with no
+                // serial beneath it, is the layout this build dropped. It has
+                // to say so: the files are intact and the way back is the
+                // version that wrote them, not a repair here.
+                if serials.is_empty() && !stray.is_empty() {
+                    result.fail(Incomplete::record(
+                        format!("{pki_mount}/{cn}"),
+                        VaultCliError::Storage(format!(
+                            "artifact files sit directly in the common-name directory ({}), a \
+                             layout this version does not read. Export it with the version that \
+                             wrote it and re-issue against this one.",
+                            stray.join(", ")
+                        )),
+                    ));
+                    continue;
+                }
+                report_stray(&mut result, &format!("{pki_mount}/{cn}"), stray);
+
+                for serial_entry in serials {
                     let serial = serial_entry.file_name().to_string_lossy().to_string();
                     if let Some(sealed_by) = Self::read_sealed_by(&serial_entry.path()) {
                         seals.push(sealed_by);
@@ -400,17 +426,17 @@ impl LocalStorage {
         let mut candidates = Vec::new();
         let secrets_dir = &self.secrets_root;
         if secrets_dir.exists() {
-            for mount_entry in read_subdirs(secrets_dir)? {
+            for mount_entry in read_level(secrets_dir)?.0 {
                 let pki_mount = mount_entry.file_name().to_string_lossy().to_string();
                 if target.pki_mount.is_some_and(|m| m != pki_mount) {
                     continue;
                 }
-                for cn_entry in read_subdirs(&mount_entry.path())? {
+                for cn_entry in read_level(&mount_entry.path())?.0 {
                     let cn = cn_entry.file_name().to_string_lossy().to_string();
                     if cn != target.cn {
                         continue;
                     }
-                    for serial_entry in read_subdirs(&cn_entry.path())? {
+                    for serial_entry in read_level(&cn_entry.path())?.0 {
                         let serial = serial_entry.file_name().to_string_lossy().to_string();
                         if target.serial.is_some_and(|s| normalize_serial(s) != serial) {
                             continue;
@@ -510,7 +536,7 @@ impl LocalStorage {
 
     async fn latest_serial_dir(&self, cn_dir: &Path, pki_mount: &str, cn: &str) -> Result<PathBuf> {
         let mut latest: Option<(chrono::DateTime<chrono::Utc>, PathBuf)> = None;
-        for entry in read_subdirs(cn_dir)? {
+        for entry in read_level(cn_dir)?.0 {
             match self.load_entry(&entry.path(), pki_mount, cn).await {
                 Ok(record) => {
                     if latest
@@ -694,17 +720,46 @@ impl StoredEntry {
     }
 }
 
-/// The subdirectories of `dir`, skipping files. A read failure propagates:
-/// the walk cannot tell a directory it could not open from an empty one.
-fn read_subdirs(dir: &Path) -> Result<Vec<fs::DirEntry>> {
+/// The subdirectories of `dir`, and the name of every file sitting beside
+/// them. A read failure propagates: the walk cannot tell a directory it could
+/// not open from an empty one.
+///
+/// Files are returned rather than skipped. Above an artifact directory only
+/// directories belong, so a file there is either a layout this build no longer
+/// reads or something that has no business in the store — and skipping it
+/// silently is how an artifact on disk goes unmentioned at exit 0, which is
+/// the whole failure this walk exists to end.
+/// Name every file found where only directories belong. Reported rather than
+/// ignored so the listing refuses instead of quietly presenting a store it did
+/// not fully account for.
+fn report_stray(result: &mut Partial<CertificateStorage>, at: &str, files: Vec<String>) {
+    for name in files {
+        let subject = match at.is_empty() {
+            true => name.clone(),
+            false => format!("{at}/{name}"),
+        };
+        result.fail(Incomplete::record(
+            subject,
+            VaultCliError::Storage(
+                "unexpected file where only directories belong; artifacts live in \
+                 {mount}/{common-name}/{serial}/"
+                    .to_string(),
+            ),
+        ));
+    }
+}
+
+fn read_level(dir: &Path) -> Result<(Vec<fs::DirEntry>, Vec<String>)> {
     let mut dirs = Vec::new();
+    let mut files = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            dirs.push(entry);
+        match entry.file_type()?.is_dir() {
+            true => dirs.push(entry),
+            false => files.push(entry.file_name().to_string_lossy().to_string()),
         }
     }
-    Ok(dirs)
+    Ok((dirs, files))
 }
 
 #[cfg(test)]
@@ -838,6 +893,80 @@ mod tests {
 
         let allowed = storage.scan().await.expect("scan").resolve(true).unwrap();
         assert_eq!(allowed.len(), 1);
+    }
+
+    /// The layout this build dropped is announced, not skipped. Silently
+    /// walking past it would recreate the defect the walk exists to end: an
+    /// artifact on disk that no listing mentions, at exit 0.
+    #[tokio::test]
+    async fn a_flat_common_name_directory_is_reported_not_skipped() {
+        let root = scratch("flat-layout");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root);
+        write_entry(&storage, "leaf-client", "aa01", "").await;
+
+        // How an older build filed it: the artifact files directly under the
+        // common name, with no serial directory between.
+        let flat = root.join("pki").join("legacy-cn");
+        fs::create_dir_all(&flat).expect("creating the legacy directory");
+        fs::write(flat.join("certificate.pem.enc"), b"whatever").expect("writing");
+        fs::write(flat.join("metadata.yaml.enc"), b"whatever").expect("writing");
+
+        let refused = storage
+            .scan()
+            .await
+            .expect("scan")
+            .resolve(false)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("pki/legacy-cn"), "{refused}");
+        assert!(refused.contains("does not read"), "{refused}");
+        assert!(refused.contains("certificate.pem.enc"), "{refused}");
+
+        // The readable artifact beside it is still an answer.
+        assert_eq!(
+            storage
+                .scan()
+                .await
+                .expect("scan")
+                .resolve(true)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    /// Above an artifact directory only directories belong, at every level.
+    #[tokio::test]
+    async fn a_file_where_a_directory_belongs_is_reported() {
+        let root = scratch("stray-files");
+        let server = stub_vault(CLUSTER, &"ab".repeat(32)).await;
+        let storage = store(&server, &root);
+        write_entry(&storage, "leaf-client", "aa01", "").await;
+
+        fs::write(root.join("loose-at-the-root"), b"x").expect("writing");
+        fs::write(root.join("pki").join("loose-in-the-mount"), b"x").expect("writing");
+        fs::write(
+            root.join("pki")
+                .join("leaf-client")
+                .join("loose-beside-serials"),
+            b"x",
+        )
+        .expect("writing");
+
+        let refused = storage
+            .scan()
+            .await
+            .expect("scan")
+            .resolve(false)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("loose-at-the-root"), "{refused}");
+        assert!(refused.contains("pki/loose-in-the-mount"), "{refused}");
+        assert!(
+            refused.contains("pki/leaf-client/loose-beside-serials"),
+            "{refused}"
+        );
     }
 
     /// An artifact sealed by another cluster leads with that, and still
