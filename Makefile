@@ -35,12 +35,13 @@ deb-all:
 
 # Native host build, unlike the .deb: makepkg compiles against this machine's
 # toolchain and glibc. Run from packaging/arch, where makepkg's own src/ cannot
-# land on the crate's.
+# land on the crate's. Earlier packages go first for the same reason the .deb
+# purges its own: a version bump otherwise leaves the previous one beside it.
 arch:
-	cd packaging/arch && makepkg -f
+	cd packaging/arch && rm -f ./*.pkg.tar.zst && makepkg -fc
 
 arch-install:
-	cd packaging/arch && makepkg -sif
+	cd packaging/arch && rm -f ./*.pkg.tar.zst && makepkg -sifc
 
 # Built in the container, extracted through a throwaway container: the image is
 # kept (stable tag) so a rebuild reuses its layer and registry caches. The build
