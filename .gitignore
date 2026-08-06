@@ -12,6 +12,4 @@ vault-dev/
 
 # Test fixtures are certificates only; generate.sh deletes the keys it makes.
 !src/cert/testdata/*.pem
-packaging/arch/pkg/
-packaging/arch/src/
 *.pkg.tar.zst

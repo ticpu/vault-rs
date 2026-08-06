@@ -5,13 +5,10 @@ DEB_ARCH ?= amd64
 # suite ships, and that floor is what makes it portable to production servers.
 DEBIAN_SUITE ?= bullseye
 
-CARGO_VERSION := $(shell grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
-GIT_SHORT := $(shell git rev-parse --short HEAD)
-GIT_TAG := $(shell git tag --points-at HEAD --list 'v*' | head -1)
-GIT_DIRTY := $(shell git status --porcelain --untracked-files=no | head -1)
-# Only a clean checkout of a v* tag claims the plain Cargo.toml version; anything
-# else carries its commit so a dev .deb can never be mistaken for the released one.
-DEB_VERSION := $(if $(GIT_DIRTY),$(CARGO_VERSION)+$(GIT_SHORT).dirty,$(if $(GIT_TAG),$(CARGO_VERSION),$(CARGO_VERSION)+$(GIT_SHORT)))
+DEB_VERSION := $(shell scripts/package-version.sh)
+ifeq ($(DEB_VERSION),)
+$(error scripts/package-version.sh produced no version)
+endif
 
 DEB_AMD64 := $(BINARY)_$(DEB_VERSION)_amd64.deb
 DEB_ARM64 := $(BINARY)_$(DEB_VERSION)_arm64.deb
@@ -24,7 +21,7 @@ IMG := vault-rs-build:$(DEB_ARCH)-$(DEBIAN_SUITE)
 PKG := target/package.tmp
 CTX := target/context.tmp
 
-.PHONY: all binary deb deb-all clean
+.PHONY: all binary deb deb-all arch arch-install clean
 
 all: deb
 
@@ -35,6 +32,15 @@ deb: $(DEB)
 deb-all:
 	$(MAKE) deb DEB_ARCH=amd64
 	$(MAKE) deb DEB_ARCH=arm64
+
+# Native host build, unlike the .deb: makepkg compiles against this machine's
+# toolchain and glibc. Run from packaging/arch, where makepkg's own src/ cannot
+# land on the crate's.
+arch:
+	cd packaging/arch && makepkg -f
+
+arch-install:
+	cd packaging/arch && makepkg -sif
 
 # Built in the container, extracted through a throwaway container: the image is
 # kept (stable tag) so a rebuild reuses its layer and registry caches. The build
@@ -85,3 +91,4 @@ $(DEB): $(DIST)/$(BINARY) packaging/control COPYING
 
 clean:
 	rm -rf "$(PKG)" "$(CTX)" target/dist $(BINARY)_*.deb
+	rm -rf packaging/arch/src packaging/arch/pkg packaging/arch/*.pkg.tar.zst

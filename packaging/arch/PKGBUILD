@@ -1,18 +1,21 @@
 # Maintainer: Jérôme Poulin <jeromepoulin@gmail.com>
 #
 # Builds the working tree, not a release tarball: this lives in the repo so
-# `makepkg -si` installs what is checked out. pkgver comes from Cargo.toml,
-# with the commit appended unless HEAD is a clean v* tag — the same rule the
-# Makefile applies to the .deb, so a locally built package can never be
-# mistaken for the released one.
+# `makepkg -si` installs what is checked out. Reachable as `make arch` from the
+# repo root.
 #
 # Deliberately NOT in the repo root: makepkg's own build directory is $startdir/src,
 # which there would sit on top of the crate's src/. Run it from here.
+#
+# The version comes from the same script the Makefile's .deb uses, assigned here
+# rather than through a pkgver() function: makepkg rewrites this file in place
+# when pkgver() disagrees with the assignment, which would dirty the checkout
+# the version is read from.
 
 _repo="${startdir}/../.."
 
 pkgname=vault-rs
-pkgver=0.1.0
+pkgver=$("$_repo/scripts/package-version.sh")
 pkgrel=1
 pkgdesc='PKI certificate management for HashiCorp Vault'
 arch=('x86_64' 'aarch64')
@@ -20,6 +23,9 @@ url='https://github.com/ticpu/vault-rs'
 license=('GPL-3.0-only')
 depends=('gcc-libs' 'glibc')
 makedepends=('cargo' 'cmake' 'git')
+# tests/against_a_real_vault.rs drives the real binary and fails without it
+# rather than skipping, so check() needs it present.
+checkdepends=('vault')
 # Optional rather than a dependency: the verbs an operator reaches for daily
 # are answered over the API, and the binary is needed only for the ones this
 # tool does not model.
@@ -27,42 +33,36 @@ optdepends=(
 	'vault: forwarded subcommands (policy, operator, ssh, transit, ...) and the vault-rs vault escape hatch'
 	'openssl: cert export --text and cert show --text'
 )
-# Cargo applies its own release profile; makepkg's LTO flags fight it.
-options=('!lto')
+# Cargo applies its own release profile; makepkg's LTO flags fight it, and a
+# -debug split package out of a release build is noise nobody asked for.
+options=('!lto' '!debug')
 
-pkgver() {
-	cd "$_repo"
-	local version commit
-	version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
-	if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-		commit=$(git rev-parse --short HEAD)
-		echo "${version}+${commit}.dirty"
-	elif [ -n "$(git tag --points-at HEAD --list 'v*')" ]; then
-		echo "$version"
-	else
-		commit=$(git rev-parse --short HEAD)
-		echo "${version}+${commit}"
-	fi
-}
+# Cargo.lock reaches the working tree on a release tag and nowhere else, so
+# --locked applies to a tag build and would refuse to create the file on any
+# other. fetch resolves and downloads; everything after it runs offline.
+_locked=()
+if [ -f "$_repo/Cargo.lock" ]; then
+	_locked=(--locked)
+fi
 
 prepare() {
 	cd "$_repo"
 	export RUSTUP_TOOLCHAIN=stable
-	cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+	cargo fetch "${_locked[@]}" --target "$(rustc -vV | sed -n 's/^host: //p')"
 }
 
 build() {
 	cd "$_repo"
 	export RUSTUP_TOOLCHAIN=stable
 	export CARGO_TARGET_DIR="$_repo/target"
-	cargo build --frozen --release
+	cargo build "${_locked[@]}" --offline --release
 }
 
 check() {
 	cd "$_repo"
 	export RUSTUP_TOOLCHAIN=stable
 	export CARGO_TARGET_DIR="$_repo/target"
-	cargo test --frozen --release
+	cargo test "${_locked[@]}" --offline --release
 }
 
 package() {
