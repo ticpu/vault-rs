@@ -5,12 +5,17 @@
 //! Which prefix a verb needs is fixed; which layout the mount uses is not, and
 //! is asked of the mount rather than read off the path's shape.
 
+#[cfg(feature = "cli")]
 use crate::crypto::keys::master_key_notice;
+#[cfg(feature = "cli")]
 use crate::logical::data;
 use crate::utils::errors::{Result, VaultCliError};
+#[cfg(feature = "cli")]
 use crate::utils::output::OutputFormat;
 use crate::vault::client::{MountVersion, VaultClient};
-use serde_json::{json, Value};
+#[cfg(any(feature = "cli", test))]
+use serde_json::json;
+use serde_json::Value;
 
 /// A secret named either as `mount/path` or as `--mount mount path`, resolved
 /// against the layout its mount reports.
@@ -143,6 +148,7 @@ pub async fn read_secret(
     }
 }
 
+#[cfg(feature = "cli")]
 pub async fn get(
     client: &VaultClient,
     target: &Target,
@@ -154,6 +160,7 @@ pub async fn get(
     super::commands::report_secret(&secret, field, output)
 }
 
+#[cfg(feature = "cli")]
 pub async fn put(
     client: &VaultClient,
     target: &Target,
@@ -186,6 +193,7 @@ pub async fn put(
     Ok(())
 }
 
+#[cfg(feature = "cli")]
 pub async fn list(client: &VaultClient, target: &Target, output: &OutputFormat) -> Result<()> {
     let path = match target.versioned() {
         true => format!("{}/metadata/{}", target.mount, target.key),
@@ -196,6 +204,7 @@ pub async fn list(client: &VaultClient, target: &Target, output: &OutputFormat) 
 
 /// Withdraw the value, or the named versions of it. Without versions this is
 /// the whole secret, which is why it reaches for the value's own prefix.
+#[cfg(feature = "cli")]
 pub async fn delete(client: &VaultClient, target: &Target, versions: &[u64]) -> Result<()> {
     if versions.is_empty() {
         let path = target.data();
@@ -209,16 +218,19 @@ pub async fn delete(client: &VaultClient, target: &Target, versions: &[u64]) -> 
     act_on_versions(client, target, "delete", versions).await
 }
 
+#[cfg(feature = "cli")]
 pub async fn undelete(client: &VaultClient, target: &Target, versions: &[u64]) -> Result<()> {
     target.require_versions("undelete")?;
     act_on_versions(client, target, "undelete", versions).await
 }
 
+#[cfg(feature = "cli")]
 pub async fn destroy(client: &VaultClient, target: &Target, versions: &[u64]) -> Result<()> {
     target.require_versions("destroy")?;
     act_on_versions(client, target, "destroy", versions).await
 }
 
+#[cfg(feature = "cli")]
 async fn act_on_versions(
     client: &VaultClient,
     target: &Target,
@@ -237,6 +249,7 @@ async fn act_on_versions(
     Ok(())
 }
 
+#[cfg(feature = "cli")]
 pub async fn metadata_get(
     client: &VaultClient,
     target: &Target,
@@ -249,6 +262,7 @@ pub async fn metadata_get(
 
 /// Remove the secret and every version of it. Worse than `delete`, since it
 /// takes the history a rollback would have used.
+#[cfg(feature = "cli")]
 pub async fn metadata_delete(client: &VaultClient, target: &Target) -> Result<()> {
     target.require_versions("metadata delete")?;
     let path = target.at("metadata");
@@ -266,6 +280,7 @@ pub async fn metadata_delete(client: &VaultClient, target: &Target) -> Result<()
 /// named version supplies the value. A version that was withdrawn or destroyed
 /// is refused — its data is gone, and writing what came back would store an
 /// empty value over a good one.
+#[cfg(feature = "cli")]
 pub async fn rollback(client: &VaultClient, target: &Target, version: u64) -> Result<()> {
     target.require_versions("rollback")?;
     let path = target.data();
@@ -315,6 +330,7 @@ pub async fn rollback(client: &VaultClient, target: &Target, version: u64) -> Re
 
 /// Say what is about to be written over, where the target is a path some other
 /// command guards.
+#[cfg(feature = "cli")]
 async fn announce(client: &VaultClient, path: &str) {
     if let Some(notice) = master_key_notice(client, path).await {
         eprintln!("{notice}\n");
@@ -395,6 +411,7 @@ mod tests {
 
     /// A verb the mount cannot serve is refused by name rather than sent to a
     /// path the engine does not have.
+    #[cfg(feature = "cli")]
     #[tokio::test]
     async fn a_version_verb_on_a_flat_mount_is_refused() {
         let server = MockServer::start().await;
@@ -488,6 +505,7 @@ mod tests {
 
     /// Rolling back to a version whose value was destroyed would write an empty
     /// secret over a good one.
+    #[cfg(feature = "cli")]
     #[tokio::test]
     async fn rolling_back_to_a_destroyed_version_is_refused() {
         let server = MockServer::start().await;
@@ -515,6 +533,7 @@ mod tests {
         assert!(err.contains("destroyed"), "{err}");
     }
 
+    #[cfg(feature = "cli")]
     #[tokio::test]
     async fn rolling_back_to_a_deleted_version_is_refused() {
         let server = MockServer::start().await;

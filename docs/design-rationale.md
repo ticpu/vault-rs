@@ -108,13 +108,17 @@ unprotectable from inside the process. Because nothing expires the file, logout 
 token found expired must be unlinked rather than left, and no third fallback gets invented when
 neither directory is available.
 
-## An unreferenced `pub` item is dead, not surface
+## What the `client` feature builds is surface; the rest of the lib target is not
 
-The lib target exists so tests and the binary can share code, not because anything outside this
-repository links against it; no consumer can be named for an item nothing here calls. A `pub` with no
-caller is therefore dead until someone names the consumer, and a static analyzer flagging one is
-reporting a fact rather than guessing. Treating it as surface preserves whichever forked, unfixed copy
-of a code path happened to be marked `pub`.
+Address discovery, login, token handling and a secret read are linked by other programs, and that
+subset is a contract kept for them. Outside it the lib target exists so the tests and the binary can
+share code: a `pub` there with no caller in this repository is dead until someone names the
+consumer, and a static analyzer flagging one is reporting a fact rather than guessing. Treating the
+whole target as surface preserves whichever forked, unfixed copy of a code path happened to be
+marked `pub`.
+
+A program links this rather than writing its own Vault client so that one login serves both, which
+holds only while the token this crate stores stays the only credential either of them keeps.
 
 ## Uniform encryption over per-artifact classification
 

@@ -9,42 +9,43 @@ license = "GPL-3.0-only"
 [[bin]]
 name = "vault-rs"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [dependencies]
 # HTTP client
-reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
+reqwest = { version = "0.13", features = ["json"], default-features = false }
 tokio = { version = "1.0", features = ["full"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml_ng = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
 
 # Certificate parsing
-x509-parser = "0.18"
-base64 = "0.23"
-chrono = { version = "0.4", features = ["serde"] }
-hex = "0.4"
-humantime = "2"
+x509-parser = { version = "0.18", optional = true }
+base64 = { version = "0.23", optional = true }
+hex = { version = "0.4", optional = true }
+humantime = { version = "2", optional = true }
 
 # CLI framework
-clap = { version = "4.4", features = ["derive", "env"] }
-clap_complete = "4.4"
+clap = { version = "4.4", features = ["derive", "env"], optional = true }
+clap_complete = { version = "4.4", optional = true }
 
 # Cryptography
-aes-gcm = "0.11"
-rand = "0.10"
-sha2 = "0.11"
+aes-gcm = { version = "0.11", optional = true }
+rand = { version = "0.10", optional = true }
+sha2 = { version = "0.11", optional = true }
 
 # OIDC redirect handling
 form_urlencoded = "1"
 getrandom = "0.4"
 
 # System integration
-libc = "0.2"
+libc = { version = "0.2", optional = true }
 dirs = "6"
-rpassword = "7"
-which = "8"
+rpassword = { version = "7", optional = true }
+which = { version = "8", optional = true }
 
 # Error handling
 thiserror = "2"
@@ -52,18 +53,67 @@ anyhow = "1"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # DNS resolution
 hickory-resolver = "0.26"
 ordermap = "1"
-rustls-webpki = { version = "0.103", default-features = false, features = ["std", "aws-lc-rs"] }
-rustls-pki-types = "1"
 
-# Off by default: `dev-server` is for running this tool against a throwaway
-# Vault by hand, and a released binary has no business carrying it.
+# Certificate chain verification
+rustls-webpki = { version = "0.103", default-features = false, features = [
+    "std",
+], optional = true }
+rustls-pki-types = { version = "1", optional = true }
+
 [features]
-dev-server = []
+default = ["cli", "rustls-aws-lc-rs"]
+
+# What another program links: address discovery, login, token handling and a
+# secret read. Carries no optional dependency of its own — it names the surface,
+# and everything it needs is compiled unconditionally.
+client = []
+
+# The tool itself: certificate work, the encrypted local store and the command
+# line around them. One feature, not three — `cert` and `storage` each reach
+# into the other and both into `cli::args`, so no subset of the three stands on
+# its own to be selected.
+cli = [
+    "client",
+    "dep:aes-gcm",
+    "dep:base64",
+    "dep:clap",
+    "dep:clap_complete",
+    "dep:hex",
+    "dep:humantime",
+    "dep:libc",
+    "dep:rand",
+    "dep:rpassword",
+    "dep:rustls-pki-types",
+    "dep:rustls-webpki",
+    "dep:sha2",
+    "dep:tracing-subscriber",
+    "dep:which",
+    "dep:x509-parser",
+]
+
+# TLS backends. `rustls-ring` leaves the process to install its own; anything
+# linking this crate beside a program that does needs it.
+rustls-aws-lc-rs = ["reqwest/rustls", "rustls-webpki?/aws-lc-rs"]
+rustls-ring = ["reqwest/rustls-no-provider", "rustls-webpki?/ring"]
+
+# For running this tool against a throwaway Vault by hand; a released binary has
+# no business carrying it.
+dev-server = ["cli"]
+
+[[example]]
+name = "read_secret"
+required-features = ["client"]
+
+# It drives the built binary. Without `cli` there is no binary to build, and
+# Cargo still hands the test a path — to whatever an earlier build left there.
+[[test]]
+name = "against_a_real_vault"
+required-features = ["cli"]
 
 [dev-dependencies]
 wiremock = "0.6"

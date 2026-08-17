@@ -516,6 +516,7 @@ impl VaultAuth {
     /// The prompts come after the method is dispatched on, not before: a method
     /// that authenticates through a browser has no username or password to ask
     /// for, and asking anyway collects a credential nothing then uses.
+    #[cfg(feature = "cli")]
     pub async fn interactive_login(&self, auth_method: Option<String>) -> Result<String> {
         let method = auth_method.unwrap_or_else(|| "ldap".to_string());
 

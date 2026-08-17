@@ -1,21 +1,38 @@
+#[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
+compile_error!(
+    "select a TLS backend: `rustls-aws-lc-rs`, or `rustls-ring` where the process installs its \
+     own rustls provider. Selecting neither leaves the certificate verifier with an empty \
+     algorithm list, which reports every certificate as unverifiable."
+);
+
+#[cfg(feature = "cli")]
 pub mod cache;
 pub mod cert;
+#[cfg(feature = "cli")]
 pub mod cli;
+#[cfg(feature = "cli")]
 pub mod crypto;
 pub mod logical;
+#[cfg(feature = "cli")]
 pub mod secrets;
+#[cfg(feature = "cli")]
 pub mod server;
+#[cfg(feature = "cli")]
 pub mod session;
+#[cfg(feature = "cli")]
 pub mod storage;
 pub mod utils;
 pub mod vault;
 
 // Re-export specific items to avoid conflicts
-pub use cert::{
-    CertificateCache, CertificateColumn, CertificateMetadata, CertificateParser, CertificateService,
-};
+#[cfg(feature = "cli")]
+pub use cert::{CertificateCache, CertificateParser, CertificateService};
+pub use cert::{CertificateColumn, CertificateMetadata};
+#[cfg(feature = "cli")]
 pub use cli::{args, commands};
+#[cfg(feature = "cli")]
 pub use crypto::encryption;
+#[cfg(feature = "cli")]
 pub use storage::local;
 pub use utils::{errors, paths};
 pub use vault::client;

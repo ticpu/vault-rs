@@ -1,3 +1,12 @@
+// The binary installs no rustls provider, so it needs the backend that installs
+// itself. `rustls-ring` is for a dependent whose own process does that, and a
+// binary built on it panics inside rustls at the first request.
+#[cfg(not(feature = "rustls-aws-lc-rs"))]
+compile_error!(
+    "the vault-rs binary needs the `rustls-aws-lc-rs` backend; `rustls-ring` leaves the process \
+     to install a rustls provider, and this one installs none"
+);
+
 use vault_rs::cli::{handle_command, Cli};
 
 #[tokio::main]

@@ -7,10 +7,15 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "cli")]
 const OID_RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
+#[cfg(feature = "cli")]
 const OID_EC_PUBLIC_KEY: &str = "1.2.840.10045.2.1";
+#[cfg(feature = "cli")]
 const OID_ECDSA_WITH_SHA256: &str = "1.2.840.10045.4.3.2";
+#[cfg(feature = "cli")]
 const OID_ECDSA_WITH_SHA384: &str = "1.2.840.10045.4.3.3";
+#[cfg(feature = "cli")]
 const OID_ECDSA_WITH_SHA512: &str = "1.2.840.10045.4.3.4";
 
 /// Vault's non-standard `LIST` verb, shared by every LIST-style request
@@ -308,6 +313,7 @@ impl VaultClient {
     }
 
     /// Detect crypto type for a PKI mount based on its first issuer
+    #[cfg(feature = "cli")]
     pub async fn detect_crypto_type(&self, pki_mount: &str) -> Result<String> {
         tracing::debug!("Detecting crypto type for PKI mount: {pki_mount}");
 
@@ -345,6 +351,7 @@ impl VaultClient {
     }
 
     /// Parse crypto type from certificate PEM
+    #[cfg(feature = "cli")]
     fn parse_crypto_type_from_pem(&self, cert_pem: &str) -> Result<String> {
         use x509_parser::prelude::*;
 

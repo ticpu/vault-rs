@@ -1,9 +1,11 @@
 pub mod auth;
+#[cfg(feature = "cli")]
 pub mod certificates;
 pub mod client;
 pub mod mounts;
 pub mod oidc;
 pub mod pki;
+#[cfg(feature = "cli")]
 pub mod wrapper;
 
 use reqwest::Client;
