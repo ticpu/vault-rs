@@ -37,8 +37,8 @@ changing issuance, verification or export behaviour.
 
 ## Security
 
-- System trust store via reqwest's `rustls` feature, which pulls in
-  `rustls-platform-verifier`. There is no separate native-roots feature to enable.
+- System trust store via reqwest, which pulls in `rustls-platform-verifier` under either backend
+  feature. There is no separate native-roots feature to enable.
 - Tokens in `XDG_RUNTIME_DIR`, mode 0600.
 - Temporary files go under `VaultCliPaths::runtime_dir()`, mode 0600, removed after use.
 
@@ -50,13 +50,22 @@ changing issuance, verification or export behaviour.
 - Prefer `crate::utils::PROGRAM_NAME` over a literal `"vault-rs"`.
 - `cert -> cli -> crypto -> storage -> utils -> vault` is a real dependency cycle, caused by
   `utils/cert_utils.rs` holding certificate logic. Do not deepen it: certificate logic belongs in
-  `cert/`, Vault API types in `vault/`, and only generic I/O in `utils/`.
+  `cert/`, Vault API types in `vault/`, and only generic I/O in `utils/`. It is why the tool is one
+  `cli` feature and not a certificate one beside a store one — untangling it is what a finer split
+  would take.
+- **Every change has to build under `--no-default-features --features client,rustls-aws-lc-rs`.**
+  That is the surface another program links, and `examples/read_secret.rs` is compiled under it.
+  Anything reachable from `vault/`, `logical/kv.rs`, `cert/{metadata,serial}` or
+  `utils/{dns_discovery,errors,output,paths}` is in it, so a dependency added there reaches every
+  consumer unless it is gated on `cli`.
 
 ## Tests and hooks
 
 `.git/hooks/pre-commit` runs fmt, clippy `-D warnings`, `cargo test --release` and
 `gitleaks git --staged`. It is the verification — do not re-run those separately. `--no-verify` is
-for a `test:` commit that deliberately lands a failing test.
+for a `test:` commit that deliberately lands a failing test. `.git/hooks/pre-push` refuses a branch
+whose tip tracks `Cargo.lock`, which a rebase or an amend can carry there after the commit-time
+check has passed; tags are exempt, since the release tag is where the lock belongs.
 
 `.gitleaks.local.toml` extends the committed config with private patterns and is never committed
 itself.
