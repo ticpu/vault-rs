@@ -399,13 +399,26 @@ pub enum KeyCommands {
 pub enum SessionCommands {
     /// Login to Vault
     Login {
-        /// Authentication method
+        /// Authentication method: ldap, userpass or oidc
         #[arg(long, default_value = "ldap")]
         method: String,
 
-        /// Username
+        /// Username (ldap, userpass)
         #[arg(long)]
         username: Option<String>,
+
+        /// Role to authenticate for; the mount's default role if unset (oidc)
+        #[arg(long)]
+        role: Option<String>,
+
+        /// Port the identity provider redirects back to, 8250 by default. Has
+        /// to appear in the role's allowed redirect URIs (oidc)
+        #[arg(long)]
+        port: Option<u16>,
+
+        /// Print the authorization URL instead of opening a browser (oidc)
+        #[arg(long)]
+        no_browser: bool,
     },
     /// Logout from Vault
     Logout,

@@ -1,6 +1,7 @@
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::paths::VaultCliPaths;
 use crate::utils::PROGRAM_NAME;
+use crate::vault::oidc::CallbackListener;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::env;
@@ -26,6 +27,30 @@ pub enum TokenState {
 pub enum LogoutOutcome {
     NoToken,
     Revoked,
+}
+
+/// The port the official client uses, and so the one a role's allowed redirect
+/// URIs are most likely already written for.
+pub const OIDC_REDIRECT_PORT: u16 = 8250;
+
+/// What an OIDC login needs beyond the auth mount.
+pub struct OidcLogin<'a> {
+    pub mount: &'a str,
+    pub role: Option<&'a str>,
+    /// Has to match a port in the role's allowed redirect URIs.
+    pub port: u16,
+    pub open_browser: bool,
+}
+
+impl<'a> OidcLogin<'a> {
+    pub fn new(mount: &'a str) -> Self {
+        Self {
+            mount,
+            role: None,
+            port: OIDC_REDIRECT_PORT,
+            open_browser: true,
+        }
+    }
 }
 
 pub struct VaultAuth {
@@ -115,57 +140,127 @@ impl VaultAuth {
     /// Authenticate with LDAP and store token
     pub async fn login_ldap(&self, username: &str, password: &str) -> Result<String> {
         let url = format!("{}/v1/auth/ldap/login/{}", self.vault_addr, username);
-
-        let payload = json!({
-            "password": password
-        });
-
         let response = self
             .client
             .post(&url)
             .header("Content-Type", "application/json")
-            .json(&payload)
+            .json(&json!({ "password": password }))
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                // discard-ok: building a message from an already-failed response;
-                // the status above is the signal, the body is a courtesy
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(VaultCliError::Auth(format!(
-                "LDAP authentication failed: {status} - {error_text}"
-            )));
-        }
-
-        let auth_response: Value = response.json().await?;
-
-        if let Some(auth) = auth_response.get("auth") {
-            if let Some(client_token) = auth.get("client_token") {
-                if let Some(token) = client_token.as_str() {
-                    // Store token securely
-                    self.store_token(token).await?;
-                    tracing::info!("Successfully authenticated with LDAP");
-                    return Ok(token.to_string());
-                }
-            }
-        }
-
-        Err(VaultCliError::Auth(
-            "Invalid response from Vault authentication".to_string(),
-        ))
+        self.accept_login("LDAP", response).await
     }
 
     /// Authenticate with username/password auth method
     pub async fn login_userpass(&self, username: &str, password: &str) -> Result<String> {
         let url = format!("{}/v1/auth/userpass/login/{}", self.vault_addr, username);
+        let response = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&json!({ "password": password }))
+            .send()
+            .await?;
 
-        let payload = json!({
-            "password": password
-        });
+        self.accept_login("Userpass", response).await
+    }
+
+    /// Take the minted token out of a login answer and store it. Every method
+    /// ends here, so a credential never lands in a second place.
+    async fn accept_login(&self, method: &str, response: reqwest::Response) -> Result<String> {
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response
+                .text()
+                .await
+                // discard-ok: building a message from an already-failed response;
+                // the status above is the signal, the body is a courtesy
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(VaultCliError::Auth(format!(
+                "{method} authentication failed: {status} - {error_text}"
+            )));
+        }
+
+        let auth_response: Value = response.json().await?;
+        let token = auth_response["auth"]["client_token"]
+            .as_str()
+            .ok_or_else(|| {
+                VaultCliError::Auth(format!(
+                    "{method} authentication answered without a token; \
+                     Vault reported: {auth_response}"
+                ))
+            })?;
+
+        self.store_token(token).await?;
+        tracing::info!("Successfully authenticated with {method}");
+        Ok(token.to_string())
+    }
+
+    /// Authenticate through an identity provider and store the token.
+    ///
+    /// `mount` is the auth mount's path, not the provider; a role left absent
+    /// lets the mount's own default answer.
+    pub async fn login_oidc(&self, mount: &str, role: Option<&str>) -> Result<String> {
+        self.login_oidc_with(OidcLogin {
+            role,
+            ..OidcLogin::new(mount)
+        })
+        .await
+    }
+
+    /// As `login_oidc`, where the caller also decides the redirect port and
+    /// whether a browser is launched.
+    pub async fn login_oidc_with(&self, login: OidcLogin<'_>) -> Result<String> {
+        // Bound before Vault is asked for a URL: a port already taken is the
+        // caller's to fix, and finding out first leaves no request outstanding.
+        let listener = CallbackListener::bind(login.port).await?;
+        let nonce = client_nonce()?;
+        let auth_url = self
+            .oidc_auth_url(&login, &listener.redirect_uri(), &nonce)
+            .await?;
+
+        // Printed whether or not a browser is launched, so a session that has
+        // none is an ordinary case rather than a failure.
+        eprintln!("Open this URL to authenticate:\n\n{auth_url}\n");
+        if login.open_browser {
+            open_in_browser(&auth_url);
+        }
+
+        let callback = listener.accept().await?;
+        // Scoped: the serializer is not `Send`, and holding one across the
+        // request below makes this future unusable to a caller that spawns it.
+        let query = {
+            let mut query = form_urlencoded::Serializer::new(String::new());
+            query.append_pair("state", &callback.state);
+            query.append_pair("code", &callback.code);
+            query.append_pair("client_nonce", &nonce);
+            if let Some(id_token) = &callback.id_token {
+                query.append_pair("id_token", id_token);
+            }
+            query.finish()
+        };
+
+        let url = format!(
+            "{}/v1/auth/{}/oidc/callback?{query}",
+            self.vault_addr, login.mount
+        );
+        let response = self.client.get(&url).send().await?;
+        self.accept_login("OIDC", response).await
+    }
+
+    /// The provider's authorization URL, as the mount builds it for this role
+    /// and this redirect.
+    async fn oidc_auth_url(
+        &self,
+        login: &OidcLogin<'_>,
+        redirect_uri: &str,
+        nonce: &str,
+    ) -> Result<String> {
+        let url = format!("{}/v1/auth/{}/oidc/auth_url", self.vault_addr, login.mount);
+        let mut payload = json!({ "redirect_uri": redirect_uri, "client_nonce": nonce });
+        if let Some(role) = login.role {
+            payload["role"] = json!(role);
+        }
 
         let response = self
             .client
@@ -184,26 +279,21 @@ impl VaultAuth {
                 // the status above is the signal, the body is a courtesy
                 .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(VaultCliError::Auth(format!(
-                "Userpass authentication failed: {status} - {error_text}"
+                "OIDC authentication failed: {status} - {error_text}"
             )));
         }
 
-        let auth_response: Value = response.json().await?;
-
-        if let Some(auth) = auth_response.get("auth") {
-            if let Some(client_token) = auth.get("client_token") {
-                if let Some(token) = client_token.as_str() {
-                    // Store token securely
-                    self.store_token(token).await?;
-                    tracing::info!("Successfully authenticated with userpass");
-                    return Ok(token.to_string());
-                }
-            }
+        // A role that does not allow this redirect is answered with an empty
+        // URL and no error, which opens a browser at nothing.
+        let answer: Value = response.json().await?;
+        match answer["data"]["auth_url"].as_str().unwrap_or_default() {
+            "" => Err(VaultCliError::Auth(format!(
+                "The '{}' mount returned no authorization URL for {redirect_uri}. The role's \
+                 allowed_redirect_uris has to name it; --port changes the port this asks for.",
+                login.mount
+            ))),
+            auth_url => Ok(auth_url.to_string()),
         }
-
-        Err(VaultCliError::Auth(
-            "Invalid response from Vault authentication".to_string(),
-        ))
     }
 
     /// Renew the current token
@@ -422,8 +512,16 @@ impl VaultAuth {
     }
 
     /// Interactive login - prompts for username and password
+    ///
+    /// The prompts come after the method is dispatched on, not before: a method
+    /// that authenticates through a browser has no username or password to ask
+    /// for, and asking anyway collects a credential nothing then uses.
     pub async fn interactive_login(&self, auth_method: Option<String>) -> Result<String> {
         let method = auth_method.unwrap_or_else(|| "ldap".to_string());
+
+        if method == "oidc" {
+            return self.login_oidc(&method, None).await;
+        }
 
         // Get username
         print!("Username: ");
@@ -445,6 +543,37 @@ impl VaultAuth {
                 "Unsupported auth method: {method}"
             ))),
         }
+    }
+}
+
+/// Binds the callback to this login, so a redirect belonging to another one is
+/// refused by Vault rather than exchanged here.
+fn client_nonce() -> Result<String> {
+    let mut bytes = [0u8; 20];
+    getrandom::fill(&mut bytes).map_err(|e| {
+        VaultCliError::Auth(format!("Could not generate an OIDC client nonce: {e}"))
+    })?;
+
+    Ok(bytes.iter().fold(String::new(), |mut nonce, byte| {
+        use std::fmt::Write;
+        // discard-ok: writing to a String cannot fail
+        let _ = write!(nonce, "{byte:02x}");
+        nonce
+    }))
+}
+
+/// Launch a browser at the authorization URL, which is already on stderr — a
+/// launcher that is absent or refuses costs nothing.
+fn open_in_browser(url: &str) {
+    // Without a display `xdg-open` reaches for a terminal browser, which takes
+    // over the terminal this login is reporting to.
+    if env::var_os("DISPLAY").is_none() && env::var_os("WAYLAND_DISPLAY").is_none() {
+        eprintln!("No display session; open the URL above yourself.");
+        return;
+    }
+
+    if let Err(e) = std::process::Command::new("xdg-open").arg(url).spawn() {
+        eprintln!("Could not launch a browser with xdg-open ({e}); open the URL above yourself.");
     }
 }
 
@@ -552,6 +681,100 @@ mod tests {
             .await
             .expect_err("an unreachable server is reported");
         assert!(!token_file.exists(), "the token file must be gone anyway");
+    }
+
+    const AUTH_URL: &str = "/v1/auth/oidc/oidc/auth_url";
+    const CALLBACK: &str = "/v1/auth/oidc/oidc/callback";
+
+    fn oidc_at(port: u16) -> OidcLogin<'static> {
+        OidcLogin {
+            port,
+            open_browser: false,
+            ..OidcLogin::new("oidc")
+        }
+    }
+
+    /// Vault answers a redirect the role does not allow with an empty URL and
+    /// a success status, which would otherwise send a browser to nothing and
+    /// leave the login waiting out its timeout.
+    #[tokio::test]
+    async fn a_redirect_the_role_does_not_allow_is_refused() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(AUTH_URL))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": { "auth_url": "" }
+            })))
+            .mount(&server)
+            .await;
+
+        let auth = VaultAuth::for_test(server.uri(), token_at("oidc-refused"));
+        let err = auth
+            .login_oidc_with(oidc_at(18251))
+            .await
+            .expect_err("no URL to open")
+            .to_string();
+        assert!(err.contains("allowed_redirect_uris"), "{err}");
+    }
+
+    /// The whole flow: the mount builds a URL, the provider redirects to the
+    /// listener, and the code is exchanged for a token that lands in the one
+    /// file every other method writes.
+    #[tokio::test]
+    async fn a_completed_redirect_stores_the_token() {
+        let port = 18252;
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(AUTH_URL))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": { "auth_url": "https://idp.example/authorize?state=st" }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(CALLBACK))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "auth": { "client_token": "s.oidc-token" }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let token_file = token_at("oidc-complete");
+        let auth = VaultAuth::for_test(server.uri(), token_file.clone());
+        let login = tokio::spawn(async move { auth.login_oidc_with(oidc_at(port)).await });
+
+        redirect_to(port, "/oidc/callback?state=st&code=xyz").await;
+
+        let token = login.await.expect("joined").expect("the login");
+        assert_eq!(token, "s.oidc-token");
+        assert_eq!(
+            fs::read_to_string(&token_file).expect("stored"),
+            "s.oidc-token"
+        );
+    }
+
+    /// Stand in for the browser, once the login has had time to bind.
+    async fn redirect_to(port: u16, target: &str) {
+        use tokio::io::AsyncWriteExt;
+
+        for attempt in 0..100 {
+            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                Ok(mut stream) => {
+                    stream
+                        .write_all(
+                            format!("GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes(),
+                        )
+                        .await
+                        .expect("redirect");
+                    return;
+                }
+                Err(e) => {
+                    assert!(attempt < 99, "the listener never came up: {e}");
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            }
+        }
     }
 
     #[tokio::test]

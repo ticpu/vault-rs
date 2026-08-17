@@ -3,7 +3,7 @@ use crate::utils::dns_discovery::get_vault_addr;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use crate::vault::{
-    auth::{LogoutOutcome, TokenState, VaultAuth},
+    auth::{LogoutOutcome, OidcLogin, TokenState, VaultAuth, OIDC_REDIRECT_PORT},
     client::VaultClient,
 };
 
@@ -12,7 +12,22 @@ pub async fn handle_session_commands(
     output: &OutputFormat,
 ) -> Result<()> {
     match command {
-        SessionCommands::Login { method, username } => login_command(method, username).await,
+        SessionCommands::Login {
+            method,
+            username,
+            role,
+            port,
+            no_browser,
+        } => {
+            login_command(LoginRequest {
+                method,
+                username,
+                role,
+                port,
+                no_browser,
+            })
+            .await
+        }
         SessionCommands::Logout => logout_command().await,
         SessionCommands::Status => status_command(output).await,
         SessionCommands::Key { command } => match command {
@@ -28,13 +43,62 @@ pub async fn handle_session_commands(
     }
 }
 
-async fn login_command(method: String, username: Option<String>) -> Result<()> {
+pub struct LoginRequest {
+    pub method: String,
+    pub username: Option<String>,
+    pub role: Option<String>,
+    pub port: Option<u16>,
+    pub no_browser: bool,
+}
+
+impl LoginRequest {
+    /// An argument the chosen method cannot act on is refused rather than
+    /// dropped: silently ignoring `--role` logs the operator in somewhere other
+    /// than where they asked, and says nothing.
+    fn refuse_inert_arguments(&self) -> Result<()> {
+        let browser_flow = self.method == "oidc";
+        let inert: Vec<&str> = [
+            ("--username", self.username.is_some() && browser_flow),
+            ("--role", self.role.is_some() && !browser_flow),
+            ("--port", self.port.is_some() && !browser_flow),
+            ("--no-browser", self.no_browser && !browser_flow),
+        ]
+        .into_iter()
+        .filter(|(_, given)| *given)
+        .map(|(name, _)| name)
+        .collect();
+
+        match inert.is_empty() {
+            true => Ok(()),
+            false => Err(VaultCliError::InvalidInput(format!(
+                "`--method {}` does not use {}",
+                self.method,
+                inert.join(", ")
+            ))),
+        }
+    }
+}
+
+async fn login_command(request: LoginRequest) -> Result<()> {
     let vault_addr = get_vault_addr().await?;
     let auth = VaultAuth::new(vault_addr);
 
-    let token = match username {
-        Some(user) => login_with_credentials(&auth, &method, &user).await?,
-        None => auth.interactive_login(Some(method)).await?,
+    request.refuse_inert_arguments()?;
+
+    // Dispatched before any prompt: a browser flow has no username or password
+    // to ask for.
+    let token = match (request.method.as_str(), request.username) {
+        ("oidc", _) => {
+            auth.login_oidc_with(OidcLogin {
+                mount: &request.method,
+                role: request.role.as_deref(),
+                port: request.port.unwrap_or(OIDC_REDIRECT_PORT),
+                open_browser: !request.no_browser,
+            })
+            .await?
+        }
+        (method, Some(user)) => login_with_credentials(&auth, method, &user).await?,
+        (_, None) => auth.interactive_login(Some(request.method)).await?,
     };
 
     // Char boundaries, not bytes: a short or non-ASCII token panicked here.

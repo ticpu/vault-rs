@@ -36,6 +36,10 @@ aes-gcm = "0.11"
 rand = "0.10"
 sha2 = "0.11"
 
+# OIDC redirect handling
+form_urlencoded = "1"
+getrandom = "0.4"
+
 # System integration
 libc = "0.2"
 dirs = "6"
