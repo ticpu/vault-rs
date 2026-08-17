@@ -102,13 +102,9 @@ impl Target {
     }
 }
 
-pub async fn get(
-    client: &VaultClient,
-    target: &Target,
-    version: Option<u64>,
-    field: Option<&str>,
-    output: &OutputFormat,
-) -> Result<()> {
+/// The server's answer with the mount's layout unwrapped, leases and warnings
+/// still on it.
+pub async fn read(client: &VaultClient, target: &Target, version: Option<u64>) -> Result<Value> {
     let mut path = target.data();
     if let Some(version) = version {
         target.require_versions("get -version")?;
@@ -116,7 +112,46 @@ pub async fn get(
     }
 
     let secret = client.get_even_if_withdrawn(&path).await?;
-    super::commands::report_secret(&unwrap_data(&secret, target.versioned()), field, output)
+    Ok(unwrap_data(&secret, target.versioned()))
+}
+
+/// The secret's own fields, for a caller that wants the value rather than a
+/// rendering of it.
+///
+/// A version that was withdrawn or destroyed answers with no fields; that is
+/// refused here rather than returned as an empty object, since a caller reading
+/// a credential out of it would otherwise get one that is merely absent.
+pub async fn read_secret(
+    client: &VaultClient,
+    mount: Option<&str>,
+    path: &str,
+    version: Option<u64>,
+) -> Result<Value> {
+    let target = Target::resolve(client, mount, path).await?;
+    let envelope = read(client, &target, version).await?;
+
+    match envelope.get("data") {
+        Some(data) if data.is_object() => Ok(data.clone()),
+        _ => Err(VaultCliError::InvalidInput(format!(
+            "'{}' answered with no fields{}; a withdrawn or destroyed version reads this way",
+            target.data(),
+            match version {
+                Some(version) => format!(" at version {version}"),
+                None => String::new(),
+            }
+        ))),
+    }
+}
+
+pub async fn get(
+    client: &VaultClient,
+    target: &Target,
+    version: Option<u64>,
+    field: Option<&str>,
+    output: &OutputFormat,
+) -> Result<()> {
+    let secret = read(client, target, version).await?;
+    super::commands::report_secret(&secret, field, output)
 }
 
 pub async fn put(
@@ -394,6 +429,61 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(server)
             .await;
+    }
+
+    /// The layouts nest the value at different depths, and a caller reading a
+    /// credential gets the fields themselves either way.
+    #[tokio::test]
+    async fn read_secret_returns_the_fields_whichever_layout_the_mount_uses() {
+        let server = MockServer::start().await;
+        probe(&server, "secret/app/config", "secret/", "2").await;
+        versioned_secret(
+            &server,
+            json!({ "data": { "data": { "password": "versioned" }, "metadata": { "version": 3 } } }),
+        )
+        .await;
+        probe(&server, "flat/app/config", "flat/", "1").await;
+        Mock::given(method("GET"))
+            .and(path("/v1/flat/app/config"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "data": { "password": "flat" } })),
+            )
+            .mount(&server)
+            .await;
+
+        let client = client(&server);
+        assert_eq!(
+            read_secret(&client, None, "secret/app/config", None)
+                .await
+                .expect("versioned")["password"],
+            json!("versioned")
+        );
+        assert_eq!(
+            read_secret(&client, Some("flat"), "app/config", None)
+                .await
+                .expect("flat")["password"],
+            json!("flat")
+        );
+    }
+
+    /// A withdrawn version answers with metadata and no fields. Returning that
+    /// as an empty object hands a caller reading a credential one that is
+    /// merely absent.
+    #[tokio::test]
+    async fn read_secret_refuses_a_version_holding_no_fields() {
+        let server = MockServer::start().await;
+        probe(&server, "secret/app/config", "secret/", "2").await;
+        versioned_secret(
+            &server,
+            json!({ "data": { "data": null, "metadata": { "version": 3, "destroyed": true } } }),
+        )
+        .await;
+
+        let err = read_secret(&client(&server), None, "secret/app/config", None)
+            .await
+            .expect_err("no fields to return")
+            .to_string();
+        assert!(err.contains("no fields"), "{err}");
     }
 
     /// Rolling back to a version whose value was destroyed would write an empty
