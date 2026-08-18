@@ -47,10 +47,10 @@ arch-install:
 # kept (stable tag) so a rebuild reuses its layer and registry caches. The build
 # context is staged rather than the repo root, which carries target/ and the
 # certificate fixtures.
-$(DIST)/$(BINARY): packaging/Containerfile Cargo.toml $(shell find src -name '*.rs')
+$(DIST)/$(BINARY): packaging/Containerfile Cargo.toml $(shell find src examples tests -name '*.rs')
 	rm -rf "$(CTX)"
 	mkdir -p "$(CTX)"
-	cp -a Cargo.toml src "$(CTX)/"
+	cp -a Cargo.toml src examples tests "$(CTX)/"
 	if [ -f Cargo.lock ]; then cp -a Cargo.lock "$(CTX)/"; fi
 	$(DOCKER) build --platform linux/$(DEB_ARCH) --build-arg SUITE=$(DEBIAN_SUITE) \
 		--tag "$(IMG)" -f packaging/Containerfile "$(CTX)"
