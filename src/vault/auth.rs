@@ -6,7 +6,8 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
 /// What `auth status` found, as opposed to what `get_token` needs.
@@ -53,14 +54,39 @@ impl<'a> OidcLogin<'a> {
     }
 }
 
+/// The variable the tool's own session answers to.
+pub const DEFAULT_TOKEN_ENV: &str = "VAULT_TOKEN";
+
+/// A session belonging to the program that named it, rather than to the
+/// operator: its own token file, and nothing taken from the environment unless
+/// it is named here.
+pub struct CallerSession {
+    pub token_file: PathBuf,
+    /// Read before the file when named.
+    pub token_env: Option<String>,
+    pub namespace: Option<String>,
+}
+
+impl CallerSession {
+    pub fn new(token_file: PathBuf) -> Self {
+        Self {
+            token_file,
+            token_env: None,
+            namespace: None,
+        }
+    }
+}
+
 pub struct VaultAuth {
     client: Client,
     vault_addr: String,
-    /// Where the token lives, when it is not the resolved default. Production
-    /// resolves the path per call so a session with no runtime directory fails
-    /// where the token is used rather than wherever a client was built; tests
-    /// point this at a scratch file.
+    /// Where the token lives, when it is not the resolved default. The tool's
+    /// own session resolves the path per call, so one with no runtime directory
+    /// fails where the token is used rather than wherever a client was built.
     token_file: Option<PathBuf>,
+    /// The variable consulted before the file, where a session has one.
+    token_env: Option<String>,
+    namespace: Option<String>,
 }
 
 impl VaultAuth {
@@ -71,16 +97,35 @@ impl VaultAuth {
             client,
             vault_addr,
             token_file: None,
+            token_env: Some(DEFAULT_TOKEN_ENV.to_string()),
+            // discard-ok: an unset namespace is the ordinary single-tenant case
+            namespace: env::var("VAULT_NAMESPACE").ok().filter(|n| !n.is_empty()),
         }
     }
 
-    #[cfg(test)]
-    pub fn for_test(vault_addr: String, token_file: PathBuf) -> Self {
+    /// A session reading the named file and no environment variable.
+    pub fn with_token_file(vault_addr: String, token_file: PathBuf) -> Self {
+        Self::for_session(vault_addr, CallerSession::new(token_file))
+    }
+
+    /// As `with_token_file`, where the caller also names the variable its token
+    /// may arrive in and the namespace it works under.
+    pub fn for_session(vault_addr: String, session: CallerSession) -> Self {
         Self {
-            client: super::create_http_client().expect("test client"),
+            client: super::create_http_client().expect("Failed to create HTTP client"),
             vault_addr,
-            token_file: Some(token_file),
+            token_file: Some(session.token_file),
+            token_env: session.token_env,
+            namespace: session.namespace,
         }
+    }
+
+    pub fn vault_addr(&self) -> &str {
+        &self.vault_addr
+    }
+
+    pub fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
     }
 
     fn token_file(&self) -> Result<PathBuf> {
@@ -90,13 +135,22 @@ impl VaultAuth {
         }
     }
 
+    /// The token this session's variable holds, where it names one.
+    fn token_from_env(&self) -> Option<String> {
+        self.token_env
+            .as_deref()
+            // discard-ok: an unset variable falls through to the stored token
+            .and_then(|name| env::var(name).ok())
+            .filter(|token| !token.is_empty())
+    }
+
     /// The stored token's state. Only a genuine absence is `Absent`; an
     /// unreadable file or an unreachable Vault is an error, not a report that
     /// there is no token.
     pub async fn token_state(&self) -> Result<TokenState> {
-        let token = match env::var("VAULT_TOKEN") {
-            Ok(token) if !token.is_empty() => token,
-            _ => {
+        let token = match self.token_from_env() {
+            Some(token) => token,
+            None => {
                 let token_file = self.token_file()?;
                 if !token_file.exists() {
                     return Ok(TokenState::Absent);
@@ -118,17 +172,14 @@ impl VaultAuth {
     /// Get Vault token from environment or stored token file
     pub async fn get_token(&self) -> Result<String> {
         // Check environment variable first
-        // discard-ok: an unset variable falls through to the stored token
-        if let Ok(token) = env::var("VAULT_TOKEN") {
-            if !token.is_empty() {
-                tracing::debug!("Found VAULT_TOKEN in environment");
-                // Validate environment token
-                if self.validate_token(&token).await? {
-                    tracing::debug!("Environment token is valid");
-                    return Ok(token);
-                } else {
-                    tracing::warn!("Environment token is invalid/expired, trying stored token");
-                }
+        if let Some(token) = self.token_from_env() {
+            tracing::debug!("Found a token in the environment");
+            // Validate environment token
+            if self.validate_token(&token).await? {
+                tracing::debug!("Environment token is valid");
+                return Ok(token);
+            } else {
+                tracing::warn!("Environment token is invalid/expired, trying stored token");
             }
         }
 
@@ -137,12 +188,23 @@ impl VaultAuth {
         self.read_stored_token().await
     }
 
+    /// Every request this session makes, carrying the namespace it works under.
+    /// Building one anywhere else asks a different namespace than the one the
+    /// token was minted in.
+    fn request(&self, method: reqwest::Method, url: String) -> reqwest::RequestBuilder {
+        let builder = self.client.request(method, url);
+
+        match &self.namespace {
+            Some(namespace) => builder.header("X-Vault-Namespace", namespace),
+            None => builder,
+        }
+    }
+
     /// Authenticate with LDAP and store token
     pub async fn login_ldap(&self, username: &str, password: &str) -> Result<String> {
         let url = format!("{}/v1/auth/ldap/login/{}", self.vault_addr, username);
         let response = self
-            .client
-            .post(&url)
+            .request(reqwest::Method::POST, url)
             .header("Content-Type", "application/json")
             .json(&json!({ "password": password }))
             .send()
@@ -155,8 +217,7 @@ impl VaultAuth {
     pub async fn login_userpass(&self, username: &str, password: &str) -> Result<String> {
         let url = format!("{}/v1/auth/userpass/login/{}", self.vault_addr, username);
         let response = self
-            .client
-            .post(&url)
+            .request(reqwest::Method::POST, url)
             .header("Content-Type", "application/json")
             .json(&json!({ "password": password }))
             .send()
@@ -244,7 +305,7 @@ impl VaultAuth {
             "{}/v1/auth/{}/oidc/callback?{query}",
             self.vault_addr, login.mount
         );
-        let response = self.client.get(&url).send().await?;
+        let response = self.request(reqwest::Method::GET, url).send().await?;
         self.accept_login("OIDC", response).await
     }
 
@@ -263,8 +324,7 @@ impl VaultAuth {
         }
 
         let response = self
-            .client
-            .post(&url)
+            .request(reqwest::Method::POST, url)
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
@@ -301,8 +361,7 @@ impl VaultAuth {
         let url = format!("{}/v1/auth/token/renew-self", self.vault_addr);
 
         let response = self
-            .client
-            .post(&url)
+            .request(reqwest::Method::POST, url)
             .header("X-Vault-Token", token)
             .header("Content-Type", "application/json")
             .send()
@@ -343,8 +402,7 @@ impl VaultAuth {
         let url = format!("{}/v1/auth/token/lookup-self", self.vault_addr);
 
         let response = self
-            .client
-            .get(&url)
+            .request(reqwest::Method::GET, url)
             .header("X-Vault-Token", token)
             .send()
             .await?;
@@ -357,8 +415,7 @@ impl VaultAuth {
         let url = format!("{}/v1/auth/token/lookup-self", self.vault_addr);
 
         let response = self
-            .client
-            .get(&url)
+            .request(reqwest::Method::GET, url)
             .header("X-Vault-Token", token)
             .send()
             .await?;
@@ -373,22 +430,36 @@ impl VaultAuth {
         Ok(response.json().await?)
     }
 
-    /// Store token securely in XDG runtime directory
+    /// Store the token at this session's path, owner-only.
     async fn store_token(&self, token: &str) -> Result<()> {
         let token_file = self.token_file()?;
 
-        // Ensure parent directory exists
-        if let Some(parent) = token_file.parent() {
-            fs::create_dir_all(parent)?;
+        // An empty parent is a bare relative filename: the directory is the one
+        // the process is already in, and there is nothing to create.
+        match token_file
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            // A directory the caller named is theirs; only the one this tool
+            // resolves for itself is tightened.
+            Some(parent) if self.token_file.is_some() => {
+                VaultCliPaths::create_owner_only_dir(parent)?
+            }
+            Some(parent) => VaultCliPaths::ensure_dir_exists(parent)?,
+            None => {}
         }
 
-        // Write token to file
-        fs::write(&token_file, token)?;
-
-        // Set restrictive permissions (owner read/write only)
-        let mut perms = fs::metadata(&token_file)?.permissions();
-        perms.set_mode(0o600);
-        fs::set_permissions(&token_file, perms)?;
+        // Created owner-only rather than written and then tightened, which
+        // leaves the token at the umask in between.
+        fs::OpenOptions::new()
+            .mode(0o600)
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&token_file)?
+            .write_all(token.as_bytes())?;
+        // The mode on open does not reach a file that was already there.
+        crate::utils::paths::set_secure_file_permissions(&token_file)?;
 
         tracing::debug!("Token stored at: {}", token_file.display());
         Ok(())
@@ -453,8 +524,7 @@ impl VaultAuth {
         let url = format!("{}/v1/auth/token/revoke-self", self.vault_addr);
 
         let response = self
-            .client
-            .post(&url)
+            .request(reqwest::Method::POST, url)
             .header("X-Vault-Token", token)
             .send()
             .await?;
@@ -526,7 +596,7 @@ impl VaultAuth {
 
         // Get username
         print!("Username: ");
-        use std::io::{self, Write};
+        use std::io;
         io::stdout().flush()?;
 
         let mut username = String::new();
@@ -586,6 +656,7 @@ fn open_in_browser(url: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -639,7 +710,7 @@ mod tests {
 
         let token_file = token_at("revokes");
         fs::write(&token_file, "s.stored-token").expect("token");
-        let auth = VaultAuth::for_test(server.uri(), token_file.clone());
+        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone());
 
         assert!(matches!(
             auth.logout().await.expect("logout"),
@@ -658,7 +729,7 @@ mod tests {
 
         let token_file = token_at("refused");
         fs::write(&token_file, "s.expired-token").expect("token");
-        let auth = VaultAuth::for_test(server.uri(), token_file.clone());
+        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone());
 
         let err = auth
             .logout()
@@ -676,7 +747,7 @@ mod tests {
         let token_file = token_at("unreachable");
         fs::write(&token_file, "s.stored-token").expect("token");
         // A port nothing is listening on; the request fails to connect.
-        let auth = VaultAuth::for_test("http://127.0.0.1:1".to_string(), token_file.clone());
+        let auth = VaultAuth::with_token_file("http://127.0.0.1:1".to_string(), token_file.clone());
 
         auth.logout()
             .await
@@ -709,7 +780,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let auth = VaultAuth::for_test(server.uri(), token_at("oidc-refused"));
+        let auth = VaultAuth::with_token_file(server.uri(), token_at("oidc-refused"));
         let err = auth
             .login_oidc_with(oidc_at(18251))
             .await
@@ -741,8 +812,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let token_file = token_at("oidc-complete");
-        let auth = VaultAuth::for_test(server.uri(), token_file.clone());
+        // Under a directory of its own that does not exist yet, so the login
+        // has to create the one it was told to write into.
+        let token_file = token_at("oidc-complete")
+            .parent()
+            .expect("scratch")
+            .join("session/token");
+        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone());
         let login = tokio::spawn(async move { auth.login_oidc_with(oidc_at(port)).await });
 
         redirect_to(port, "/oidc/callback?state=st&code=xyz").await;
@@ -753,6 +829,12 @@ mod tests {
             fs::read_to_string(&token_file).expect("stored"),
             "s.oidc-token"
         );
+        assert_eq!(mode_of(&token_file), 0o600);
+        assert_eq!(mode_of(token_file.parent().expect("its directory")), 0o700);
+    }
+
+    fn mode_of(path: &std::path::Path) -> u32 {
+        fs::metadata(path).expect("stored").permissions().mode() & 0o777
     }
 
     /// Stand in for the browser, once the login has had time to bind.
@@ -790,7 +872,7 @@ mod tests {
         expect_no_renewal(&server).await;
 
         let token_file = token_at("absent");
-        let auth = VaultAuth::for_test(server.uri(), token_file);
+        let auth = VaultAuth::with_token_file(server.uri(), token_file);
 
         assert!(matches!(
             auth.logout().await.expect("logout"),

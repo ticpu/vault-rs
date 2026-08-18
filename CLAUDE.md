@@ -39,7 +39,8 @@ changing issuance, verification or export behaviour.
 
 - System trust store via reqwest, which pulls in `rustls-platform-verifier` under either backend
   feature. There is no separate native-roots feature to enable.
-- Tokens in `XDG_RUNTIME_DIR`, mode 0600.
+- The tool's own token is in `XDG_RUNTIME_DIR`, mode 0600; a linking program names its own path,
+  which gets the same mode and a directory this tool creates but does not re-mode.
 - Temporary files go under `VaultCliPaths::runtime_dir()`, mode 0600, removed after use.
 
 ## Rust

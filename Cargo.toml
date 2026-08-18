@@ -115,6 +115,10 @@ required-features = ["client"]
 name = "against_a_real_vault"
 required-features = ["cli"]
 
+[[test]]
+name = "caller_owned_session"
+required-features = ["client"]
+
 [dev-dependencies]
 wiremock = "0.6"
 which = "8"
