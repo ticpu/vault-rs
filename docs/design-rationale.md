@@ -118,7 +118,9 @@ whole target as surface preserves whichever forked, unfixed copy of a code path 
 marked `pub`.
 
 A program links this rather than writing its own Vault client so that one login serves both, which
-holds only while the token this crate stores stays the only credential either of them keeps.
+holds only while the token this crate stores stays the only credential either of them keeps. One
+package carries both licenses, so what a dependency may be licensed under is decided by which
+feature reaches it: the binary's own may be copyleft-only, one reachable from `client` may not.
 
 ## Uniform encryption over per-artifact classification
 

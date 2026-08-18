@@ -379,3 +379,10 @@ refusal instead. A kernel without Landlock warns and continues; the tests are co
 paths either way, and what is lost is the backstop. Each suite has a test that writes just outside
 the boundary and expects to be refused, so a confinement that stopped working is caught by the
 harmless probe rather than by a real one.
+
+## License
+
+Two licenes, because the crate builds two things. The library the `client` feature builds is
+**LGPL-2.1-or-later** (`COPYING.LESSER`), so a program that does not share its license may still
+link it. The `vault-rs` binary the `cli` feature builds is **GPL-3.0-only** (`COPYING`). The SPDX
+expression in `Cargo.toml` names both, since the crate ships the sources of both.
