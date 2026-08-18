@@ -66,24 +66,29 @@ pub struct VaultClient {
 
 impl VaultClient {
     pub async fn new() -> Result<Self> {
-        let client = super::create_http_client()?;
-        let vault_addr = get_vault_addr().await?;
-        let auth = crate::vault::auth::VaultAuth::new(vault_addr.clone());
+        Self::for_auth(&crate::vault::auth::VaultAuth::new(get_vault_addr().await?)).await
+    }
+
+    /// A client resolving through the session it is given, rather than through
+    /// whatever the environment and the default token file hold.
+    ///
+    /// The token is read once here and sent unchanged from then on; nothing
+    /// re-reads the file or renews it, so a program outliving its token builds
+    /// another client from the same session. That is why this borrows. It also
+    /// takes the address the session resolved, so it does not consult the
+    /// override the command line sets.
+    pub async fn for_auth(auth: &crate::vault::auth::VaultAuth) -> Result<Self> {
         let token = auth.get_token().await?;
         // Char boundaries, not bytes: a short or non-ASCII token panicked here.
         let prefix: String = token.chars().take(8).collect();
-        tracing::debug!("Using {vault_addr} with token: {prefix}***");
+        tracing::debug!("Using {} with token: {prefix}***", auth.vault_addr());
 
-        Ok(Self {
-            client,
-            vault_addr,
+        Ok(Self::build(
+            auth.http_client().clone(),
+            auth.vault_addr().to_string(),
             token,
-            // discard-ok: an unset namespace is the ordinary single-tenant case
-            namespace: std::env::var("VAULT_NAMESPACE")
-                .ok()
-                .filter(|n| !n.is_empty()),
-            mount_versions: Arc::new(Mutex::new(HashMap::new())),
-        })
+            auth.namespace().map(str::to_string),
+        ))
     }
 
     /// A client that resolves no token.
@@ -92,16 +97,25 @@ impl VaultClient {
     /// case that needs it: a sealed Vault cannot mint or validate a token, so
     /// requiring one would fail exactly where the report is wanted.
     pub async fn unauthenticated() -> Result<Self> {
-        Ok(Self {
-            client: super::create_http_client()?,
-            vault_addr: get_vault_addr().await?,
-            token: String::new(),
+        Ok(Self::build(
+            super::create_http_client()?,
+            get_vault_addr().await?,
+            String::new(),
             // discard-ok: an unset namespace is the ordinary single-tenant case
-            namespace: std::env::var("VAULT_NAMESPACE")
+            std::env::var("VAULT_NAMESPACE")
                 .ok()
                 .filter(|n| !n.is_empty()),
+        ))
+    }
+
+    fn build(client: Client, vault_addr: String, token: String, namespace: Option<String>) -> Self {
+        Self {
+            client,
+            vault_addr,
+            token,
+            namespace,
             mount_versions: Arc::new(Mutex::new(HashMap::new())),
-        })
+        }
     }
 
     /// A client against an explicit address, for tests that stand up a stub

@@ -128,6 +128,12 @@ impl VaultAuth {
         self.namespace.as_deref()
     }
 
+    /// Shared rather than rebuilt, so a client resolving through this session
+    /// does not open a second connection pool and repeat the TLS setup.
+    pub(crate) fn http_client(&self) -> &Client {
+        &self.client
+    }
+
     fn token_file(&self) -> Result<PathBuf> {
         match &self.token_file {
             Some(path) => Ok(path.clone()),
