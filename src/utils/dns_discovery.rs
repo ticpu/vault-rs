@@ -199,10 +199,10 @@ fn get_cached_vault_addr() -> Result<String> {
 fn cache_vault_addr(vault_addr: &str, ttl_seconds: u32) -> Result<()> {
     let cache_file = get_cache_file_path()?;
 
-    // Ensure cache directory exists
+    // This is the directory the token lives in, and a program linking the
+    // client feature reaches it here before it ever logs in.
     if let Some(parent) = cache_file.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| VaultCliError::Config(format!("Failed to create cache directory: {e}")))?;
+        crate::utils::paths::VaultCliPaths::ensure_dir_exists(parent)?;
     }
 
     let now = std::time::SystemTime::now()

@@ -85,31 +85,59 @@ impl VaultCliPaths {
         Ok(Self::cache_dir()?.join("certs"))
     }
 
-    /// Ensure a directory exists and is reachable only by its owner.
+    /// Create a directory owner-only, leaving one that is already there alone.
     ///
-    /// The mode is checked on every call, not only on creation: a directory
-    /// left behind by an earlier version, or created by someone else first,
-    /// is exactly the case the 0600 file mode does not cover.
-    pub fn ensure_dir_exists(path: &PathBuf) -> Result<()> {
+    /// For a path this tool was handed rather than resolved: the mode of a
+    /// directory somebody else owns is theirs to decide, and one too open to
+    /// hold a token is reported so they can.
+    pub fn create_owner_only_dir(path: &Path) -> Result<()> {
         // `create_dir_all` applies the umask, so a directory we just made is
         // usually 0755 and tightening it is routine, not worth reporting.
-        // Finding a pre-existing one too open is the case worth a warning.
-        let existed = path.exists();
-        if !existed {
+        if !path.exists() {
             fs::create_dir_all(path)?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = fs::metadata(path)?.permissions();
+                perms.set_mode(0o700);
+                fs::set_permissions(path, perms)?;
+                tracing::debug!("Created {} as 0700", path.display());
+            }
+            return Ok(());
         }
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(path)?.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                tracing::warn!(
+                    "{} is mode {mode:04o}; anything written there is reachable by others",
+                    path.display()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Ensure a directory this tool owns exists and is reachable only by its
+    /// owner.
+    ///
+    /// The mode is checked on every call, not only on creation: a directory
+    /// left behind by an earlier version, or created by someone else first,
+    /// is exactly the case the 0600 file mode does not cover.
+    pub fn ensure_dir_exists(path: &Path) -> Result<()> {
+        let existed = path.exists();
+        Self::create_owner_only_dir(path)?;
+
+        #[cfg(unix)]
+        if existed {
+            use std::os::unix::fs::PermissionsExt;
             let mut perms = fs::metadata(path)?.permissions();
             let mode = perms.mode() & 0o777;
             if mode & 0o077 != 0 {
-                if existed {
-                    tracing::warn!("Tightening {} from mode {mode:04o} to 0700", path.display());
-                } else {
-                    tracing::debug!("Created {} as 0700", path.display());
-                }
+                tracing::warn!("Tightening {} from mode {mode:04o} to 0700", path.display());
                 perms.set_mode(0o700);
                 fs::set_permissions(path, perms)?;
             }
@@ -166,6 +194,25 @@ mod tests {
 
         VaultCliPaths::ensure_dir_exists(&dir).unwrap();
         assert_eq!(mode_of(&dir), 0o700);
+    }
+
+    #[test]
+    fn a_directory_created_for_a_caller_is_owner_only() {
+        let dir = scratch("caller-new");
+        VaultCliPaths::create_owner_only_dir(&dir).unwrap();
+        assert_eq!(mode_of(&dir), 0o700);
+    }
+
+    /// A caller naming a token path under a directory it already keeps for
+    /// other things is told the mode is loose, not silently given a new one.
+    #[test]
+    fn a_caller_s_own_directory_keeps_its_mode() {
+        let dir = scratch("caller-existing");
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        VaultCliPaths::create_owner_only_dir(&dir).unwrap();
+        assert_eq!(mode_of(&dir), 0o755);
     }
 }
 
