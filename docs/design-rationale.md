@@ -100,13 +100,13 @@ that exercises only the parser cannot catch a failure to.
 
 ## A private persistent directory over a shared volatile one
 
-When the session offers no runtime directory, the token goes to a directory only this user can reach,
-accepting two costs: it outlives the session, and on a networked home it reaches shared storage. The
-alternative is a predictable name under a world-writable parent, where a second user creates the
-directory first and the file mode the tool sets protects nothing — worse on both counts and
-unprotectable from inside the process. Because nothing expires the file, logout must unlink it and a
-token found expired must be unlinked rather than left, and no third fallback gets invented when
-neither directory is available.
+When the session offers no runtime directory, the tool's own token goes to a directory only this
+user can reach, accepting two costs: it outlives the session, and on a networked home it reaches
+shared storage. The alternative is a predictable name under a world-writable parent, where a second
+user creates the directory first and the file mode the tool sets protects nothing — worse on both
+counts and unprotectable from inside the process. Because nothing expires the file, logout must
+unlink it and a token found expired must be unlinked rather than left, and no third fallback gets
+invented when neither directory is available.
 
 ## What the `client` feature builds is surface; the rest of the lib target is not
 
@@ -117,9 +117,13 @@ consumer, and a static analyzer flagging one is reporting a fact rather than gue
 whole target as surface preserves whichever forked, unfixed copy of a code path happened to be
 marked `pub`.
 
-A program links this rather than writing its own Vault client so that one login serves both, which
-holds only while the token this crate stores stays the only credential either of them keeps. One
-package carries both licenses, so what a dependency may be licensed under is decided by which
+A session a caller named is read from the file it named and nothing else: no environment variable
+reaches it unless the caller names one, and the namespace travels with the token rather than with
+the process. Only the tool's own session takes those from the environment. Sharing one slot leaves
+one identity at a time, and whichever program did not log in last runs with rights it was never
+granted.
+
+One package carries both licenses, so what a dependency may be licensed under is decided by which
 feature reaches it: the binary's own may be copyleft-only, one reachable from `client` may not.
 
 ## Uniform encryption over per-artifact classification
