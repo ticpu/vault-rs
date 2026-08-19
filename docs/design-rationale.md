@@ -205,6 +205,8 @@ history, so the operator dropping a certificate the PKI still holds types what t
 the only copy of a private key types. Consent is graded to the loss. Key material takes an option
 named for it; an artifact holding only the provenance the PKI never recorded is deleted after saying
 what goes with it, since a gate raised for the small loss trains the reflex that opens the large one.
+No configured default supplies the identifier such a command selects by, however much it narrows the
+searching ones: consent graded to the loss cannot be given by a file the operator is not reading.
 
 ## A generic verb owes notice, not guards
 
