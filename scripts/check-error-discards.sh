@@ -18,6 +18,22 @@ cd "$(dirname "$0")/.."
 
 PATTERNS='Err\(_\)|map_err\(\|_\||unwrap_or_else\(\|_\||let _ = |if let Ok\(|while let Ok\(|\.ok\(\)'
 
+shopt -s nullglob
+src_dirs=(crates/*/src)
+if [ ${#src_dirs[@]} -eq 0 ]; then
+	echo "no crates/*/src directories found" >&2
+	exit 1
+fi
+
+set +e
+matches=$(grep -rnE "$PATTERNS" "${src_dirs[@]}")
+grep_status=$?
+set -e
+if [ "$grep_status" -gt 1 ]; then
+	echo "grep failed scanning ${src_dirs[*]}" >&2
+	exit 1
+fi
+
 failed=0
 while IFS=: read -r file line _; do
 	[ -n "$file" ] || continue
@@ -28,7 +44,7 @@ while IFS=: read -r file line _; do
 	fi
 	printf '%s:%s: error discard with no // discard-ok: reason\n' "$file" "$line"
 	failed=1
-done < <(grep -rnE "$PATTERNS" src/ || true)
+done <<< "$matches"
 
 if [ "$failed" -ne 0 ]; then
 	echo

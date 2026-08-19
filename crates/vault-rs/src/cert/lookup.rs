@@ -1,0 +1,136 @@
+use std::cmp::Reverse;
+
+use crate::cert::{CertificateService, SerialNumber};
+use crate::utils::errors::{Result, VaultCliError};
+use crate::vault::client::VaultClient;
+use crate::vault::PkiClient;
+
+/// Find certificate by identifier (CN or serial)
+/// Returns (certificate_pem, serial, pki_mount)
+pub async fn find_certificate_by_identifier(
+    client: &VaultClient,
+    identifier: &str,
+    pki_mount_filter: Option<&str>,
+) -> Result<(String, SerialNumber, String)> {
+    // Check if identifier looks like a serial number (hex string, typically 30+ chars)
+    let serial = SerialNumber::parse(identifier);
+    let pki_mounts = if let Some(mount) = pki_mount_filter {
+        vec![mount.to_string()]
+    } else {
+        client.list_pki_mounts().await?
+    };
+
+    // discard-ok: probe; an identifier that is not a serial is looked up by CN
+    if let Ok(serial) = serial {
+        // Try to find certificate by serial across all PKI mounts
+        for mount in &pki_mounts {
+            // Try both formats: raw hex and colon-separated hex
+
+            tracing::trace!("Trying to find serial {serial} in mount {mount}");
+            match client.get_certificate_pem(mount, &serial).await {
+                Ok(cert_data) => {
+                    tracing::debug!("Found certificate with serial {serial} in mount {mount}");
+                    return Ok((
+                        cert_data.certificate,
+                        SerialNumber::new(identifier),
+                        mount.clone(),
+                    ));
+                }
+                Err(e) => {
+                    tracing::trace!("Failed to find serial {serial} in mount {mount}: {e}");
+                    continue;
+                }
+            }
+        }
+
+        Err(VaultCliError::CertNotFound(format!(
+            "Certificate with serial '{}' not found{}",
+            identifier,
+            if let Some(mount) = pki_mount_filter {
+                format!(" in PKI mount '{mount}'")
+            } else {
+                " in any PKI mount".to_string()
+            }
+        )))
+    } else {
+        // Search by CN - find latest certificate with matching CN
+        tracing::debug!("Searching for certificate by CN: '{}'", identifier);
+        let cert_service = CertificateService::new().await?;
+        let mut matching_certs = Vec::new();
+        // A record that could not be read may be the one asked for, so a miss
+        // has to report that rather than a clean absence.
+        let mut unreadable = Vec::new();
+
+        for mount in &pki_mounts {
+            tracing::debug!("Searching for CN '{}' in mount '{}'", identifier, mount);
+            match cert_service
+                .list_certificates_with_metadata(Some(mount))
+                .await
+            {
+                Ok(listing) => {
+                    let (certificates, failures) = listing.into_parts();
+                    tracing::debug!(
+                        "Found {} certificates in mount '{}'",
+                        certificates.len(),
+                        mount
+                    );
+                    unreadable.extend(failures.into_iter().map(|f| f.subject));
+                    for cert in certificates {
+                        tracing::trace!("Checking certificate CN: '{}'", cert.cn);
+                        if cert.cn == identifier {
+                            tracing::debug!(
+                                "Found matching certificate: {} (serial: {})",
+                                cert.cn,
+                                cert.serial
+                            );
+                            matching_certs.push((cert, mount.clone()));
+                        }
+                    }
+                }
+                Err(e) => unreadable.push(format!("{mount} ({e})")),
+            }
+        }
+
+        if matching_certs.is_empty() {
+            let scope = if let Some(mount) = pki_mount_filter {
+                format!(" in PKI mount '{mount}'")
+            } else {
+                " in any PKI mount".to_string()
+            };
+            let caveat = if unreadable.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ". {} record(s) could not be read and may be the one you asked for: {}",
+                    unreadable.len(),
+                    unreadable.join(", ")
+                )
+            };
+            return Err(VaultCliError::CertNotFound(format!(
+                "No certificate found with CN '{identifier}'{scope}{caveat}"
+            )));
+        }
+
+        // Sort by not_after date (newest first) and take the latest
+        matching_certs.sort_by_key(|c| Reverse(c.0.not_after));
+        let (latest_cert, mount) = &matching_certs[0];
+
+        // Fetch the PEM data for the latest certificate
+        let cert_data = client
+            .get_certificate_pem(mount, &latest_cert.serial)
+            .await?;
+
+        tracing::debug!(
+            "Found latest certificate for CN '{}': serial {} in mount {}",
+            identifier,
+            latest_cert.serial,
+            mount
+        );
+
+        Ok((
+            cert_data.certificate,
+            latest_cert.serial.clone(),
+            mount.clone(),
+        ))
+    }
+}

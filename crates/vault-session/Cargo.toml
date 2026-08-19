@@ -1,0 +1,49 @@
+[package]
+name = "vault-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Address discovery, login, token handling and KV reads against HashiCorp Vault, for a linking program"
+license = "LGPL-2.1-or-later"
+readme = "README.md"
+keywords = ["vault", "hashicorp", "secrets", "oidc", "kv"]
+categories = ["api-bindings", "authentication", "network-programming"]
+
+[dependencies]
+reqwest = { version = "0.13", features = ["json"], default-features = false }
+tokio = { version = "1.0", features = ["full"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+thiserror = "2"
+dirs = "6"
+hickory-resolver = "0.26"
+ordermap = "1"
+form_urlencoded = "1"
+getrandom = "0.4"
+
+[features]
+default = ["rustls-aws-lc-rs"]
+
+# TLS backends. `rustls-ring` leaves the process to install its own provider;
+# anything linking this crate beside a program that does needs it.
+rustls-aws-lc-rs = ["reqwest/rustls"]
+rustls-ring = ["reqwest/rustls-no-provider"]
+
+[dev-dependencies]
+anyhow = "1"
+wiremock.workspace = true
+test-confine = { path = "../test-confine" }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "1"
+
+[package.metadata.docs.rs]
+no-default-features = true
+features = ["rustls-ring"]
+targets = ["x86_64-unknown-linux-gnu"]

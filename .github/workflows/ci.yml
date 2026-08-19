@@ -35,6 +35,10 @@ jobs:
     - name: Clippy
       run: cargo clippy --all-targets -- -D warnings
 
+    # The shape --all-targets cannot reach: the external consumer's feature set.
+    - name: Check vault-session on rustls-ring
+      run: cargo check -p vault-session --no-default-features --features rustls-ring --message-format=short
+
     - name: Format
       run: cargo fmt --all -- --check
 

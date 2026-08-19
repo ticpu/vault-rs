@@ -11,5 +11,5 @@ vault-dev/
 *.p12
 
 # Test fixtures are certificates only; generate.sh deletes the keys it makes.
-!src/cert/testdata/*.pem
+!crates/vault-rs/src/cert/testdata/*.pem
 *.pkg.tar.zst

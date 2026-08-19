@@ -1,0 +1,60 @@
+[package]
+name = "vault-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "A secure Vault PKI management tool for sysadmins"
+license = "GPL-3.0-only"
+readme = "README.md"
+keywords = ["vault", "pki", "certificate", "x509", "cli"]
+categories = ["command-line-utilities", "cryptography"]
+
+[dependencies]
+vault-session = { version = "0.3", path = "../vault-session", default-features = false }
+reqwest = { version = "0.13", features = ["json"], default-features = false }
+tokio = { version = "1.0", features = ["full"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4.4", features = ["derive", "env"] }
+clap_complete = "4.4"
+x509-parser = "0.18"
+base64 = "0.23"
+hex = "0.4"
+humantime = "2"
+aes-gcm = "0.11"
+rand = "0.10"
+sha2 = "0.11"
+libc = "0.2"
+dirs = "6"
+rpassword = "7"
+which = "8"
+rustls-webpki = { version = "0.103", default-features = false, features = [
+    "std",
+] }
+rustls-pki-types = "1"
+
+[features]
+default = ["rustls-aws-lc-rs"]
+
+rustls-aws-lc-rs = ["vault-session/rustls-aws-lc-rs", "rustls-webpki/aws-lc-rs"]
+rustls-ring = ["vault-session/rustls-ring", "rustls-webpki/ring"]
+
+# For running this tool against a throwaway Vault by hand; a released binary has
+# no business carrying it.
+dev-server = []
+
+[dev-dependencies]
+wiremock.workspace = true
+which = "8"
+test-confine = { path = "../test-confine" }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ctor = "1"

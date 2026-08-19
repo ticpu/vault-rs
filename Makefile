@@ -47,10 +47,10 @@ arch-install:
 # kept (stable tag) so a rebuild reuses its layer and registry caches. The build
 # context is staged rather than the repo root, which carries target/ and the
 # certificate fixtures.
-$(DIST)/$(BINARY): packaging/Containerfile Cargo.toml $(shell find src examples tests -name '*.rs')
+$(DIST)/$(BINARY): packaging/Containerfile Cargo.toml $(shell find crates -name '*.rs')
 	rm -rf "$(CTX)"
 	mkdir -p "$(CTX)"
-	cp -a Cargo.toml src examples tests "$(CTX)/"
+	cp -a Cargo.toml crates "$(CTX)/"
 	if [ -f Cargo.lock ]; then cp -a Cargo.lock "$(CTX)/"; fi
 	$(DOCKER) build --platform linux/$(DEB_ARCH) --build-arg SUITE=$(DEBIAN_SUITE) \
 		--tag "$(IMG)" -f packaging/Containerfile "$(CTX)"
@@ -73,14 +73,14 @@ define purge_stale_debs
 	done
 endef
 
-$(DEB): $(DIST)/$(BINARY) packaging/control COPYING
+$(DEB): $(DIST)/$(BINARY) packaging/control crates/vault-rs/COPYING
 	$(call purge_stale_debs)
 	rm -rf "$(PKG)"
 	install -D -m 755 -T "$(DIST)/$(BINARY)" "$(PKG)/usr/bin/$(BINARY)"
 	install -D -m 644 -T "$(DIST)/completions/bash" "$(PKG)/usr/share/bash-completion/completions/$(BINARY)"
 	install -D -m 644 -T "$(DIST)/completions/zsh" "$(PKG)/usr/share/zsh/vendor-completions/_$(BINARY)"
 	install -D -m 644 -T "$(DIST)/completions/fish" "$(PKG)/usr/share/fish/vendor_completions.d/$(BINARY).fish"
-	install -D -m 644 -T COPYING "$(PKG)/usr/share/doc/$(BINARY)/copyright"
+	install -D -m 644 -T crates/vault-rs/COPYING "$(PKG)/usr/share/doc/$(BINARY)/copyright"
 	install -D -m 644 -T packaging/control "$(PKG)/DEBIAN/control"
 	sed -i -e "s/^Version:.*/Version: $(DEB_VERSION)/" \
 		-e "s/^Architecture:.*/Architecture: $(DEB_ARCH)/" \

@@ -382,7 +382,8 @@ harmless probe rather than by a real one.
 
 ## License
 
-Two licenes, because the crate builds two things. The library the `client` feature builds is
-**LGPL-2.1-or-later** (`COPYING.LESSER`), so a program that does not share its license may still
-link it. The `vault-rs` binary the `cli` feature builds is **GPL-3.0-only** (`COPYING`). The SPDX
-expression in `Cargo.toml` names both, since the crate ships the sources of both.
+This repository is a Cargo workspace of two published crates, each under its own license.
+`crates/vault-session` — address discovery, OIDC login, token-file lifecycle, KV reads — is
+**LGPL-2.1-or-later** (`crates/vault-session/COPYING.LESSER`), so a program that does not share its
+license may still link it. `crates/vault-rs`, the binary, is **GPL-3.0-only**
+(`crates/vault-rs/COPYING`). See each crate's own `README.md` for what it covers.

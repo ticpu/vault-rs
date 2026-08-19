@@ -10,8 +10,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     binutils
 
 WORKDIR /app
-# The Makefile stages the context (Cargo.toml, Cargo.lock, src/); the repo root
-# carries a multi-GB target/ and the certificate fixtures.
+# The Makefile stages the context (Cargo.toml, Cargo.lock, crates/); the repo
+# root carries a multi-GB target/ and the certificate fixtures.
 COPY . ./
 
 # Everything the .deb needs ends up under /app/out so the Makefile extracts it
@@ -20,7 +20,7 @@ COPY . ./
 # installs cleanly and then dies at exec on a symbol version.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry \
     --mount=type=cache,target=/usr/local/cargo/git,id=cargo-git \
-    cargo build --release && \
+    cargo build --release -p vault-rs && \
     mkdir -p /app/out/completions && \
     cp target/release/vault-rs /app/out/vault-rs && \
     strip /app/out/vault-rs && \

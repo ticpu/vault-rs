@@ -15,6 +15,12 @@ if ! cargo clippy --all-targets --message-format=short -- -D warnings; then
 	exit 1
 fi
 
+echo "Checking vault-session builds on the external consumer's feature set..."
+if ! cargo check -p vault-session --no-default-features --features rustls-ring --message-format=short; then
+	echo "vault-session does not build with --no-default-features --features rustls-ring."
+	exit 1
+fi
+
 echo "Running tests..."
 if ! test_output=$(cargo test --release 2>&1); then
 	echo "$test_output" | tail
