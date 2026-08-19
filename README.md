@@ -1,10 +1,11 @@
 # vault-rs
 
-A secure, UNIX-friendly PKI management tool for HashiCorp Vault with advanced certificate lifecycle management.
+A secure, UNIX-friendly Vault CLI for sysadmins: PKI certificate lifecycle management, KV,
+policies, and an encrypted local store for the certificates it issues.
 
 ## Why vault-rs?
 
-While the official `vault` CLI is comprehensive for general Vault operations, `vault-rs` is purpose-built for PKI certificate management with several key enhancements. It speaks the API itself for the verbs used daily — `read`, `write`, `list`, `delete`, `kv`, `status`, `token` — and forwards the rest to the `vault` binary, which is therefore optional rather than required.
+While the official `vault` CLI is comprehensive for general Vault operations, `vault-rs` is purpose-built for PKI certificate management with several key enhancements. It speaks the API itself for the verbs used daily — `read`, `write`, `list`, `delete`, `kv`, `policy`, `secrets`, `status`, `token` — and forwards the rest to the `vault` binary, which is therefore optional rather than required.
 
 ### Encrypted Local Storage
 
@@ -110,8 +111,9 @@ address is recorded next to the artifact and `storage show` prints it.
 vault list pki/certs/  # only shows serial numbers, no metadata
 ```
 
-`--allow-partial` on `cert list`, `cert list-mounts` and `cache status` lists what it could read
-instead of failing on a record it can't; skipped records are named on stderr. Combined with
+`--allow-partial` — on `cert list`, `cert list-mounts`, `cache status`, `storage list` and
+`storage show` — lists what it could read instead of failing on a record it can't; skipped records
+are named on stderr. Combined with
 `--expiring-within`, a partial read can still exit 0 while blind to certificates it never read —
 the exit code is not authoritative in that case.
 
@@ -213,7 +215,7 @@ monitoring probe.
 
 - **Machine-readable output**: All output designed for shell scripting and automation
 - **Pipeline-friendly**: Clean stdout data, errors/logs to stderr only
-- **Tab completion**: Comprehensive bash/zsh/fish completion for all commands
+- **Tab completion**: bash, zsh, fish and PowerShell, for all commands
 - **Raw mode**: `--raw` flag for tab-separated values without formatting
 
 ### Performance Optimizations
@@ -227,27 +229,32 @@ The verbs an operator reaches for daily are answered over the API. The `vault` b
 and needed only for what this tool does not model.
 
 ```bash
-vault-rs read secret/data/app                  # --json, --raw and --field work on all of these
+vault-rs read secret/data/app                  # --field on read, write and kv get
 vault-rs write pki/roles/web ttl=72h allow_any_name=true
 vault-rs kv get --mount secret app
+vault-rs kv put --mount secret app user=alice  # --cas for compare-and-set
+vault-rs policy list                           # policy read/write/delete too
+vault-rs secrets list
 vault-rs status                                # no token needed
-vault-rs vault policy list                     # anything not modelled, with the session's token
+vault-rs vault operator raft list-peers        # anything not modelled, with the session's token
 ```
+
+`--json` and `--raw` are global and go before the subcommand.
 
 - **Data keeps vault's own spelling**, because an operator pasting a documented invocation is
   pasting its data arguments: `key=value`, `key=@file`, `key=-` for stdin, a bare `@file` or `-`
   for a whole JSON body, and a repeated key for a list
 - **Partly-modelled verbs split by subcommand, visibly.** `kv get` is answered here and `kv patch`
-  forwards; `secrets list` is answered here and `secrets enable` forwards. `vault-rs --help kv`
+  forwards; `secrets list` is answered here and `secrets enable` forwards. `vault-rs kv --help`
   says which. A modelled subcommand handed something it does not understand fails and names the
   forwarding command rather than quietly re-dispatching
 - **`vault-rs vault <args…>` runs the official binary verbatim** with this session's address and
   token. The token lives in `$XDG_RUNTIME_DIR/vault-rs/` and is never exported, so this — not
   invoking `vault` yourself — is how you reach what is not modelled and stay authenticated
-- **`session` is this machine; `auth`, `secrets` and `token` are the server.** `session
-  login/logout/status`, `session init-encryption` and `session key …` act on the local token and
-  encryption key. `token lookup/renew/revoke` act on this session's token and everything naming
-  another token forwards
+- **`session` is this machine.** `session login/logout/status/verify`, `session init-encryption`
+  and `session key …` act on the local token and encryption key. `token lookup/renew/revoke` act on
+  this session's token and everything naming another token forwards. `policy` and `secrets list`
+  are answered here over the API; `auth` forwards
 - **Logging out revokes.** `session logout` revokes server-side and removes the local token — and
   removes it even when revocation fails, since an expired token or an unreachable server should
   not leave the credential on disk. It exits non-zero so a script can tell. `token revoke` is the
@@ -261,27 +268,45 @@ vault-rs vault policy list                     # anything not modelled, with the
   cluster that sealed an artifact (`storage show` names it) without exporting it into the shell
   that produced the confusion. **`VAULT_NAMESPACE` is sent on every request**, not only forwarded
   ones
-- **A write to a guarded path says so first.** `write` and `kv put` announce a target that some
-  other command owns — the master key's path — naming that command and whether the mount can give
+- **A write to a guarded path says so first.** The generic write verbs and every `kv` verb that
+  writes or withdraws — `put`, `delete`, `undelete`, `destroy`, `rollback` — announce a target that
+  some other command owns — the master key's path — naming that command and whether the mount can give
   the key back, then proceed. The generic verb stays generic; if the check itself is refused the
   notice says that rather than falling silent, so no warning means checked, never could-not-check
 
 ## Installation
 
 ```bash
-# Build from source
+cargo install vault-rs
+```
+
+For a process that installs its own rustls `CryptoProvider`:
+
+```bash
+cargo install vault-rs --no-default-features --features rustls-ring
+```
+
+Or from source:
+
+```bash
 git clone https://github.com/ticpu/vault-rs
 cd vault-rs
 cargo build --release
 sudo cp target/release/vault-rs /usr/local/bin/
 ```
 
+Rust 1.88 or later. Unix only.
+
 ## Quick Start
 
 ```bash
 # Login and initialize encryption
 vault-rs session login --method ldap --username yourname
+vault-rs session login --method oidc --role engineer   # or a browser flow
 vault-rs session init-encryption
+
+# Check the Vault is set up the way you need, with the token that will use it
+vault-rs session verify --read secret/data/app --kv-mount secret:2 --policy app-read
 
 # Create a certificate
 vault-rs cert create -m internal --role server example.com --alt-names "*.example.com,api.example.com"
@@ -325,13 +350,12 @@ or omitted role errors before anything reaches the CA.
 | Code | Meaning |
 |------|---------|
 | 0 | Ran successfully |
-| 1 | A verdict: `--expiring-within` matched, `cert verify` failed a check, or `status` found the server sealed |
+| 1 | A verdict: `--expiring-within` matched, `cert verify` failed a check, `session verify` found something wrong, or `status` found the server sealed |
 | 2 | Error |
 
 A command that could not read every record it was asked about is an error, not a partial success:
 there is no exit code meaning "answered, partially", because a caller who did not ask for one would
-find a code it has never seen. `--allow-partial` (on `cert list`, `storage list`, `storage show`)
-takes the answer anyway and prints what was missing on stderr — having been told it is not
+find a code it has never seen. `--allow-partial` takes the answer anyway and prints what was missing on stderr — having been told it is not
 authoritative for that run.
 
 ## Configuration
@@ -348,11 +372,46 @@ unset VAULT_ADDR
 vault-rs -vv cert list
 ```
 
+### The config file
+
+Defaults for the flags you would otherwise retype, read from
+`~/.config/vault-rs/config.yaml` — or from a path given to `--config`, which then has to exist.
+Every setting is optional and a file that sets nothing changes nothing.
+
+```yaml
+pki_mount: pki-int
+
+login:
+  method: oidc
+  oidc_mount: oidc
+  oidc_role: engineer
+  oidc_port: 8250
+
+output: formatted   # formatted | raw | json
+
+columns:
+  cert_list: cn,serial,not_after,revoked
+  storage_list: cn,serial,not_after,role
+```
+
+A flag beats a `VAULT_RS_`-prefixed variable (`VAULT_RS_PKI_MOUNT`, `VAULT_RS_OUTPUT`,
+`VAULT_RS_COLUMNS_CERT_LIST`, …), which beats the file, which beats the built-in.
+
+`pki_mount` only narrows: unset still means every mount your token can see. It does not reach
+`storage remove`, where a default that picks between two artifacts would turn a refusal into a
+deletion, and it reaches `cert verify` only when no `--against-ca` anchor was named. Commands
+taking the mount as a required positional (`cert create`, `cert sign`, `cert list-roles`) keep
+requiring it.
+
+A configured column list replaces the built-in defaults, so a `+` entry on `--columns` adds to
+the configured one. A key the file has no field for is an error, not a setting that silently does
+nothing.
+
 ## Architecture
 
 - **Local Storage**: `~/.local/share/vault-rs/` - Encrypted certificate storage
 - **Runtime**: `$XDG_RUNTIME_DIR/vault-rs/` (falling back to `~/.local/state/vault-rs/` when unset) - Tokens, cache, temp files
-- **Config**: `~/.config/vault-rs/` - User configuration
+- **Config**: `~/.config/vault-rs/config.yaml` - Defaults for the flags above
 - **Cache**: Certificate metadata cached per PKI mount; certificates are immutable, so once fetched an entry is never re-fetched
 
 ## Security Model
@@ -365,7 +424,7 @@ vault-rs -vv cert list
 
 ## Tests
 
-`cargo test` runs both suites. The unit tests stub Vault over HTTP; the integration tests drive the
+`cargo test --release` runs both suites. The unit tests stub Vault over HTTP; the integration tests drive the
 built binary against a throwaway `vault server -dev`, covering what a stub cannot — exit codes,
 which stream a line went to, and whether a path this code builds is one Vault actually accepts.
 They need the official `vault` binary and fail without it rather than skipping, since a suite that
