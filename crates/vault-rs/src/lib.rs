@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod cert;
 pub mod cli;
+pub mod config;
 pub mod crypto;
 pub mod logical;
 pub mod policy;

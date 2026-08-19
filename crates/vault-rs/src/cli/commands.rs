@@ -1,5 +1,6 @@
 use crate::cert::show_certificate;
 use crate::cli::args::*;
+use crate::config::Config;
 use crate::storage::local::LocalStorage;
 use crate::utils::errors::VaultCliError;
 use crate::utils::output::OutputFormat;
@@ -10,7 +11,6 @@ use anyhow::{Context, Result};
 use std::io;
 
 pub async fn handle_command(cli: Cli) -> Result<()> {
-    // Initialize logging - always to stderr
     if !cli.quiet {
         let log_level = match cli.verbose {
             0 => "vault_rs=warn",  // Default: warnings only
@@ -25,23 +25,26 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
             .init();
     }
 
-    // Create output formatter
-    let output = OutputFormat::new(cli.raw, cli.json);
+    // Read before the directories are made: a config naming a path that is not
+    // there should fail before this run leaves anything behind.
+    let config = Config::load(cli.config.as_deref())?;
+    let output = OutputFormat::from(config.output_mode(cli.raw, cli.json)?);
 
     // Before anything builds a client: the address is fixed for the whole run.
     if let Some(ref addr) = cli.vault_addr {
         crate::vault::set_vault_addr_override(addr.clone());
     }
 
-    // Ensure directories exist
     crate::utils::cli_paths::CliPaths::ensure_all_dirs()?;
 
     match cli.command {
-        Commands::Session { command } => crate::session::handle_session_commands(command, &output)
-            .await
-            .context("session"),
-        Commands::Cert { command } => handle_cert_command(command, &output).await,
-        Commands::Storage { command } => handle_storage_command(command, &output).await,
+        Commands::Session { command } => {
+            crate::session::handle_session_commands(command, &config, &output)
+                .await
+                .context("session")
+        }
+        Commands::Cert { command } => handle_cert_command(command, &config, &output).await,
+        Commands::Storage { command } => handle_storage_command(command, &config, &output).await,
         Commands::Cache { command } => crate::cache::handle_cache_commands(command, &output)
             .await
             .context("cache"),
@@ -149,7 +152,11 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
     }
 }
 
-async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Result<()> {
+async fn handle_cert_command(
+    command: CertCommands,
+    config: &Config,
+    output: &OutputFormat,
+) -> Result<()> {
     match command {
         CertCommands::List {
             pki_mount,
@@ -181,8 +188,8 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             let expiring_within_given = filter.is_expiring_within_active();
 
             match CertificateListingService::run_cert_list(
-                pki_mount.as_deref(),
-                columns,
+                config.pki_mount(pki_mount).as_deref(),
+                config.cert_list_columns(columns),
                 &filter,
                 allow_partial,
                 output,
@@ -224,11 +231,14 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             use crate::cert::show_ca_info;
 
-            let mount = pki_mount.or(pki_mount_pos).ok_or_else(|| {
-                VaultCliError::InvalidInput(
-                    "PKI mount required: pass it positionally or with -m/--pki-mount".to_string(),
-                )
-            })?;
+            let mount = config
+                .pki_mount(pki_mount.or(pki_mount_pos))
+                .ok_or_else(|| {
+                    VaultCliError::InvalidInput(
+                        "PKI mount required: pass it positionally or with -m/--pki-mount"
+                            .to_string(),
+                    )
+                })?;
 
             let client = crate::vault::operator_client().await?;
             show_ca_info(&client, &mount, output)
@@ -243,11 +253,16 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             use crate::cert::show_role_info;
 
             // `-m internal server` and `internal server` name the same thing,
-            // so which positional holds the role depends on whether the flag
-            // already supplied the mount.
-            let (mount, role) = match pki_mount {
-                Some(mount) => (Some(mount), first),
-                None => (first, second),
+            // so which positional holds the role depends on whether the mount
+            // came from somewhere else. A second positional is a mount named
+            // here, and outranks a configured one.
+            let (mount, role) = match (pki_mount, second) {
+                (Some(mount), _) => (Some(mount), first),
+                (None, Some(second)) => (first, Some(second)),
+                (None, None) => match config.pki_mount(None) {
+                    Some(mount) => (Some(mount), first),
+                    None => (first, None),
+                },
             };
 
             let (Some(mount), Some(role)) = (mount, role) else {
@@ -271,6 +286,13 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             purpose,
         } => {
             use crate::cert::{verify_certificate, Purpose, VerifyRequest};
+
+            // An anchor file named here is the anchor; the configured mount
+            // answers only where no anchor was named at all.
+            let pki_mount = match against_ca {
+                Some(_) => pki_mount,
+                None => config.pki_mount(pki_mount),
+            };
 
             let request = VerifyRequest {
                 certificate_file,
@@ -432,6 +454,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
             };
             let client = crate::vault::operator_client().await?;
+            let pki_mount = config.pki_mount(pki_mount);
             match find_certificate_by_identifier(&client, &identifier, pki_mount.as_deref()).await {
                 Ok((pem, _serial, mount)) => {
                     let request = ExportCertificateRequest {
@@ -455,6 +478,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             pki_mount,
         } => {
             let client = crate::vault::operator_client().await?;
+            let pki_mount = config.pki_mount(pki_mount);
             show_certificate(&client, &identifier, pki_mount.as_deref(), output)
                 .await
                 .with_context(|| format!("showing '{identifier}'"))
@@ -471,6 +495,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
             };
             let client = crate::vault::operator_client().await?;
+            let pki_mount = config.pki_mount(pki_mount);
             match find_certificate_by_identifier(&client, &serial, pki_mount.as_deref()).await {
                 Ok((pem, _found_serial, mount)) => {
                     let request = ExportCertificateRequest {
@@ -501,7 +526,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             let client = crate::vault::operator_client().await?;
             let request = RevokeRequest {
                 identifier: identifier.clone(),
-                pki_mount: pki_mount.clone(),
+                pki_mount: config.pki_mount(pki_mount),
                 yes,
             };
 
@@ -511,7 +536,11 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
     }
 }
 
-async fn handle_storage_command(command: StorageCommands, output: &OutputFormat) -> Result<()> {
+async fn handle_storage_command(
+    command: StorageCommands,
+    config: &Config,
+    output: &OutputFormat,
+) -> Result<()> {
     let storage = LocalStorage::new().await?;
 
     match command {
@@ -527,11 +556,11 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
             CertificateListingService::list_storage_certificates(
                 &storage,
                 StorageListRequest {
-                    pki,
+                    pki: config.pki_mount(pki),
                     expired,
                     expires_soon,
                     role,
-                    columns,
+                    columns: config.storage_list_columns(columns),
                     allow_partial,
                 },
                 output,
@@ -544,24 +573,29 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
             pki_mount,
             serial,
             allow_partial,
-        } => crate::storage::commands::show(
-            &storage,
-            crate::storage::commands::ShowRequest {
-                cn: &cn,
-                pki_mount: pki_mount.as_deref(),
-                serial: serial.as_deref(),
-                allow_partial,
-            },
-            output,
-        )
-        .await
-        .context("showing a stored artifact"),
+        } => {
+            let pki_mount = config.pki_mount(pki_mount);
+            crate::storage::commands::show(
+                &storage,
+                crate::storage::commands::ShowRequest {
+                    cn: &cn,
+                    pki_mount: pki_mount.as_deref(),
+                    serial: serial.as_deref(),
+                    allow_partial,
+                },
+                output,
+            )
+            .await
+            .context("showing a stored artifact")
+        }
         StorageCommands::Remove {
             cn,
             pki_mount,
             serial,
             destroy_my_private_key,
             destroy_my_unreadable_artifact,
+            // Not narrowed by the configured mount: a default that silently
+            // picks between two artifacts turns a refusal into a deletion.
         } => crate::storage::commands::remove(
             &storage,
             crate::storage::commands::RemoveRequest {
@@ -578,16 +612,19 @@ async fn handle_storage_command(command: StorageCommands, output: &OutputFormat)
             file,
             pki_mount,
             role,
-        } => crate::storage::commands::import(
-            &storage,
-            crate::storage::commands::ImportRequest {
-                file: &file,
-                pki_mount: pki_mount.as_deref(),
-                role: role.as_deref(),
-            },
-        )
-        .await
-        .context("importing an artifact"),
+        } => {
+            let pki_mount = config.pki_mount(pki_mount);
+            crate::storage::commands::import(
+                &storage,
+                crate::storage::commands::ImportRequest {
+                    file: &file,
+                    pki_mount: pki_mount.as_deref(),
+                    role: role.as_deref(),
+                },
+            )
+            .await
+            .context("importing an artifact")
+        }
         StorageCommands::Decrypt { file_path } => {
             use std::path::Path;
 

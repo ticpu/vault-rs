@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
+use std::path::PathBuf;
 use std::time::Duration;
 
 fn parse_expiring_within(s: &str) -> Result<Duration, String> {
@@ -16,9 +17,10 @@ pub struct Cli {
     #[arg(long, env = "VAULT_ADDR")]
     pub vault_addr: Option<String>,
 
-    /// Config file path
-    #[arg(long, default_value = "~/.config/vault-rs/config.toml")]
-    pub config: String,
+    /// Read defaults from this file instead of the one in the config directory.
+    /// A path named here has to exist.
+    #[arg(long, value_name = "FILE")]
+    pub config: Option<PathBuf>,
 
     /// Enable verbose logging (repeat for more verbosity: -v INFO, -vv DEBUG, -vvv TRACE)
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -303,7 +305,7 @@ pub struct VerifyArgs {
     #[arg(long, value_name = "ROLE", requires = "oidc_mount")]
     pub oidc_role: Option<String>,
 
-    /// Port the redirect check asks for, 8250 by default
+    /// Port the redirect check asks for; the OIDC default if unset
     #[arg(long, requires = "oidc_mount")]
     pub oidc_port: Option<u16>,
 }
@@ -459,9 +461,10 @@ pub enum KeyCommands {
 pub enum SessionCommands {
     /// Login to Vault
     Login {
-        /// Authentication method: ldap, userpass or oidc
-        #[arg(long, default_value = "ldap")]
-        method: String,
+        /// Authentication method: ldap, userpass or oidc. Defaults to ldap
+        /// where the config file names none.
+        #[arg(long)]
+        method: Option<String>,
 
         /// Username (ldap, userpass)
         #[arg(long)]
@@ -471,12 +474,13 @@ pub enum SessionCommands {
         #[arg(long)]
         role: Option<String>,
 
-        /// Port the identity provider redirects back to, 8250 by default. Has
-        /// to appear in the role's allowed redirect URIs (oidc)
+        /// Port the identity provider redirects back to. Has to appear in the
+        /// role's allowed redirect URIs (oidc)
         #[arg(long)]
         port: Option<u16>,
 
-        /// Print the authorization URL instead of opening a browser (oidc)
+        /// Do not open a browser; the authorization URL is printed either way
+        /// (oidc)
         #[arg(long)]
         no_browser: bool,
     },

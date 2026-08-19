@@ -1,4 +1,5 @@
 use crate::cli::args::{KeyCommands, SessionCommands};
+use crate::config::Config;
 use crate::session::presenter::Console;
 use crate::session::InteractiveLogin;
 use crate::utils::errors::{Result, VaultCliError};
@@ -8,6 +9,7 @@ use vault_session::{LogoutOutcome, OidcLogin, TokenState};
 
 pub async fn handle_session_commands(
     command: SessionCommands,
+    config: &Config,
     output: &OutputFormat,
 ) -> Result<()> {
     match command {
@@ -19,10 +21,13 @@ pub async fn handle_session_commands(
             no_browser,
         } => {
             login_command(LoginRequest {
-                method,
+                method: config
+                    .login_method(method)
+                    .unwrap_or_else(|| DEFAULT_METHOD.to_string()),
+                oidc_mount: config.oidc_mount(None),
                 username,
-                role,
-                port,
+                role: config.oidc_role(role),
+                port: config.oidc_port(port)?,
                 no_browser,
             })
             .await
@@ -30,7 +35,7 @@ pub async fn handle_session_commands(
         SessionCommands::Logout => logout_command().await,
         SessionCommands::Status => status_command(output).await,
         SessionCommands::Verify(args) => {
-            match crate::session::verify::verify(args, output).await? {
+            match crate::session::verify::verify(args, config, output).await? {
                 // A verdict about a setup that answered, not an error: the exit
                 // code this tool uses for verdicts rather than for failures.
                 true => Ok(()),
@@ -50,8 +55,14 @@ pub async fn handle_session_commands(
     }
 }
 
+/// The method used where neither the command line nor the config file names
+/// one.
+const DEFAULT_METHOD: &str = "ldap";
+
 pub struct LoginRequest {
     pub method: String,
+    /// The OIDC auth mount, where it is not the one the method is named after.
+    pub oidc_mount: Option<String>,
     pub username: Option<String>,
     pub role: Option<String>,
     pub port: Option<u16>,
@@ -95,7 +106,8 @@ async fn login_command(request: LoginRequest) -> Result<()> {
     // to ask for.
     let token = match (request.method.as_str(), request.username) {
         ("oidc", _) => {
-            let mut login = OidcLogin::new(&request.method);
+            let mount = request.oidc_mount.as_deref().unwrap_or(&request.method);
+            let mut login = OidcLogin::new(mount);
             login.role = request.role;
             if let Some(port) = request.port {
                 login.redirect.port = port;

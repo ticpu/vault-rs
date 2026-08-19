@@ -2,14 +2,15 @@
 //! token that program will use.
 
 use crate::cli::args::VerifyArgs;
+use crate::config::Config;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use vault_session::{Expectation, Finding, KvLayout, OidcLogin};
 
 /// Whether anything was wrong, so the caller can pick an exit code.
-pub async fn verify(args: VerifyArgs, output: &OutputFormat) -> Result<bool> {
+pub async fn verify(args: VerifyArgs, config: &Config, output: &OutputFormat) -> Result<bool> {
     let session = crate::vault::operator_session().await?;
-    let findings = vault_session::verify(&session, &expectation(args)?).await?;
+    let findings = vault_session::verify(&session, &expectation(args, config)?).await?;
 
     if output.json {
         output.print_json(&findings)?;
@@ -20,7 +21,7 @@ pub async fn verify(args: VerifyArgs, output: &OutputFormat) -> Result<bool> {
     Ok(findings.is_empty())
 }
 
-fn expectation(args: VerifyArgs) -> Result<Expectation> {
+fn expectation(args: VerifyArgs, config: &Config) -> Result<Expectation> {
     let mut expected = Expectation::default();
 
     for path in args.readable {
@@ -40,10 +41,10 @@ fn expectation(args: VerifyArgs) -> Result<Expectation> {
         expected = expected.policy(name);
     }
 
-    if let Some(mount) = args.oidc_mount {
+    if let Some(mount) = config.oidc_mount(args.oidc_mount) {
         let mut login = OidcLogin::new(mount);
-        login.role = args.oidc_role;
-        if let Some(port) = args.oidc_port {
+        login.role = config.oidc_role(args.oidc_role);
+        if let Some(port) = config.oidc_port(args.oidc_port)? {
             login.redirect.port = port;
         }
         expected = expected.oidc(login);

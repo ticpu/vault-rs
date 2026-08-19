@@ -25,6 +25,16 @@ pub struct OutputFormat {
     pub json: bool,
 }
 
+impl From<crate::config::OutputMode> for OutputFormat {
+    fn from(mode: crate::config::OutputMode) -> Self {
+        use crate::config::OutputMode;
+        Self {
+            raw: mode == OutputMode::Raw,
+            json: mode == OutputMode::Json,
+        }
+    }
+}
+
 /// Build table data from certificates and columns
 pub fn build_table_data<T>(
     certificates: &[T],
