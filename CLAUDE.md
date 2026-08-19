@@ -45,8 +45,9 @@ changing issuance, verification or export behaviour.
 
 ## Rust
 
-- Two published crates: `crates/vault-session` is the library another program links, and
-  `crates/vault-rs` is the binary. `crates/test-confine` is the test-only helper and never ships.
+- Three published crates: `crates/vault-session` is the library another program links,
+  `crates/vault-rs` is the binary, and `crates/landlock-test-confine` is the Landlock test-
+  confinement helper both suites use.
 - **Keep `crates/vault-rs/src/cli/commands.rs` thin.** It parses arguments, calls a module, and maps
   errors to exit codes. Business logic lives in `cert/`, `vault/`, `storage/`.
 - Past ~7 arguments, take a struct.
@@ -109,5 +110,5 @@ only; it deletes the keys it makes). `.gitignore` excludes `*.pem` repo-wide and
 directory — a negation containing a slash is anchored to the repo root, so a new fixture extension,
 or a move, needs the path spelled in full or it will silently not be committed.
 
-Scratch and confinement roots come from `test_confine::target_dir()`, which reads the running
-executable. `CARGO_MANIFEST_DIR` is a crate directory now and `target/` is not under it.
+Scratch and confinement roots come from `landlock_test_confine::target_dir()`, which reads the
+running executable. `CARGO_MANIFEST_DIR` is a crate directory now and `target/` is not under it.

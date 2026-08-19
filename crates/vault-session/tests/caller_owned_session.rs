@@ -26,7 +26,7 @@ const PROGRAM: &str = "read_secret";
 #[cfg(target_os = "linux")]
 #[ctor::ctor(unsafe)]
 fn set_up_the_environment_these_tests_read() {
-    test_confine::to_scratch_only(&test_confine::target_dir());
+    landlock_test_confine::to_scratch_only(&landlock_test_confine::target_dir());
 
     std::env::set_var("VAULT_TOKEN", OPERATOR_TOKEN);
     std::env::set_var(CALLER_ENV, CALLER_ENV_TOKEN);
@@ -49,7 +49,7 @@ fn config_at(server: &MockServer, name: &str) -> SessionConfig {
 }
 
 fn token_at(name: &str, token: &str) -> PathBuf {
-    let dir = test_confine::scratch_dir("caller-owned-session").join(name);
+    let dir = landlock_test_confine::scratch_dir("caller-owned-session").join(name);
     // discard-ok: test scratch; the directory usually does not exist yet
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("scratch");

@@ -76,7 +76,7 @@ impl DevVault {
 
         // Before anything is spawned, so the servers and binaries below
         // inherit it.
-        test_confine::to_scratch_only(&scratch_root());
+        landlock_test_confine::to_scratch_only(&scratch_root());
 
         let slot = Slot::take();
         let home = scratch(name);
@@ -313,7 +313,7 @@ fn next_port() -> u16 {
 
 /// The one directory these tests may write to.
 fn scratch_root() -> PathBuf {
-    let root = test_confine::scratch_dir("integration");
+    let root = landlock_test_confine::scratch_dir("integration");
     std::fs::create_dir_all(&root).expect("scratch root");
     root
 }

@@ -21,7 +21,7 @@ pub fn leaf_pem() -> String {
 }
 
 pub fn scratch(name: &str) -> PathBuf {
-    let dir = test_confine::scratch_dir("storage-tests").join(name);
+    let dir = landlock_test_confine::scratch_dir("storage-tests").join(name);
     // discard-ok: test scratch; the directory usually does not exist yet
     let _ = fs::remove_dir_all(&dir);
     dir

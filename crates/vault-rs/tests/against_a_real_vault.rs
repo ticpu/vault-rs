@@ -378,7 +378,7 @@ fn these_tests_cannot_write_outside_their_scratch_directory() {
     for outside in [
         // Just outside the boundary, which is where an off-by-one in the rule
         // would show.
-        test_confine::target_dir().join("vault-rs-should-never-appear"),
+        landlock_test_confine::target_dir().join("vault-rs-should-never-appear"),
         // The one that matters.
         std::path::Path::new(&home).join(".vault-rs-should-never-appear"),
     ] {

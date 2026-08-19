@@ -266,7 +266,7 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = test_confine::scratch_dir("discovery-tests");
+        let dir = landlock_test_confine::scratch_dir("discovery-tests");
         fs::create_dir_all(&dir).expect("scratch");
         dir.join(name)
     }

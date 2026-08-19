@@ -109,7 +109,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = test_confine::scratch_dir("paths-tests").join(name);
+        let dir = landlock_test_confine::scratch_dir("paths-tests").join(name);
         // discard-ok: test scratch; the directory usually does not exist yet
         let _ = fs::remove_dir_all(&dir);
         dir

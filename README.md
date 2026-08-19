@@ -441,8 +441,8 @@ harmless probe rather than by a real one.
 
 ## License
 
-This repository is a Cargo workspace of two published crates, each under its own license.
-`crates/vault-session` — address discovery, OIDC login, token-file lifecycle, KV reads — is
-**LGPL-2.1-or-later** (`crates/vault-session/COPYING.LESSER`), so a program that does not share its
-license may still link it. `crates/vault-rs`, the binary, is **GPL-3.0-only**
+This repository is a Cargo workspace of three published crates, each under its own license.
+`crates/vault-session` — address discovery, OIDC login, token-file lifecycle, KV reads — and
+`crates/landlock-test-confine` — the Landlock test confinement helper — are **MIT OR Apache-2.0**,
+so anything may link them. `crates/vault-rs`, the binary, is **GPL-3.0-only**
 (`crates/vault-rs/COPYING`). See each crate's own `README.md` for what it covers.

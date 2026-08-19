@@ -56,4 +56,4 @@ Rust 1.88 or later. Unix only — the token file is created with an explicit mod
 
 ## License
 
-LGPL-2.1-or-later (`COPYING.LESSER`), so a program under another licence may link it.
+MIT OR Apache-2.0, at your option.

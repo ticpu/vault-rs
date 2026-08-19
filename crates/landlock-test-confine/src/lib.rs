@@ -1,20 +1,23 @@
-// Make the scratch directory the only place these tests can write.
-//
-// The harness already points every path at `target/`, but that is a promise
-// the code makes to itself: one forgotten environment variable and a test
-// writes to the operator's real home, which is how a dev server came to
-// overwrite a real token file. This turns the promise into something the
-// kernel refuses rather than something the tests remember.
-//
-// Applied per thread, not once per process. Landlock restricts the calling
-// thread and the children it goes on to spawn — sibling threads are untouched
-// unless the kernel is new enough to offer process-wide enforcement, which is
-// not something to depend on. The test harness gives each test its own thread,
-// so each confines itself before spawning anything.
-//
-// Missing or partial support warns and continues. The tests are correct about
-// their paths without it; what is lost is the backstop, and one that quietly
-// did not apply is worse than none.
+//! Make the build directory the only place a test can write, using Landlock.
+//!
+//! Pointing every path at `target/` is a promise the test code makes to itself;
+//! one forgotten environment variable and a test writes to the developer's real
+//! home. This turns that promise into something the kernel refuses.
+//!
+//! ```no_run
+//! # #[cfg(target_os = "linux")]
+//! # fn confine() {
+//! landlock_test_confine::to_scratch_only(&landlock_test_confine::target_dir());
+//! # }
+//! ```
+//!
+//! Applied per thread, since Landlock restricts the calling thread and what it
+//! spawns but not its siblings, and the harness gives each test its own thread.
+//! A kernel without it warns and continues: the tests are correct about their
+//! paths regardless, and what is lost is the backstop. Pair it with a probe
+//! asserting a write outside the boundary is refused, so a confinement that
+//! stopped working is caught by something harmless.
+
 use std::path::{Path, PathBuf};
 
 /// The build directory this test binary was compiled into.

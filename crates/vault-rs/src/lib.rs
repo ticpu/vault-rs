@@ -51,7 +51,7 @@ mod confinement {
     // yet up; this touches only the kernel and a thread-local.
     #[ctor::ctor(unsafe)]
     fn confine_to_the_build_directory() {
-        test_confine::to_scratch_only(&test_confine::target_dir());
+        landlock_test_confine::to_scratch_only(&landlock_test_confine::target_dir());
     }
 
     /// The confinement is a claim about the kernel, so it is checked rather
@@ -60,7 +60,7 @@ mod confinement {
     /// with no test helper anywhere in front of it.
     #[test]
     fn the_unit_tests_cannot_write_outside_the_build_directory() {
-        let inside = test_confine::target_dir().join("confinement-probe");
+        let inside = landlock_test_confine::target_dir().join("confinement-probe");
         std::fs::write(&inside, "scratch").expect("writing inside the build directory");
         // discard-ok: tidying the probe; the assertions below are the report
         let _ = std::fs::remove_file(&inside);

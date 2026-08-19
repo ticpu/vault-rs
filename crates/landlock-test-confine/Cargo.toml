@@ -1,0 +1,17 @@
+[package]
+name = "landlock-test-confine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Confine a test thread to writing only under the build directory, using Landlock"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["landlock", "testing", "sandbox", "confinement", "seccomp"]
+categories = ["development-tools::testing", "os::linux-apis"]
+
+[dependencies]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/vault-session", "crates/vault-rs", "crates/test-confine"]
+members = ["crates/vault-session", "crates/vault-rs", "crates/landlock-test-confine"]
 resolver = "2"
 
 [workspace.package]

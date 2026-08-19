@@ -622,7 +622,7 @@ mod tests {
     const LOOKUP: &str = "/v1/auth/token/lookup-self";
 
     fn token_at(name: &str) -> PathBuf {
-        let dir = test_confine::scratch_dir("auth-tests").join(name);
+        let dir = landlock_test_confine::scratch_dir("auth-tests").join(name);
         // discard-ok: test scratch; the directory usually does not exist yet
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch");

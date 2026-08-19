@@ -6,13 +6,10 @@ rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Address discovery, login, token handling and KV reads against HashiCorp Vault, for a linking program"
-license = "LGPL-2.1-or-later"
+license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["vault", "hashicorp", "secrets", "oidc", "kv"]
 categories = ["api-bindings", "authentication", "network-programming"]
-# The suites need the repository: a Landlock helper that is not published, and
-# a scratch tree under the build directory.
-exclude = ["tests/"]
 
 [dependencies]
 reqwest = { version = "0.13", default-features = false }
@@ -43,7 +40,7 @@ rustls-ring = ["reqwest/rustls-no-provider", "vaultrs/rustls-no-provider", "dep:
 [dev-dependencies]
 anyhow = "1"
 wiremock.workspace = true
-test-confine = { path = "../test-confine" }
+landlock-test-confine = { version = "0.4", path = "../landlock-test-confine" }
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
