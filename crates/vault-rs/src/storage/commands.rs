@@ -174,10 +174,8 @@ pub async fn remove(storage: &LocalStorage, request: RemoveRequest<'_>) -> Resul
         ));
     }
 
-    // Nothing unrecoverable is at stake here, so nothing gated it. The store
-    // is still the only place the issuing role was ever recorded — the PKI has
-    // none — so it is named on the way out. Every other case reached this
-    // point through an option that already named the loss.
+    // Ungated: nothing unrecoverable is at stake. The issuing role is named on
+    // the way out anyway, since the store is the only place it was recorded.
     if let (KeyMaterial::None, Ok(record)) = (&key, &entry.record) {
         // Named only when there is one: an artifact imported without a role
         // has none, and printing an empty name reads as a role called "".

@@ -519,9 +519,8 @@ impl Session {
                 );
             }
             // Renewal is how this path tried to recover, not why it failed:
-            // the token was already rejected before renewal was attempted, and
-            // naming only the renewal sends the operator to look at a lease
-            // when what they need is to log in again.
+            // naming only the renewal points at a lease, not at the rejection
+            // that came first.
             return Err(Error::Rejected {
                 program: self.program.clone(),
                 source: Box::new(renewal_error),

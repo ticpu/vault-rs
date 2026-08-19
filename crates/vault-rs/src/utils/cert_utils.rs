@@ -209,10 +209,9 @@ impl CertificateStorageHelper {
         use crate::storage::{CertificateData, LocalStorage};
         use chrono::Utc;
 
-        // Filed under the identity the CA actually issued, not the one that was
-        // asked for: a role with use_csr_common_name leaves the CN argument
-        // inert, and storing that name puts the certificate under a CN no
-        // lookup will ever match.
+        // Filed under the identity the CA issued, not the one asked for: a role
+        // with use_csr_common_name leaves the CN argument inert, so storing it
+        // files under a name no lookup matches.
         let issued = CertificateParser::parse_pem(certificate_pem, pki_mount)?;
 
         let storage = LocalStorage::new().await?;

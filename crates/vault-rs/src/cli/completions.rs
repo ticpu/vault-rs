@@ -13,10 +13,8 @@ pub fn handle_completion_command(command: &CompletionCommands, _cli: &Cli) -> Re
 
     if matches!(shell, Shell::Bash) {
         // clap_complete's bash generator mangles a hyphenated bin name two
-        // different ways (`vault__rs__subcmd__cert` when dispatching,
-        // `vault__subcmd__rs__subcmd__cert` when looking up), so no subcommand
-        // case ever matches. Generate under an underscore name, register the
-        // real one below.
+        // different ways, so no subcommand case ever matches. Generate under an
+        // underscore name, register the real one below.
         let bash_name = PROGRAM_NAME.replace('-', "_");
 
         println!("# Enhanced completion for {PROGRAM_NAME} PKI mounts and roles");

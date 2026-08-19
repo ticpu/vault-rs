@@ -81,10 +81,9 @@ impl EncryptionManager {
         let nonce = Nonce::try_from(nonce_bytes)
             .map_err(|e| VaultCliError::Encryption(format!("Invalid nonce: {e}")))?;
 
-        // An AEAD failure against the local store has one overwhelmingly likely
-        // cause and one obvious next step, both of which this code knows and the
-        // operator does not. Naming the mechanism alone leaves no route to
-        // recovery while the key that would open the artifact sits in Vault.
+        // An AEAD failure here has one likely cause and one next step, both of
+        // which this code knows: naming the mechanism alone offers no route
+        // back while the key that would open the artifact sits in Vault.
         let plaintext = match cipher.decrypt(&nonce, ciphertext) {
             Ok(plaintext) => plaintext,
             Err(e) => {

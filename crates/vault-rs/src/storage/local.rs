@@ -290,10 +290,9 @@ impl LocalStorage {
                 let cn = cn_entry.file_name().to_string_lossy().to_string();
                 let (serials, stray) = read_level(&cn_entry.path())?;
 
-                // Artifact files directly under the common name, with no
-                // serial beneath it, is the layout this build dropped. It has
-                // to say so: the files are intact and the way back is the
-                // version that wrote them, not a repair here.
+                // Artifact files directly under the common name is a layout
+                // this build does not read. Announced, not skipped: the files
+                // are intact and the way back is the version that wrote them.
                 if serials.is_empty() && !stray.is_empty() {
                     result.fail(Incomplete::record(
                         format!("{pki_mount}/{cn}"),

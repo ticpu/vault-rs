@@ -248,10 +248,9 @@ fn check_anchor(leaf_pem: &str, anchor_pem: &str, intermediate_pems: &[String]) 
     let leaf = parse_ca_info(leaf_pem)?;
     let anchor = parse_ca_info(anchor_pem)?;
 
-    // Not a failure: RFC 5280 does not require an authority key identifier, and
-    // one given as issuer-and-serial carries no key id to compare. The chain
-    // check verifies signatures either way, so treating absence as a failure
-    // would reject certificates every relying party accepts.
+    // Not a failure: an authority key identifier is optional, and the chain
+    // check verifies signatures either way — rejecting on its absence would
+    // reject certificates every relying party accepts.
     let Some(aki) = leaf.authority_key_identifier else {
         return Ok(Check::new(
             "anchor",

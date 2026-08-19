@@ -11,11 +11,8 @@ use vault_rs::cli::{handle_command, Cli};
 
 #[tokio::main]
 async fn main() {
-    // Rust masks SIGPIPE, so a reader that goes away (`| head`) turns the next
-    // write into EPIPE, and whichever writer hits it first panics — including
-    // ones inside dependencies, which no error handling here can intercept.
-    // Restoring the default disposition ends the process quietly, as every
-    // other Unix tool does: the reader closing the pipe is its choice.
+    // Rust masks SIGPIPE, so a reader going away (`| head`) turns the next write
+    // into an EPIPE panic anywhere in the stack, dependencies included.
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);

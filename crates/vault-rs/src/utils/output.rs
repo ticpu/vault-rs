@@ -208,9 +208,6 @@ mod tests {
             vec!["a", "bb", "ccc"],
         ];
 
-        // This would print:
-        // short\tmedium\tvery_long_column
-        // a\tbb\tccc
         format.print_table(&data);
     }
 
@@ -222,9 +219,6 @@ mod tests {
             vec!["a", "bb", "ccc"],
         ];
 
-        // This would print:
-        // short  medium  very_long_column
-        // a      bb      ccc
         format.print_table(&data);
     }
 }

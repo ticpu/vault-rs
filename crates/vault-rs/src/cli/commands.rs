@@ -304,11 +304,9 @@ async fn handle_cert_command(
                 }),
             };
 
-            // Vault is contacted only to fetch a mount's CA. Verifying against
-            // a file must keep working while Vault is down, which is when an
-            // operator reaches for a local anchor; and a connection failure has
-            // to reach the exit-2 arm below rather than propagate as exit 1,
-            // where it would be indistinguishable from a failed check.
+            // Verifying against a file has to keep working while Vault is down,
+            // and a connection failure has to reach the exit-2 arm below rather
+            // than exit 1, which means a failed check.
             let verdict = async {
                 let client = match request.pki_mount {
                     Some(_) => Some(crate::vault::operator_client().await?),

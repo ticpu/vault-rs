@@ -131,10 +131,8 @@ async fn get_certificate_bundle_from_storage(
 }
 
 async fn export_p12(client: &VaultClient, request: &ExportCertificateRequest) -> Result<()> {
-    // P12 export requires both certificate and private key from local storage.
-    // find_certificate_in_storage/get_certificate_data_from_storage (not the
-    // combined get_certificate_bundle_from_storage) so a decrypt failure or
-    // corrupt index reports its own cause instead of "not found".
+    // The two-step lookup rather than the combined one, so a decrypt failure
+    // or a corrupt index reports its own cause instead of "not found".
     let storage = LocalStorage::with_client(client.clone())?;
 
     let cert_record = find_certificate_in_storage(&storage, &request.identifier)
