@@ -78,7 +78,8 @@ so a chain printed only at the top is not printed at all for them. Whatever drop
 a refused connection, an expired server certificate and a name that does not resolve as one
 indistinguishable line, leaving the operator knowing a request failed and nothing about what to
 change. Errors stay typed with their causes attached on the way up; adding context is the binary's
-job, and so is printing every layer of it wherever the process actually ends.
+job, and so is printing every layer of it wherever the process actually ends. A refusal carries the
+endpoint it was refused for, whatever the transport hands back.
 
 ## Chain artifacts separate internal configuration from external handoff
 
@@ -108,23 +109,31 @@ counts and unprotectable from inside the process. Because nothing expires the fi
 unlink it and a token found expired must be unlinked rather than left, and no third fallback gets
 invented when neither directory is available.
 
-## What the `client` feature builds is surface; the rest of the lib target is not
+## The library's contract is a caller-owned session
 
-Address discovery, login, token handling and a secret read are linked by other programs, and that
-subset is a contract kept for them. Outside it the lib target exists so the tests and the binary can
-share code: a `pub` there with no caller in this repository is dead until someone names the
-consumer, and a static analyzer flagging one is reporting a fact rather than guessing. Treating the
-whole target as surface preserves whichever forked, unfixed copy of a code path happened to be
-marked `pub`.
+Nothing a session depends on comes from the environment or from this tool's own conventions unless
+the caller passed it, including the program name that decides where the token lives — resolved from
+ours, a consumer's files land in a directory belonging to a program its user never ran. The
+namespace travels with the token rather than with the process, and only this tool's own session
+reads any of it from the environment. Sharing one slot leaves one identity at a time, and whichever
+program did not log in last runs with rights it was never granted.
 
-A session a caller named is read from the file it named and nothing else: no environment variable
-reaches it unless the caller names one, and the namespace travels with the token rather than with
-the process. Only the tool's own session takes those from the environment. Sharing one slot leaves
-one identity at a time, and whichever program did not log in last runs with rights it was never
-granted.
+The binary is the first consumer of that contract rather than a second surface: its own lib target
+exists so its tests and command handlers can share code, and a `pub` there with no caller in this
+repository is dead until someone names one — a static analyzer flagging it is reporting a fact
+rather than guessing. Each crate states its own licence, so what a dependency may be licensed under
+follows from which crate reaches it.
 
-One package carries both licenses, so what a dependency may be licensed under is decided by which
-feature reaches it: the binary's own may be copyleft-only, one reachable from `client` may not.
+## The library verifies a Vault-side setup; it never provisions one
+
+Every check it offers is a read a narrow token can already make. Nothing in it enables a mount or
+writes a role or a policy: that is the root token holder's work, and a program checking its own
+setup needs no authority over the store.
+
+## Our own OIDC flow rather than the client library's
+
+The transport is a dependency and its companion login crate is not: that one opens a browser itself,
+where how an authorization URL reaches a person is the linking program's to decide.
 
 ## Uniform encryption over per-artifact classification
 
