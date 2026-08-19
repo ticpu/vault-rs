@@ -10,6 +10,9 @@ license = "LGPL-2.1-or-later"
 readme = "README.md"
 keywords = ["vault", "hashicorp", "secrets", "oidc", "kv"]
 categories = ["api-bindings", "authentication", "network-programming"]
+# The suites need the repository: a Landlock helper that is not published, and
+# a scratch tree under the build directory.
+exclude = ["tests/"]
 
 [dependencies]
 reqwest = { version = "0.13", default-features = false }

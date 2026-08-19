@@ -10,9 +10,12 @@ license = "GPL-3.0-only"
 readme = "README.md"
 keywords = ["vault", "pki", "certificate", "x509", "cli"]
 categories = ["command-line-utilities", "cryptography"]
+# The suites need the repository: the official `vault` binary, a Landlock
+# helper that is not published, and a scratch tree under the build directory.
+exclude = ["tests/"]
 
 [dependencies]
-vault-session = { version = "0.3", path = "../vault-session", default-features = false }
+vault-session = { version = "0.4", path = "../vault-session", default-features = false }
 tokio = { version = "1.0", features = ["full"] }
 serde.workspace = true
 serde_json.workspace = true
