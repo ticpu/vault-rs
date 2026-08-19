@@ -179,9 +179,9 @@ pub async fn master_key_notice(client: &VaultClient, path: &str) -> Option<Strin
 
 /// The retention answer for a path, asked entirely of the mount serving it.
 async fn recoverability(client: &VaultClient, path: &str) -> Result<VersionRetention> {
-    let mount_version = client.mount_version(path).await?;
-    let mount = mount_version.mount.trim_end_matches('/');
-    let versioned = mount_version.version == 2;
+    let reported = client.mount_layout(path).await?;
+    let mount = reported.mount.trim_end_matches('/');
+    let versioned = reported.layout.is_versioned();
 
     // Everything after the mount, and after the versioned layout's own prefix.
     let key = path

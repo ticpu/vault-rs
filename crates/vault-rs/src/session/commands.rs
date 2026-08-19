@@ -199,11 +199,8 @@ async fn check_permissions() {
     match test_client.health().await {
         Ok(health) => {
             // A missing seal state used to render as "unsealed".
-            let version = health
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("version not reported");
-            let state = match health.get("sealed").and_then(|v| v.as_bool()) {
+            let version = health.version.as_deref().unwrap_or("version not reported");
+            let state = match health.sealed {
                 Some(true) => "sealed",
                 Some(false) => "unsealed",
                 None => "seal state not reported",

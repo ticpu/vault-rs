@@ -5,7 +5,7 @@
 //! Which prefix a verb needs is fixed; which layout the mount uses is not, and
 //! is asked of the mount rather than read off the path's shape.
 
-use crate::client::{MountVersion, VaultClient};
+use crate::client::{MountLayout, VaultClient};
 use crate::error::{Error, Result};
 #[cfg(test)]
 use serde_json::json;
@@ -41,10 +41,10 @@ impl Target {
             Some(mount) => format!("{}/{path}", mount.trim_matches('/')),
             None => path.to_string(),
         };
-        let MountVersion {
+        let MountLayout {
             mount: reported,
-            version,
-        } = client.mount_version(&probed).await?;
+            layout,
+        } = client.mount_layout(&probed).await?;
 
         let reported = reported.trim_matches('/').to_string();
         let key = match mount {
@@ -66,7 +66,7 @@ impl Target {
         Ok(Self {
             mount: reported,
             key,
-            versioned: version == 2,
+            versioned: layout.is_versioned(),
         })
     }
 

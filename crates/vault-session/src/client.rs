@@ -2,17 +2,58 @@ use crate::error::{Error, Result};
 use crate::mounts::MountsResponse;
 use crate::session::Session;
 use crate::transport::{Transport, TransportSettings};
+use rustify::enums::RequestMethod;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+/// How a KV mount addresses a secret.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum KvLayout {
+    /// The value at its own path and nothing else.
+    Flat,
+    /// The value, its metadata and the verbs that withdraw or restore a
+    /// version, each under a separate prefix.
+    Versioned,
+}
+
+impl KvLayout {
+    pub fn is_versioned(self) -> bool {
+        matches!(self, Self::Versioned)
+    }
+}
+
 /// Which storage layout a mount uses, as the mount itself reported it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MountVersion {
+#[non_exhaustive]
+pub struct MountLayout {
     /// The mount answering for the path, with its trailing separator kept as
     /// Vault reports it.
     pub mount: String,
-    pub version: u8,
+    pub layout: KvLayout,
+}
+
+/// What `sys/health` answered, whatever status it answered with.
+///
+/// Vault gives a sealed, uninitialized or standby server a non-200 status, so
+/// a reader that lets the status decide cannot report the state it was asked
+/// for — sealed being the state the report is usually wanted for. A field
+/// Vault did not send stays absent rather than reading as false.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct HealthStatus {
+    pub initialized: Option<bool>,
+    pub sealed: Option<bool>,
+    pub standby: Option<bool>,
+    pub version: Option<String>,
+    pub cluster_id: Option<String>,
+    pub cluster_name: Option<String>,
+    /// The status the answer carried, for a caller that wants Vault's own
+    /// verdict rather than one derived from the fields.
+    #[serde(skip)]
+    pub status: u16,
 }
 
 #[derive(Clone)]
@@ -20,7 +61,7 @@ pub struct VaultClient {
     transport: Transport,
     /// Answers already had from the version probe. Guards a lookup table and
     /// nothing else: the lock is never held across a request.
-    mount_versions: Arc<Mutex<HashMap<String, MountVersion>>>,
+    mount_layouts: Arc<Mutex<HashMap<String, MountLayout>>>,
 }
 
 impl VaultClient {
@@ -50,7 +91,7 @@ impl VaultClient {
     fn build(transport: Transport) -> Self {
         Self {
             transport,
-            mount_versions: Arc::new(Mutex::new(HashMap::new())),
+            mount_layouts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -67,9 +108,23 @@ impl VaultClient {
         self.transport.vault_addr()
     }
 
-    /// Health check
-    pub async fn health(&self) -> Result<Value> {
-        self.get("sys/health").await
+    /// What the server says about itself. Only a request that never reached an
+    /// answer, or one whose body is not a health report, is an error.
+    pub async fn health(&self) -> Result<HealthStatus> {
+        const PATH: &str = "sys/health";
+
+        let (status, body) = self
+            .transport
+            .call(RequestMethod::GET, PATH, None, None)
+            .await?;
+
+        let mut health: HealthStatus =
+            serde_json::from_slice(&body).map_err(|source| Error::Decode {
+                path: PATH.to_string(),
+                source,
+            })?;
+        health.status = status;
+        Ok(health)
     }
 
     /// The cluster this client is addressing.
@@ -79,12 +134,7 @@ impl VaultClient {
     /// choice is visible, and one reporting server status must not print an
     /// unreachable Vault as an absent field.
     pub async fn cluster_id(&self) -> Result<Option<String>> {
-        Ok(self
-            .health()
-            .await?
-            .get("cluster_id")
-            .and_then(|v| v.as_str())
-            .map(str::to_string))
+        Ok(self.health().await?.cluster_id)
     }
 
     /// Generic GET request to Vault API
@@ -185,42 +235,42 @@ impl VaultClient {
     /// rather than found by listing every mount — the listing needs a
     /// permission the operation itself does not, and answers for a mount the
     /// caller never named. A server too old to answer has only the one layout.
-    pub async fn mount_version(&self, path: &str) -> Result<MountVersion> {
+    pub async fn mount_layout(&self, path: &str) -> Result<MountLayout> {
         let path = path.trim_start_matches('/').to_string();
-        if let Some(known) = self.cached_mount_version(&path) {
+        if let Some(known) = self.cached_mount_layout(&path) {
             return Ok(known);
         }
 
         let probe = format!("sys/internal/ui/mounts/{path}");
         let resolved = match self.get(&probe).await {
-            Ok(answer) => MountVersion {
+            Ok(answer) => MountLayout {
                 mount: answer["data"]["path"]
                     .as_str()
                     .unwrap_or_default()
                     .to_string(),
-                version: match answer["data"]["options"]["version"].as_str() {
-                    Some("2") => 2,
-                    _ => 1,
+                layout: match answer["data"]["options"]["version"].as_str() {
+                    Some("2") => KvLayout::Versioned,
+                    _ => KvLayout::Flat,
                 },
             },
             // A Vault without this endpoint predates the versioned layout.
-            Err(e) if e.is_not_found() => MountVersion {
+            Err(e) if e.is_not_found() => MountLayout {
                 mount: String::new(),
-                version: 1,
+                layout: KvLayout::Flat,
             },
             Err(e) => return Err(e),
         };
 
         // discard-ok: a poisoned memo table costs a repeat request, nothing more
-        if let Ok(mut cache) = self.mount_versions.lock() {
+        if let Ok(mut cache) = self.mount_layouts.lock() {
             cache.insert(path, resolved.clone());
         }
         Ok(resolved)
     }
 
-    fn cached_mount_version(&self, path: &str) -> Option<MountVersion> {
-        // discard-ok: see mount_version; a failed lock just misses the cache
-        self.mount_versions.lock().ok()?.get(path).cloned()
+    fn cached_mount_layout(&self, path: &str) -> Option<MountLayout> {
+        // discard-ok: see mount_layout; a failed lock just misses the cache
+        self.mount_layouts.lock().ok()?.get(path).cloned()
     }
 }
 
@@ -264,6 +314,48 @@ mod tests {
             .await
             .expect("a 204 is a successful write");
         assert_eq!(written, Value::Null);
+    }
+
+    /// Vault answers a sealed server with 503. Letting the status decide
+    /// reports an unreachable Vault for the one state a health read is usually
+    /// wanted for.
+    #[tokio::test]
+    async fn a_sealed_vault_reports_that_it_is_sealed() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "GET",
+            "/v1/sys/health",
+            ResponseTemplate::new(503)
+                .set_body_json(json!({ "initialized": true, "sealed": true, "version": "1.20.0" })),
+        )
+        .await;
+
+        let health = client(&server)
+            .health()
+            .await
+            .expect("a sealed server still answers");
+        assert_eq!(health.sealed, Some(true));
+        assert_eq!(health.status, 503);
+    }
+
+    /// A state the server did not report is absent, not false: reading it as
+    /// unsealed asserts the safe answer on the strength of a missing field.
+    #[tokio::test]
+    async fn a_seal_state_that_was_not_reported_is_not_unsealed() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "GET",
+            "/v1/sys/health",
+            ResponseTemplate::new(200).set_body_json(json!({ "version": "1.20.0" })),
+        )
+        .await;
+
+        assert_eq!(
+            client(&server).health().await.expect("answered").sealed,
+            None
+        );
     }
 
     #[tokio::test]
@@ -366,20 +458,17 @@ mod tests {
 
         let client = client(&server);
         assert_eq!(
-            client
-                .mount_version("versioned/thing")
-                .await
-                .expect("probe"),
-            MountVersion {
+            client.mount_layout("versioned/thing").await.expect("probe"),
+            MountLayout {
                 mount: "versioned/".to_string(),
-                version: 2
+                layout: KvLayout::Versioned
             }
         );
         assert_eq!(
-            client.mount_version("flat/thing").await.expect("probe"),
-            MountVersion {
+            client.mount_layout("flat/thing").await.expect("probe"),
+            MountLayout {
                 mount: "flat/".to_string(),
-                version: 1
+                layout: KvLayout::Flat
             }
         );
     }
@@ -407,14 +496,14 @@ mod tests {
         let client = client(&server);
         assert_eq!(
             client
-                .mount_version("old/thing")
+                .mount_layout("old/thing")
                 .await
                 .expect("older")
-                .version,
-            1
+                .layout,
+            KvLayout::Flat
         );
         client
-            .mount_version("denied/thing")
+            .mount_layout("denied/thing")
             .await
             .expect_err("a refusal is not an answer");
     }
@@ -422,7 +511,7 @@ mod tests {
     /// The same path is asked once; a second call is served from what the mount
     /// already said.
     #[tokio::test]
-    async fn a_mount_version_is_asked_once() {
+    async fn a_mount_layout_is_asked_once() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/sys/internal/ui/mounts/versioned/thing"))
@@ -434,12 +523,9 @@ mod tests {
             .await;
 
         let client = client(&server);
+        client.mount_layout("versioned/thing").await.expect("probe");
         client
-            .mount_version("versioned/thing")
-            .await
-            .expect("probe");
-        client
-            .mount_version("versioned/thing")
+            .mount_layout("versioned/thing")
             .await
             .expect("cached");
     }
