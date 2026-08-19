@@ -34,10 +34,18 @@ fn set_up_the_environment_these_tests_read() {
 
 /// A session against the mock, resolving no address and no variable it was not
 /// given.
-async fn open(server: &MockServer, config: SessionConfig) -> Session {
-    Session::open(config.address(Address::Explicit(server.uri())))
-        .await
-        .expect("session")
+async fn open(config: SessionConfig) -> Session {
+    Session::open(config).await.expect("session")
+}
+
+/// A config addressed at the mock, with the token file under a named scratch
+/// subdirectory.
+fn config_at(server: &MockServer, name: &str) -> SessionConfig {
+    SessionConfig::with_token_file(
+        PROGRAM,
+        token_at(name, FILE_TOKEN),
+        Address::Explicit(server.uri()),
+    )
 }
 
 fn token_at(name: &str, token: &str) -> PathBuf {
@@ -81,11 +89,7 @@ async fn a_caller_owned_session_reads_its_file_and_not_the_environment() {
     accepts(&server, FILE_TOKEN).await;
     never_asked_about(&server, OPERATOR_TOKEN).await;
 
-    let session = open(
-        &server,
-        SessionConfig::with_token_file(PROGRAM, token_at("file-only", FILE_TOKEN)),
-    )
-    .await;
+    let session = open(config_at(&server, "file-only")).await;
 
     assert_eq!(
         session.get_token().await.expect("the file token"),
@@ -101,12 +105,7 @@ async fn a_session_naming_a_variable_reads_that_one() {
     accepts(&server, CALLER_ENV_TOKEN).await;
     never_asked_about(&server, OPERATOR_TOKEN).await;
 
-    let session = open(
-        &server,
-        SessionConfig::with_token_file(PROGRAM, token_at("named-env", FILE_TOKEN))
-            .token_env(CALLER_ENV),
-    )
-    .await;
+    let session = open(config_at(&server, "named-env").token_env(CALLER_ENV)).await;
 
     assert_eq!(
         session.get_token().await.expect("the caller's variable"),
@@ -122,12 +121,7 @@ async fn a_session_naming_the_operator_s_variable_reads_it() {
     let server = MockServer::start().await;
     accepts(&server, OPERATOR_TOKEN).await;
 
-    let session = open(
-        &server,
-        SessionConfig::with_token_file(PROGRAM, token_at("operator-env", FILE_TOKEN))
-            .token_env("VAULT_TOKEN"),
-    )
-    .await;
+    let session = open(config_at(&server, "operator-env").token_env("VAULT_TOKEN")).await;
 
     assert_eq!(
         session.get_token().await.expect("the environment token"),

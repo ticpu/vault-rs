@@ -124,8 +124,8 @@ async fn login_with_credentials(auth: &Session, method: &str, username: &str) ->
         .map_err(|e| VaultCliError::Auth(format!("Failed to read password: {e}")))?;
 
     match method {
-        "ldap" => Ok(auth.login_ldap(username, &password).await?),
-        "userpass" => Ok(auth.login_userpass(username, &password).await?),
+        "ldap" => Ok(auth.login_ldap("ldap", username, &password).await?),
+        "userpass" => Ok(auth.login_userpass("userpass", username, &password).await?),
         _ => Err(VaultCliError::Auth(format!(
             "Unsupported auth method: {method}"
         ))),

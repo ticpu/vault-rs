@@ -13,6 +13,7 @@ pub enum Error {
     /// tell them apart. The path stays on it because one status also covers a
     /// path that is not routed and an identity that may not reach it.
     #[error("Vault returned {status} for '{path}'{}", render_errors(.errors))]
+    #[non_exhaustive]
     Status {
         status: u16,
         path: String,
@@ -29,6 +30,7 @@ pub enum Error {
 
     /// An answer that did not have the shape its endpoint promises.
     #[error("could not read Vault's answer for '{path}'")]
+    #[non_exhaustive]
     Decode {
         path: String,
         #[source]
@@ -39,6 +41,7 @@ pub enum Error {
     /// is a resolver or a cache file, and naming either type would put it in
     /// this crate's public API for an error nobody matches on.
     #[error("{doing}")]
+    #[non_exhaustive]
     Discovery {
         doing: &'static str,
         #[source]
@@ -86,9 +89,10 @@ pub enum Error {
     /// also failed. The source names why the renewal itself did not work,
     /// distinct from why the original token was rejected.
     #[error(
-        "the stored token was rejected by Vault, and renewing it did not help; it has been \
-         removed; log in again with `{program} session login`"
+        "the stored token for '{program}' was rejected by Vault, and renewing it did not help; \
+         it has been removed, so a new login is required"
     )]
+    #[non_exhaustive]
     Rejected {
         program: String,
         #[source]
@@ -151,6 +155,14 @@ impl Error {
             status,
             path: path.to_string(),
             errors,
+        }
+    }
+
+    /// An answer that did not have the shape its endpoint promises.
+    pub fn decode(path: impl Into<String>, source: serde_json::Error) -> Self {
+        Self::Decode {
+            path: path.into(),
+            source,
         }
     }
 

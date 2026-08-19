@@ -143,7 +143,7 @@ impl PkiClient for VaultClient {
 
         let data = response.get("data").cloned().unwrap_or(Value::Null);
         Ok(serde_json::from_value(data)
-            .map_err(|source| vault_session::Error::Decode { path, source })?)
+            .map_err(|source| vault_session::Error::decode(path, source))?)
     }
 
     async fn get_pki_issuer_info(&self, pki_mount: &str) -> Result<Value> {

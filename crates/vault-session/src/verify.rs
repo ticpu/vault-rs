@@ -72,14 +72,17 @@ impl Expectation {
 #[non_exhaustive]
 pub enum Finding {
     /// The token may not do this at the path.
+    #[non_exhaustive]
     Denied {
         path: String,
         wanted: &'static str,
         granted: Vec<String>,
     },
     /// Nothing the token can see is mounted there.
+    #[non_exhaustive]
     MountAbsent { mount: String },
     /// The mount is there under the other layout.
+    #[non_exhaustive]
     WrongLayout {
         mount: String,
         wanted: KvLayout,
@@ -87,10 +90,13 @@ pub enum Finding {
     },
     /// Vault drops a policy name it does not know rather than refusing the
     /// login, so a token can come back holding fewer than it was granted.
+    #[non_exhaustive]
     PolicyNotAttached { name: String, attached: Vec<String> },
     /// The role would not accept the redirect a login binds.
+    #[non_exhaustive]
     RedirectRefused { mount: String, reason: String },
     /// The check itself could not be run, so nothing is claimed either way.
+    #[non_exhaustive]
     Unchecked {
         checking: &'static str,
         reason: String,

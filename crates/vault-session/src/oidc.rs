@@ -30,22 +30,29 @@ const MAX_REQUEST_LINE: usize = 8192;
 const REQUEST_WAIT: Duration = Duration::from_secs(10);
 
 /// Says only that the redirect arrived: whether the grant on it buys a token is
-/// settled after this page is already served, and the terminal reports that.
+/// settled after this page is already served, where the calling program reports
+/// it.
 const RECEIVED_PAGE: &str = "<!DOCTYPE html>
 <html lang=\"en\">
 <head><meta charset=\"utf-8\"><title>Response received</title></head>
-<body><p>Response received. Close this window and return to the terminal.</p></body>
+<body><p>Response received. Close this window and return to the application you \
+started the sign-in from.</p></body>
 </html>
 ";
 
 const REFUSED_PAGE: &str = "<!DOCTYPE html>
 <html lang=\"en\">
 <head><meta charset=\"utf-8\"><title>Sign-in refused</title></head>
-<body><p>Sign-in refused. Close this window; the terminal says why.</p></body>
+<body><p>Sign-in refused. Close this window; the application you started the \
+sign-in from says why.</p></body>
 </html>
 ";
 
 /// What the provider handed back, for the token exchange.
+///
+/// No `Debug`: the code is a credential, and a derived one puts it in every
+/// log line that formats the struct.
+#[non_exhaustive]
 pub struct Callback {
     pub state: String,
     pub code: String,
@@ -72,6 +79,26 @@ impl Redirect {
     /// The port the official client uses, and so the one a role's allowed
     /// redirect URIs are most likely already written for.
     pub const DEFAULT_PORT: u16 = 8250;
+
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
+
+    pub fn host(mut self, host: impl Into<String>) -> Self {
+        self.host = host.into();
+        self
+    }
+
+    pub fn path(mut self, path: impl Into<String>) -> Self {
+        self.path = path.into();
+        self
+    }
+
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
 }
 
 impl Default for Redirect {
@@ -129,8 +156,8 @@ impl CallbackListener {
 
         if sockets.is_empty() {
             return Err(Error::Auth(format!(
-                "No loopback address accepted the OIDC redirect listener ({}). Pass --port to \
-                 use one the role also allows.",
+                "No loopback address accepted the OIDC redirect listener ({}). The redirect has \
+                 to name a port the role allows and this host can bind.",
                 refusals.join("; ")
             )));
         }

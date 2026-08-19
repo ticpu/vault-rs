@@ -30,8 +30,7 @@ pub fn operator_config() -> Result<SessionConfig> {
         None => Address::EnvThenSrv,
     };
 
-    let config = SessionConfig::for_program(PROGRAM_NAME)?
-        .address(address)
+    let config = SessionConfig::for_program(PROGRAM_NAME, address)?
         .token_env("VAULT_TOKEN")
         .srv_cache(vault_session::paths::runtime_dir(PROGRAM_NAME)?.join("dns_vault_addr.yaml"));
 

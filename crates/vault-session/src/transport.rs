@@ -1,6 +1,6 @@
 //! Everything about talking to Vault: building the client vaultrs wraps, and
 //! the one generic endpoint every verb this crate does not model itself goes
-//! through — the passthrough `docs/design-rationale.md` requires.
+//! through.
 //!
 //! vaultrs' own `api::exec_with_*` helpers strip the response envelope and
 //! reject a body that parses to nothing, which loses two things this crate's
@@ -72,11 +72,9 @@ impl ClientIdentity {
     }
 }
 
-/// Every knob `vaultrs::client::VaultClientSettings` exposes that this
-/// crate's own client building never had a way to set. `VaultClient` and
-/// `VaultAuth` build one with defaults matching the client this crate always
-/// built; a public knob to set these individually belongs to the session and
-/// address reshape, not this step.
+/// The knobs `vaultrs::client::VaultClientSettings` exposes, at the defaults
+/// `Transport::build` applies. Not public: a caller-set CA bundle, identity or
+/// timeout would put vaultrs' own settings shape in this crate's API.
 pub(crate) struct TransportSettings {
     pub address: String,
     pub token: String,
@@ -283,9 +281,8 @@ impl Transport {
         Self::interpret_json(path, status, body)
     }
 
-    /// A response whose body is a certificate rather than a JSON envelope.
-    /// Refusals still carry their status, so a denied read is not reported as
-    /// an empty chain.
+    /// A response whose body is not a JSON envelope. Refusals still carry their
+    /// status, so a denied read is not reported as an empty body.
     pub async fn get_text(&self, path: &str) -> Result<String, Error> {
         let (status, body) = self.call(RequestMethod::GET, path, None, None).await?;
         if !(200..300).contains(&status) {

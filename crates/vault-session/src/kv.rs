@@ -5,7 +5,7 @@
 //! Which prefix a verb needs is fixed; which layout the mount uses is not, and
 //! is asked of the mount rather than read off the path's shape.
 
-use crate::client::{MountLayout, VaultClient};
+use crate::client::{KvLayout, MountLayout, VaultClient};
 use crate::error::{Error, Result};
 use serde_json::{json, Value};
 
@@ -22,11 +22,11 @@ impl Target {
     /// A secret whose mount and layout the caller already established. The
     /// master key's mount is chosen by discovery rather than probed, so it
     /// arrives here already answered rather than being asked again.
-    pub fn known(mount: &str, key: &str, versioned: bool) -> Self {
+    pub fn known(mount: &str, key: &str, layout: KvLayout) -> Self {
         Self {
             mount: mount.trim_matches('/').to_string(),
             key: key.trim_matches('/').to_string(),
-            versioned,
+            versioned: layout.is_versioned(),
         }
     }
 
@@ -86,13 +86,14 @@ impl Target {
         self.versioned
     }
 
-    /// Refuse a verb that only the versioned layout has, naming the mount so
-    /// the operator knows it is the mount and not the command.
-    pub fn require_versions(&self, verb: &str) -> Result<()> {
+    /// Refuse an operation only the versioned layout has, naming the mount so
+    /// the caller knows it is the mount and not the request. `operation`
+    /// describes what was asked for, not the command that asked.
+    pub fn require_versions(&self, operation: &str) -> Result<()> {
         match self.versioned {
             true => Ok(()),
             false => Err(Error::InvalidInput(format!(
-                "'{}' keeps no version history, so there is nothing for `kv {verb}` to act on",
+                "'{}' keeps no version history, so {operation} has nothing to act on",
                 self.mount
             ))),
         }
@@ -105,7 +106,7 @@ pub async fn read(client: &VaultClient, target: &Target, version: Option<u64>) -
     let path = target.data();
     let secret = match version {
         Some(version) => {
-            target.require_versions("get -version")?;
+            target.require_versions("reading a numbered version")?;
             client
                 .get_even_if_withdrawn_at_version(&path, version)
                 .await?
@@ -166,7 +167,7 @@ pub async fn write(
     let body = match target.versioned() {
         false => {
             if cas.is_some() {
-                target.require_versions("put -cas")?;
+                target.require_versions("a compare-and-set write")?;
             }
             fields
         }

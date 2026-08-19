@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MountInfo {
     #[serde(rename = "type")]
     pub mount_type: String,
@@ -12,6 +13,7 @@ pub struct MountInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MountsResponse {
     pub data: HashMap<String, MountInfo>,
 }

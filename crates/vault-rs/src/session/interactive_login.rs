@@ -43,8 +43,8 @@ impl InteractiveLogin for Session {
             .map_err(|e| VaultCliError::Auth(format!("Failed to read password: {e}")))?;
 
         match method.as_str() {
-            "ldap" => Ok(self.login_ldap(username, &password).await?),
-            "userpass" => Ok(self.login_userpass(username, &password).await?),
+            "ldap" => Ok(self.login_ldap("ldap", username, &password).await?),
+            "userpass" => Ok(self.login_userpass("userpass", username, &password).await?),
             _ => Err(VaultCliError::Auth(format!(
                 "Unsupported auth method: {method}"
             ))),

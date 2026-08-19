@@ -11,6 +11,7 @@ use crate::storage::local::LocalStorage;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use crate::utils::PROGRAM_NAME;
+use vault_session::KvLayout;
 
 /// Where the key is, whether replacing it could be undone, and which cluster
 /// answered.
@@ -187,12 +188,16 @@ async fn readable_count() -> Result<usize> {
     Ok(readable.len())
 }
 
-/// The key's secret, refused where the mount has no versions to act on. That
+/// The key's address, refused where the mount has no versions to act on. That
 /// mount is exactly where an operator most needs to be told, since it is the
 /// one where replacing the key could not have been undone.
 fn require_versions(location: &KeyLocation, verb: &str) -> Result<Target> {
     match location.versioned {
-        true => Ok(Target::known(&location.mount, location.key(), true)),
+        true => Ok(Target::known(
+            &location.mount,
+            location.key(),
+            KvLayout::Versioned,
+        )),
         false => Err(VaultCliError::InvalidInput(format!(
             "'{}' keeps no version history, so there is nothing for `session key {verb}` to read. \
              A key replaced on this mount could not have been recovered.",

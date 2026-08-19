@@ -11,12 +11,12 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
-/// What `auth status` found, as opposed to what `get_token` needs.
+/// The stored token's state, as opposed to what `get_token` collapses it to.
 ///
-/// `get_token` collapses all of these into "a usable token or an error",
-/// which is right for its callers and wrong for a status report: "there is
-/// no token", "the server rejected the one there is" and "I could not find
-/// out" are three different answers, and the third is not a status at all.
+/// `get_token` answers "a usable token or an error", which is right for its
+/// callers and wrong for a status report: "there is no token", "the server
+/// rejected the one there is" and "I could not find out" are three different
+/// answers, and the third is not a status at all.
 pub enum TokenState {
     Absent,
     Rejected,
@@ -25,7 +25,7 @@ pub enum TokenState {
 
 /// What `logout` found to act on, so the report names what happened rather
 /// than asserting a revocation that had no token to revoke.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogoutOutcome {
     NoToken,
     Revoked,
@@ -106,20 +106,24 @@ pub struct SessionConfig {
 impl SessionConfig {
     /// A session keeping its token under the calling program's own runtime
     /// directory, which it creates owner-only.
-    pub fn for_program(program: impl Into<String>) -> Result<Self> {
+    pub fn for_program(program: impl Into<String>, address: Address) -> Result<Self> {
         let program = program.into();
         let token_file = paths::runtime_dir(&program)?.join("token");
         Ok(Self {
             resolved_token_dir: true,
-            ..Self::with_token_file(program, token_file)
+            ..Self::with_token_file(program, token_file, address)
         })
     }
 
     /// A session keeping its token in a file the caller names.
-    pub fn with_token_file(program: impl Into<String>, token_file: PathBuf) -> Self {
+    pub fn with_token_file(
+        program: impl Into<String>,
+        token_file: PathBuf,
+        address: Address,
+    ) -> Self {
         Self {
             program: program.into(),
-            address: Address::EnvThenSrv,
+            address,
             srv_cache: None,
             token_file,
             token_env: None,
@@ -260,9 +264,12 @@ impl Session {
         self.read_stored_token().await
     }
 
-    /// Authenticate with LDAP and store token
-    pub async fn login_ldap(&self, username: &str, password: &str) -> Result<String> {
-        let path = format!("auth/ldap/login/{username}");
+    /// Authenticate against an LDAP auth mount and store the token.
+    ///
+    /// `mount` is the mount's path, which is `ldap` only where it was enabled
+    /// at its default.
+    pub async fn login_ldap(&self, mount: &str, username: &str, password: &str) -> Result<String> {
+        let path = format!("auth/{mount}/login/{username}");
         let response = self
             .transport
             .post(&path, json!({ "password": password }))
@@ -270,9 +277,17 @@ impl Session {
         self.accept_login("LDAP", &response).await
     }
 
-    /// Authenticate with username/password auth method
-    pub async fn login_userpass(&self, username: &str, password: &str) -> Result<String> {
-        let path = format!("auth/userpass/login/{username}");
+    /// Authenticate against a userpass auth mount and store the token.
+    ///
+    /// `mount` is the mount's path, which is `userpass` only where it was
+    /// enabled at its default.
+    pub async fn login_userpass(
+        &self,
+        mount: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<String> {
+        let path = format!("auth/{mount}/login/{username}");
         let response = self
             .transport
             .post(&path, json!({ "password": password }))
@@ -385,7 +400,7 @@ impl Session {
         match answer["data"]["auth_url"].as_str().unwrap_or_default() {
             "" => Err(Error::Auth(format!(
                 "The '{}' mount returned no authorization URL for {redirect_uri}. The role's \
-                 allowed_redirect_uris has to name it; --port changes the port this asks for.",
+                 allowed_redirect_uris has to name the redirect this login asks for.",
                 login.mount
             ))),
             auth_url => Ok(auth_url.to_string()),
@@ -432,7 +447,12 @@ impl Session {
     }
 
     /// Store the token at this session's path, owner-only.
-    async fn store_token(&self, token: &str) -> Result<()> {
+    ///
+    /// The token is written as given, not checked: a caller authenticating by a
+    /// method this crate does not model — AppRole, Kubernetes, a token an
+    /// orchestrator handed over — seats it here, and whether it is usable is
+    /// what `token_state` answers.
+    pub async fn store_token(&self, token: &str) -> Result<()> {
         let token_file = &self.token_file;
 
         // An empty parent is a bare relative filename: the directory is the one
@@ -603,10 +623,11 @@ mod tests {
 
     /// A session against a named address, reading no environment.
     async fn session_at(address: &str, token_file: PathBuf) -> Session {
-        Session::open(
-            SessionConfig::with_token_file("test", token_file)
-                .address(Address::Explicit(address.to_string())),
-        )
+        Session::open(SessionConfig::with_token_file(
+            "test",
+            token_file,
+            Address::Explicit(address.to_string()),
+        ))
         .await
         .expect("session")
     }

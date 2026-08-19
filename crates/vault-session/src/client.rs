@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// How a KV mount addresses a secret.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum KvLayout {
@@ -129,8 +129,8 @@ impl VaultClient {
 
     /// A client against an address and token given directly: it consults
     /// neither the environment nor discovery.
-    pub fn with_token(vault_addr: String, token: String) -> Result<Self> {
-        let transport = Transport::build(TransportSettings::new(vault_addr, token))?;
+    pub fn with_token(vault_addr: impl Into<String>, token: impl Into<String>) -> Result<Self> {
+        let transport = Transport::build(TransportSettings::new(vault_addr.into(), token.into()))?;
         Ok(Self::build(transport))
     }
 
@@ -346,10 +346,19 @@ impl VaultClient {
         let probe = format!("sys/internal/ui/mounts/{path}");
         let resolved = match self.get(&probe).await {
             Ok(answer) => MountLayout {
-                mount: answer["data"]["path"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string(),
+                // Read as an empty mount name, the whole path stays on the key
+                // and the secret is looked for somewhere it was never written.
+                mount: match answer["data"]["path"].as_str() {
+                    Some(mount) => mount.to_string(),
+                    None => {
+                        return Err(Error::decode(
+                            &probe,
+                            <serde_json::Error as serde::de::Error>::custom(
+                                "the mount probe answered without a 'data.path' string",
+                            ),
+                        ))
+                    }
+                },
                 layout: match answer["data"]["options"]["version"].as_str() {
                     Some("2") => KvLayout::Versioned,
                     _ => KvLayout::Flat,

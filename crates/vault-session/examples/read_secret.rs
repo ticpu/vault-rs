@@ -4,9 +4,9 @@
 //! keeps do not reach it, and a login is only attempted when there is no
 //! usable token.
 //!
-//!     cargo run --example read_secret -- kv fsa/prod
+//!     cargo run --example read_secret -- secret app/config
 
-use vault_session::{kv, Session, SessionConfig, TokenState, VaultClient};
+use vault_session::{kv, Address, Session, SessionConfig, TokenState, VaultClient};
 
 const PROGRAM: &str = "read_secret";
 
@@ -17,7 +17,10 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("usage: read_secret <mount> <path>");
     };
 
-    let session = Session::open(SessionConfig::for_program(PROGRAM)?).await?;
+    // The address is named, not inherited: a consumer that wants the operator's
+    // exported `VAULT_ADDR` asks for it.
+    let config = SessionConfig::for_program(PROGRAM, Address::EnvThenSrv)?;
+    let session = Session::open(config).await?;
     if !matches!(session.token_state().await?, TokenState::Valid(_)) {
         // The library has no console; where the URL goes is this program's
         // call, and so is whether a browser is launched at all.
