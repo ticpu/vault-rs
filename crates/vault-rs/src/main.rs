@@ -29,13 +29,9 @@ async fn main() {
         // signal, which is not the `| head` case above.
         let broken_pipe = e
             .downcast_ref::<std::io::Error>()
-            .or_else(
-                || match e.downcast_ref::<vault_rs::utils::errors::VaultCliError>() {
-                    Some(vault_rs::utils::errors::VaultCliError::Io(io)) => Some(io),
-                    _ => None,
-                },
-            )
-            .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe);
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+            || e.downcast_ref::<vault_rs::utils::errors::VaultCliError>()
+                .is_some_and(vault_rs::utils::errors::VaultCliError::is_broken_pipe);
         if broken_pipe {
             std::process::exit(0);
         }

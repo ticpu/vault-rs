@@ -69,6 +69,17 @@ impl VaultCliError {
     pub fn is_permission_denied(&self) -> bool {
         matches!(self, Self::Session(e) if e.is_permission_denied())
     }
+
+    /// Whether this ended at a pipe nobody is reading. The library's io errors
+    /// arrive wrapped, so matching only this crate's own variant misses every
+    /// write the session layer made.
+    pub fn is_broken_pipe(&self) -> bool {
+        match self {
+            Self::Io(e) => e.kind() == std::io::ErrorKind::BrokenPipe,
+            Self::Session(e) => e.is_broken_pipe(),
+            _ => false,
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, VaultCliError>;

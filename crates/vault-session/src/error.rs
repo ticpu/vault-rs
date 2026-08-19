@@ -127,10 +127,19 @@ impl Error {
     pub fn refusal(path: &str, status: u16, body: String) -> Self {
         let errors = match serde_json::from_str::<serde_json::Value>(&body) {
             Ok(envelope) => match envelope.get("errors").and_then(|e| e.as_array()) {
-                Some(reported) => reported
-                    .iter()
-                    .filter_map(|e| e.as_str().map(str::to_string))
-                    .collect(),
+                Some(reported) => {
+                    let named: Vec<String> = reported
+                        .iter()
+                        .filter_map(|e| e.as_str().map(str::to_string))
+                        .collect();
+                    // An `errors` carrying something other than strings still
+                    // says why; filtering it away leaves a bare status for a
+                    // refusal the server explained.
+                    match named.is_empty() && !reported.is_empty() {
+                        true => vec![body],
+                        false => named,
+                    }
+                }
                 None => vec![body],
             },
             // discard-ok: a body that is not JSON is still what the server said
@@ -160,6 +169,12 @@ impl Error {
         self.status() == Some(404)
     }
 
+    /// Whether this ended at a pipe nobody is reading. A reader that closed
+    /// early is an ordinary end to a command, not a failure worth reporting.
+    pub fn is_broken_pipe(&self) -> bool {
+        matches!(self, Self::Io(e) if e.kind() == std::io::ErrorKind::BrokenPipe)
+    }
+
     /// Whether the token was refused the path. This is the answer to most
     /// "why can this program not read its own document" questions, and Vault
     /// gives it for a path that is not routed as readily as for one the policy
@@ -170,3 +185,76 @@ impl Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// A refusal is what a caller is left holding when a read fails, so what it
+/// carries decides whether they can act on it.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_lifts_the_server_s_own_reasons_out_of_the_envelope() {
+        let refused = Error::refusal(
+            "secret/data/app",
+            403,
+            r#"{"errors":["permission denied","1 error occurred"]}"#.to_string(),
+        );
+
+        let rendered = refused.to_string();
+        assert!(rendered.contains("permission denied"), "{rendered}");
+        assert!(rendered.contains("1 error occurred"), "{rendered}");
+        assert!(rendered.contains("secret/data/app"), "{rendered}");
+    }
+
+    /// Several engines answer a refusal with a body that is not JSON at all.
+    /// Dropping it leaves the caller the status and nothing else.
+    #[test]
+    fn a_body_that_is_not_json_is_still_what_the_server_said() {
+        let refused = Error::refusal("sys/health", 502, "<html>Bad Gateway</html>".to_string());
+        assert!(refused.to_string().contains("Bad Gateway"));
+    }
+
+    /// A refusal with an empty body has nothing to quote, and quoting the
+    /// empty string reads as a server that said something it did not.
+    #[test]
+    fn an_empty_body_adds_nothing_to_the_message() {
+        let refused = Error::refusal("secret/data/app", 403, "   ".to_string());
+        assert_eq!(
+            refused.to_string(),
+            "Vault returned 403 for 'secret/data/app'"
+        );
+    }
+
+    /// JSON without an `errors` key is a body in some other shape, and the
+    /// whole of it is the only thing that can be reported.
+    #[test]
+    fn json_carrying_no_errors_key_is_reported_whole() {
+        let refused = Error::refusal("secret/data/app", 400, r#"{"warnings":["x"]}"#.to_string());
+        assert!(refused.to_string().contains("warnings"));
+    }
+
+    /// An `errors` array holding no strings at all filters down to nothing,
+    /// which reports a bare status for a refusal the server did explain.
+    #[test]
+    fn an_errors_array_of_no_strings_still_reports_what_the_server_said() {
+        let refused = Error::refusal(
+            "secret/data/app",
+            400,
+            r#"{"errors":[{"code":7,"detail":"lease expired"}]}"#.to_string(),
+        );
+        assert!(
+            refused.to_string().contains("lease expired"),
+            "{refused}, which tells the caller nothing they can act on"
+        );
+    }
+
+    #[test]
+    fn a_reader_that_closed_early_is_told_apart_from_a_failure() {
+        let pipe = Error::Io(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
+        assert!(pipe.is_broken_pipe());
+
+        let denied = Error::Io(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(!denied.is_broken_pipe());
+        assert!(!Error::NoTlsProvider.is_broken_pipe());
+    }
+}
