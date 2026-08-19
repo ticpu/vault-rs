@@ -42,7 +42,6 @@ pub async fn exec_vault_command(
         vault_addr
     );
 
-    // Execute the command and replace the current process
     let status = cmd
         .status()
         .map_err(|e| VaultCliError::Config(format!("Failed to execute vault command: {e}")))?;

@@ -242,8 +242,9 @@ impl KeyManager {
         Ok(new_key)
     }
 
-    /// Initialize encryption key in personal vault. `destroy_existing`
-    /// overwrites one that is already there.
+    /// Mint the master key on this store's recorded mount. `destroy_existing`
+    /// consents to an overwrite the mount can undo; an irreversible one is
+    /// refused whatever the flag says.
     pub async fn init_encryption_key(&self, destroy_existing: bool) -> Result<()> {
         if self.retrieve_key_from_vault().await?.is_none() {
             let key = self.generate_master_key();

@@ -10,8 +10,6 @@ use crate::vault::mounts::{MountInfo, MountsResponse};
 pub async fn list(output: &OutputFormat) -> Result<()> {
     let client = crate::vault::operator_client().await?;
 
-    // Asserting a permission verdict for what may be a refused connection,
-    // and exiting 1 where 1 means a match, not an error.
     let mounts = client.list_mounts().await?;
 
     output.print_table(&as_table_data(&mounts));

@@ -1,22 +1,46 @@
+//! Internal to the `vault-rs` binary. This is not a supported library API and
+//! carries no stability guarantee: it exists so the binary's tests and command
+//! handlers can share code. A program linking Vault support wants
+//! [`vault-session`](https://docs.rs/vault-session) instead.
+
+#[doc(hidden)]
 pub mod cache;
+#[doc(hidden)]
 pub mod cert;
+#[doc(hidden)]
 pub mod cli;
+#[doc(hidden)]
 pub mod config;
+#[doc(hidden)]
 pub mod crypto;
+#[doc(hidden)]
 pub mod logical;
+#[doc(hidden)]
 pub mod policy;
+#[doc(hidden)]
 pub mod secrets;
+#[doc(hidden)]
 pub mod server;
+#[doc(hidden)]
 pub mod session;
+#[doc(hidden)]
 pub mod storage;
+#[doc(hidden)]
 pub mod utils;
+#[doc(hidden)]
 pub mod vault;
 
+#[doc(hidden)]
 pub use cert::{CertificateCache, CertificateParser, CertificateService};
+#[doc(hidden)]
 pub use cli::{args, commands};
+#[doc(hidden)]
 pub use crypto::encryption;
+#[doc(hidden)]
 pub use storage::local;
+#[doc(hidden)]
 pub use utils::{errors, paths};
+#[doc(hidden)]
 pub use vault::client;
 
 /// Confine the unit tests to the build directory, before the harness starts a

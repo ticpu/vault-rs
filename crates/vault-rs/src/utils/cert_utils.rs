@@ -5,7 +5,6 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-/// Create a PKCS12 file using OpenSSL
 /// A path as a command-line argument. Paths are bytes on Unix, so a name that
 /// is not UTF-8 is a legitimate path this cannot pass to openssl — report it
 /// rather than panicking on the caller's filename.

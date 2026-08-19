@@ -12,7 +12,6 @@ pub async fn find_certificate_by_identifier(
     identifier: &str,
     pki_mount_filter: Option<&str>,
 ) -> Result<(String, SerialNumber, String)> {
-    // Check if identifier looks like a serial number (hex string, typically 30+ chars)
     let serial = SerialNumber::parse(identifier);
     let pki_mounts = if let Some(mount) = pki_mount_filter {
         vec![mount.to_string()]

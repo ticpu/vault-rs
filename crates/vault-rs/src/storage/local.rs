@@ -166,9 +166,9 @@ impl LocalStorage {
         Ok(())
     }
 
-    /// Record which cluster sealed this artifact. Unreadable cluster identity
-    /// records no identity rather than a guessed one, and never fails the
-    /// write: the artifact is what matters, the marker is a diagnostic.
+    /// Record which cluster sealed this artifact. A cluster identity that
+    /// cannot be read records no identity rather than a guessed one; a marker
+    /// that cannot be written fails the artifact write.
     async fn write_sealed_by(&self, cert_dir: &Path) -> Result<()> {
         let Some(cluster_id) = self.cluster_id().await else {
             tracing::warn!(
@@ -728,15 +728,6 @@ impl StoredEntry {
     }
 }
 
-/// The subdirectories of `dir`, and the name of every file sitting beside
-/// them. A read failure propagates: the walk cannot tell a directory it could
-/// not open from an empty one.
-///
-/// Files are returned rather than skipped. Above an artifact directory only
-/// directories belong, so a file there is either a layout this build no longer
-/// reads or something that has no business in the store — and skipping it
-/// silently is how an artifact on disk goes unmentioned at exit 0, which is
-/// the whole failure this walk exists to end.
 /// Name every file found where only directories belong. Reported rather than
 /// ignored so the listing refuses instead of quietly presenting a store it did
 /// not fully account for.
@@ -757,6 +748,12 @@ fn report_stray(result: &mut Partial<CertificateStorage>, at: &str, files: Vec<S
     }
 }
 
+/// The subdirectories of `dir`, and the name of every file sitting beside
+/// them. A read failure propagates: the walk cannot tell a directory it could
+/// not open from an empty one.
+///
+/// Files are returned rather than skipped, since skipping one silently is how
+/// an artifact on disk goes unmentioned at exit 0.
 fn read_level(dir: &Path) -> Result<(Vec<fs::DirEntry>, Vec<String>)> {
     let mut dirs = Vec::new();
     let mut files = Vec::new();
@@ -833,11 +830,14 @@ mod tests {
             .expect("rewriting metadata");
 
         let found = storage.scan().await.expect("scan").resolve(false).unwrap();
-        assert_eq!(found[0].meta.cn, "leaf-client", "cn came from the record");
+        assert_eq!(
+            found[0].meta.cn, "leaf-client",
+            "cn came from the certificate, not the stored record"
+        );
         assert_eq!(
             found[0].meta.expires.format("%Y").to_string(),
             "2126",
-            "expiry came from the record, not the certificate"
+            "expiry came from the certificate, not the stored record"
         );
     }
 

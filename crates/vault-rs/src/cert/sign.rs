@@ -72,7 +72,6 @@ pub async fn sign_certificate_from_csr(
         )));
     }
 
-    // Validate role exists (optional check with helpful error)
     validate_role_exists(client, &full_pki, &request.role).await?;
 
     // Parse alt_names and ip_sans

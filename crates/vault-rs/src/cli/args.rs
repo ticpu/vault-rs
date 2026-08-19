@@ -10,7 +10,7 @@ fn parse_expiring_within(s: &str) -> Result<Duration, String> {
 #[derive(Parser)]
 #[command(name = "vault-rs")]
 #[command(version)]
-#[command(about = "A secure Vault PKI management tool for sysadmins")]
+#[command(about = "A Vault CLI for sysadmins: PKI, KV, policies and a local certificate store")]
 #[command(long_about = None)]
 pub struct Cli {
     /// Vault server URL
@@ -26,7 +26,7 @@ pub struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
-    /// Suppress non-error output
+    /// Install no log subscriber; status lines and prompts still print
     #[arg(short, long)]
     pub quiet: bool,
 

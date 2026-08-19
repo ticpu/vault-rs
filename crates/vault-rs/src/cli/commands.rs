@@ -671,8 +671,6 @@ async fn handle_storage_command(
     }
 }
 
-/// One client for the whole invocation, so the mount each verb resolves is
-/// asked for once rather than per call.
 async fn handle_kv_command(command: KvCommands, output: &OutputFormat) -> Result<()> {
     use crate::logical::kv::{self, Target};
 

@@ -55,10 +55,8 @@ pub async fn create_certificate(
         eprintln!("TTL: {ttl}");
     }
 
-    // Validate role exists (optional check with helpful error)
     validate_role_exists(client, &full_pki, &request.role).await?;
 
-    // Issue certificate from Vault
     let alt_names_vec = parse_comma_separated(request.alt_names.as_deref());
     let ip_sans_vec = parse_comma_separated(request.ip_sans.as_deref());
 
@@ -181,7 +179,6 @@ pub async fn create_certificate(
             ca_chain_with_root.pem_data(),
         )?;
 
-        // Create P12 file using OpenSSL (like vlt.sh)
         let p12_file = export_path.join(format!("{}.p12", request.cn));
         crate::utils::create_p12_file(&p12_file, private_key, certificate, issuing_ca, true)?;
 

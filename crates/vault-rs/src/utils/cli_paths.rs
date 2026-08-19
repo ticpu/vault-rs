@@ -12,41 +12,41 @@ use vault_session::Error;
 pub struct CliPaths;
 
 impl CliPaths {
-    /// ~/.local/share/vault-rs/
+    /// The user's data directory, under this program's own name.
     pub fn data_dir() -> Result<PathBuf> {
         Ok(dirs::data_local_dir()
             .map(|dir| dir.join(PROGRAM_NAME))
             .ok_or_else(|| Error::Paths("Cannot determine local data directory".to_string()))?)
     }
 
-    /// ~/.config/vault-rs/
+    /// The user's config directory, under this program's own name.
     pub fn config_dir() -> Result<PathBuf> {
         Ok(dirs::config_dir()
             .map(|dir| dir.join(PROGRAM_NAME))
             .ok_or_else(|| Error::Paths("Cannot determine config directory".to_string()))?)
     }
 
-    /// ~/.local/share/vault-rs/secrets/
+    /// Where the encrypted artifacts live.
     pub fn secrets_dir() -> Result<PathBuf> {
         Ok(Self::data_dir()?.join("secrets"))
     }
 
-    /// ~/.local/share/vault-rs/cache/
+    /// Where cached answers live.
     pub fn cache_dir() -> Result<PathBuf> {
         Ok(Self::data_dir()?.join("cache"))
     }
 
-    /// ~/.local/share/vault-rs/cache/serials/
+    /// Cached serial lookups.
     pub fn serial_cache_dir() -> Result<PathBuf> {
         Ok(Self::cache_dir()?.join("serials"))
     }
 
-    /// ~/.local/share/vault-rs/cache/pki/
+    /// Cached PKI mount details.
     pub fn pki_cache_dir() -> Result<PathBuf> {
         Ok(Self::cache_dir()?.join("pki"))
     }
 
-    /// ~/.local/share/vault-rs/cache/certs/
+    /// Cached certificates.
     pub fn cert_cache() -> Result<PathBuf> {
         Ok(Self::cache_dir()?.join("certs"))
     }

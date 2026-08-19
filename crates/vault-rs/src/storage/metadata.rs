@@ -131,7 +131,6 @@ impl GetColumnValue for StorageCertificateMetadata {
                 true => "✗".to_string(),
                 false => String::new(),
             },
-            // Empty, like every other column the store cannot fill.
             CertificateColumn::Role => self.role.clone().unwrap_or_default(),
         }
     }

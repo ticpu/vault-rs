@@ -52,7 +52,6 @@ dev-server = []
 
 [dev-dependencies]
 wiremock.workspace = true
-which = "8"
 test-confine = { path = "../test-confine" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

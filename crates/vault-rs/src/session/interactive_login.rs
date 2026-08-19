@@ -9,8 +9,6 @@ use std::io::{self, Write};
 use vault_session::Session;
 
 pub trait InteractiveLogin {
-    /// Interactive login - prompts for username and password
-    ///
     /// The prompts come after the method is dispatched on, not before: a method
     /// that authenticates through a browser has no username or password to ask
     /// for, and asking anyway collects a credential nothing then uses.

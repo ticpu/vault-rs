@@ -2,9 +2,8 @@ pub mod commands;
 pub mod data;
 pub mod kv_commands;
 
-/// The library's read verbs alongside the CLI's write and version verbs, so
-/// `crate::logical::kv::put` resolves the way it always has even though the
-/// two halves now live in different crates.
+/// The library's KV transport beside this crate's reporting verbs, so a caller
+/// names one `kv` rather than picking a crate per verb.
 pub mod kv {
     pub use vault_session::kv::*;
 
