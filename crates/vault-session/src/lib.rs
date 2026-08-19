@@ -1,3 +1,42 @@
+//! Address discovery, login, token handling and KV reads against HashiCorp
+//! Vault, for a program that links them.
+//!
+//! The session is the caller's, not the machine's. Nothing here reads an
+//! environment variable, a file or a directory the caller did not name, so a
+//! linking program never inherits the operator's own Vault session by
+//! accident: the address is an [`Address`] passed to [`SessionConfig`], the
+//! token lives under the program's own name, and a variable is read only where
+//! [`SessionConfig::token_env`] names one.
+//!
+//! Nothing here prints, prompts, opens a browser or exits. An OIDC login hands
+//! its authorization URL to a [`LoginPresenter`] the caller supplies, and every
+//! failure is a returned [`Error`] carrying its source.
+//!
+//! ```no_run
+//! use vault_session::{kv, Address, Session, SessionConfig, VaultClient};
+//!
+//! # async fn run() -> Result<(), vault_session::Error> {
+//! let config = SessionConfig::for_program("my-program", Address::EnvThenSrv)?;
+//! let session = Session::open(config).await?;
+//!
+//! let client = VaultClient::for_session(&session).await?;
+//! let secret = kv::read_secret(&client, Some("secret"), "app/config", None).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # TLS backend
+//!
+//! `rustls-aws-lc-rs` is the default. To let the process install its own
+//! rustls `CryptoProvider`, turn the default off — selecting the feature
+//! without doing so compiles both backends in:
+//!
+//! ```toml
+//! vault-session = { version = "0.4", default-features = false, features = ["rustls-ring"] }
+//! ```
+//!
+//! Unix only: the token file is created with an explicit mode.
+
 #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
 compile_error!(
     "select a TLS backend: `rustls-aws-lc-rs`, or `rustls-ring` where the process installs its \

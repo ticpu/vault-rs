@@ -1,3 +1,10 @@
+//! Requests against a Vault, over a session's address and token.
+//!
+//! The generic verbs take a path and answer with `serde_json::Value`, so an
+//! endpoint this crate does not model is still reachable without waiting for a
+//! wrapper. What a mount reports about itself — its KV layout — is asked of the
+//! mount and memoised for the client's life.
+
 use crate::error::{Error, Result};
 use crate::mounts::{MountsResponse, VisibleMounts};
 use crate::session::Session;

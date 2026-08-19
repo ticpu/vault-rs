@@ -1,3 +1,8 @@
+//! What a token can see mounted, as Vault reports it.
+//!
+//! The listing used is the one a narrow role may read, so a program checking
+//! its own credentials needs no authority over the store.
+
 use crate::client::KvLayout;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

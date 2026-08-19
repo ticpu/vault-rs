@@ -1,3 +1,10 @@
+//! Finding the Vault address: an environment variable, an SRV record, or one
+//! the caller states outright.
+//!
+//! Which of those a session consults is an [`Address`] the caller passes, so
+//! none of them is reached without being asked for. A discovered address may be
+//! cached for its record's TTL in a file the caller names.
+
 use crate::error::{Error, Result};
 use hickory_resolver::proto::rr::RData;
 use hickory_resolver::TokioResolver;

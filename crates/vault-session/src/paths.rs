@@ -1,3 +1,8 @@
+//! Owner-only directories and files, under a program's own name.
+//!
+//! A token is a credential on disk, so what this creates is created at its
+//! final mode rather than written and tightened afterwards.
+
 use crate::error::{Error, Result};
 use std::fs;
 use std::path::{Path, PathBuf};

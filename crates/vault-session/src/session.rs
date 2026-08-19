@@ -1,3 +1,11 @@
+//! A caller-owned session: where its token lives, and how it gets one.
+//!
+//! Everything a session depends on is named by the caller through
+//! [`SessionConfig`] — the program whose runtime directory holds the token, the
+//! address, and any environment variable that may stand in for the file. A
+//! token minted by a login this crate does not model is seated with
+//! [`Session::store_token`].
+
 use crate::discovery::Address;
 use crate::error::{Error, Result};
 use crate::oidc::{CallbackListener, Redirect};

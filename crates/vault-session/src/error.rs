@@ -1,3 +1,11 @@
+//! The one error type this crate returns, shaped to be matched on.
+//!
+//! A caller distinguishes a refusal from a transport failure, and a missing
+//! path from a denied one, without comparing message text: [`Error::status`],
+//! [`Error::is_not_found`] and [`Error::is_permission_denied`] answer from the
+//! status Vault gave. Sources are preserved, and [`render_chain`] prints every
+//! layer, since `Display` shows only the top.
+
 use thiserror::Error;
 
 /// Variants carrying a source do NOT repeat it in their message: the source is
