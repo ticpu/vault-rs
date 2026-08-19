@@ -8,7 +8,7 @@ use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use crate::vault::client::VaultClient;
 use serde_json::{json, Value};
-use vault_session::kv::{read, Target};
+use vault_session::kv::{read, write, Target};
 
 pub async fn get(
     client: &VaultClient,
@@ -32,20 +32,7 @@ pub async fn put(
     let path = target.data();
     announce(client, &path).await;
 
-    // The versioned layout wraps the value and takes options beside it; the
-    // flat one stores what it was given.
-    let body = match target.versioned() {
-        false => Value::Object(fields),
-        true => {
-            let mut body = json!({ "data": Value::Object(fields) });
-            if let Some(cas) = cas {
-                body["options"] = json!({ "cas": cas });
-            }
-            body
-        }
-    };
-
-    let written = client.post(&path, body).await?;
+    let written = write(client, target, Value::Object(fields), cas).await?;
     match written.is_null() {
         true => eprintln!("Written to {path}"),
         false => super::commands::report_secret(&written, None, output)?,

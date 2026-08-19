@@ -7,9 +7,7 @@
 
 use crate::client::{MountLayout, VaultClient};
 use crate::error::{Error, Result};
-#[cfg(test)]
-use serde_json::json;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// A secret named either as `mount/path` or as `--mount mount path`, resolved
 /// against the layout its mount reports.
@@ -143,6 +141,45 @@ pub async fn read_secret(
             }
         ))),
     }
+}
+
+/// Replace what a secret holds.
+///
+/// The mount decides the envelope on the way out as it does on the way in: the
+/// versioned layout wraps the fields and takes options beside them, the flat
+/// one stores what it was given. `cas` is the version the caller believes is
+/// there; Vault refuses the write if it is not, and the flat layout keeps no
+/// version to compare against, so naming one there is refused rather than
+/// dropped.
+pub async fn write(
+    client: &VaultClient,
+    target: &Target,
+    fields: Value,
+    cas: Option<u64>,
+) -> Result<Value> {
+    if !fields.is_object() {
+        return Err(Error::InvalidInput(
+            "a secret is a mapping of names to values".to_string(),
+        ));
+    }
+
+    let body = match target.versioned() {
+        false => {
+            if cas.is_some() {
+                target.require_versions("put -cas")?;
+            }
+            fields
+        }
+        true => {
+            let mut body = json!({ "data": fields });
+            if let Some(cas) = cas {
+                body["options"] = json!({ "cas": cas });
+            }
+            body
+        }
+    };
+
+    client.post(&target.data(), body).await
 }
 
 /// The versioned layout nests the value one level deeper than the flat one.
