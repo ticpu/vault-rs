@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// How a KV mount addresses a secret.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum KvLayout {
     /// The value at its own path and nothing else.

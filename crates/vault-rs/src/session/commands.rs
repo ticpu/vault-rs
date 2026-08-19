@@ -29,6 +29,14 @@ pub async fn handle_session_commands(
         }
         SessionCommands::Logout => logout_command().await,
         SessionCommands::Status => status_command(output).await,
+        SessionCommands::Verify(args) => {
+            match crate::session::verify::verify(args, output).await? {
+                // A verdict about a setup that answered, not an error: the exit
+                // code this tool uses for verdicts rather than for failures.
+                true => Ok(()),
+                false => std::process::exit(1),
+            }
+        }
         SessionCommands::Key { command } => match command {
             KeyCommands::Status => crate::session::key::status(output).await,
             KeyCommands::History => crate::session::key::history(output).await,

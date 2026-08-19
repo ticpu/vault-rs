@@ -112,7 +112,9 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
         Commands::Operator { ref args } => handle_vault_command("operator", args).await,
         Commands::Pki { ref args } => handle_vault_command("pki", args).await,
         Commands::Plugin { ref args } => handle_vault_command("plugin", args).await,
-        Commands::Policy { ref args } => handle_vault_command("policy", args).await,
+        Commands::Policy { command } => crate::policy::handle_policy_commands(command, &output)
+            .await
+            .context("policy"),
         Commands::Secrets { command } => match command {
             SecretsCommands::List => crate::secrets::list(&output).await.context("secrets list"),
             SecretsCommands::Forwarded(ref args) => handle_vault_command("secrets", args).await,

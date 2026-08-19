@@ -7,6 +7,7 @@
 use crate::client::{KvLayout, VaultClient};
 use crate::error::Result;
 use crate::session::{OidcLogin, Session};
+use serde::Serialize;
 use std::fmt;
 
 /// What a caller needs to be true before its program can work.
@@ -32,8 +33,42 @@ pub struct Expectation {
     pub oidc: Option<OidcLogin>,
 }
 
+impl Expectation {
+    pub fn read(mut self, path: impl Into<String>) -> Self {
+        self.readable.push(path.into());
+        self
+    }
+
+    pub fn write(mut self, path: impl Into<String>) -> Self {
+        self.writable.push(path.into());
+        self
+    }
+
+    pub fn list(mut self, path: impl Into<String>) -> Self {
+        self.listable.push(path.into());
+        self
+    }
+
+    /// A layout left absent accepts whichever the mount has.
+    pub fn kv_mount(mut self, mount: impl Into<String>, layout: Option<KvLayout>) -> Self {
+        self.kv_mounts.push((mount.into(), layout));
+        self
+    }
+
+    pub fn policy(mut self, name: impl Into<String>) -> Self {
+        self.policies.push(name.into());
+        self
+    }
+
+    pub fn oidc(mut self, login: OidcLogin) -> Self {
+        self.oidc = Some(login);
+        self
+    }
+}
+
 /// One thing `verify` found wrong. An empty report is the only pass.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "finding", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Finding {
     /// The token may not do this at the path.

@@ -184,10 +184,11 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Interact with policies (passthrough to vault)
+    /// Interact with ACL policies; the verbs below are native, the rest is
+    /// forwarded
     Policy {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+        #[command(subcommand)]
+        command: PolicyCommands,
     },
     /// Interact with secrets engines; `list` is native, the rest is forwarded
     Secrets {
@@ -246,6 +247,65 @@ pub enum SecretsCommands {
     List,
     #[command(external_subcommand)]
     Forwarded(Vec<String>),
+}
+
+#[derive(Subcommand)]
+pub enum PolicyCommands {
+    /// List ACL policy names
+    List,
+    /// Print an ACL policy
+    Read { name: String },
+    /// Write an ACL policy, replacing one already there
+    Write {
+        name: String,
+        /// File holding the policy, or `-` for standard input
+        path: String,
+    },
+    /// Delete an ACL policy
+    Delete { name: String },
+    #[command(external_subcommand)]
+    Forwarded(Vec<String>),
+}
+
+/// What a program needs to be true of this Vault. Every path is spelled the
+/// way the program will address it: a KV mount's two layouts reach a secret
+/// through different prefixes, and a policy written for the other one grants
+/// nothing where the read happens.
+#[derive(clap::Args)]
+pub struct VerifyArgs {
+    /// A path the token has to be able to read
+    #[arg(long = "read", value_name = "PATH")]
+    pub readable: Vec<String>,
+
+    /// A path the token has to be able to write
+    #[arg(long = "write", value_name = "PATH")]
+    pub writable: Vec<String>,
+
+    /// A path the token has to be able to list
+    #[arg(long = "list", value_name = "PATH")]
+    pub listable: Vec<String>,
+
+    /// A KV mount that has to be there, optionally with the layout it has to
+    /// have: `secret`, `secret:1` or `secret:2`
+    #[arg(long = "kv-mount", value_name = "MOUNT[:1|2]")]
+    pub kv_mounts: Vec<String>,
+
+    /// A policy the token has to carry
+    #[arg(long = "policy", value_name = "NAME")]
+    pub policies: Vec<String>,
+
+    /// An auth mount whose role has to allow the loopback callback a login
+    /// would bind. Binds the port and lets it go; opens no browser.
+    #[arg(long, value_name = "MOUNT")]
+    pub oidc_mount: Option<String>,
+
+    /// Role to check the redirect for; the mount's default role if unset
+    #[arg(long, value_name = "ROLE", requires = "oidc_mount")]
+    pub oidc_role: Option<String>,
+
+    /// Port the redirect check asks for, 8250 by default
+    #[arg(long, requires = "oidc_mount")]
+    pub oidc_port: Option<u16>,
 }
 
 /// `--mount` deliberately has no short form. Vault spells it `-mount=secret`,
@@ -424,6 +484,9 @@ pub enum SessionCommands {
     Logout,
     /// Show authentication status
     Status,
+    /// Check that this token can do what a program needs, and report what it
+    /// cannot. Exits 1 when anything is wrong.
+    Verify(VerifyArgs),
     /// The master key this machine's local store is sealed with
     Key {
         #[command(subcommand)]
