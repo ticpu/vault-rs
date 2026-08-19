@@ -3,6 +3,7 @@ use crate::storage::metadata::{
     normalize_serial, CertificateStorage, FileInfo, SealedBy, StorageCertificateMetadata,
     StoredMetadata,
 };
+use crate::utils::cli_paths::CliPaths;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::partial::{Incomplete, Partial};
 use crate::utils::paths::VaultCliPaths;
@@ -44,7 +45,7 @@ impl LocalStorage {
         Ok(Self {
             encryption_manager: EncryptionManager::with_client(client.clone())?,
             client,
-            secrets_root: VaultCliPaths::secrets_dir()?,
+            secrets_root: CliPaths::secrets_dir()?,
         })
     }
 

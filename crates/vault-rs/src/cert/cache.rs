@@ -1,8 +1,8 @@
 use crate::cert::metadata::CertificateMetadata;
 use crate::cert::SerialNumber;
+use crate::utils::cli_paths::CliPaths;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::partial::{Incomplete, Partial};
-use crate::utils::paths::VaultCliPaths;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -47,7 +47,7 @@ pub struct CertificateCache {
 
 impl CertificateCache {
     pub fn new() -> Result<Self> {
-        let cache_dir = VaultCliPaths::cert_cache()?;
+        let cache_dir = CliPaths::cert_cache()?;
         fs::create_dir_all(&cache_dir)?;
 
         Ok(Self { cache_dir })

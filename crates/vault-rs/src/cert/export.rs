@@ -10,6 +10,7 @@ use crate::utils::{
     parse_certificate_chain, write_output_or_print, write_output_or_print_bytes, write_to_file,
 };
 use crate::vault::client::VaultClient;
+use crate::vault::PkiClient;
 use std::fs;
 use std::path::Path;
 use x509_parser::pem::parse_x509_pem;

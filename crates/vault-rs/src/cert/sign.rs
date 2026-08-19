@@ -7,6 +7,7 @@ use crate::utils::pem::{PemCertificate, PemCertificateChain};
 use crate::utils::prompt::confirm;
 use crate::utils::{parse_comma_separated, resolve_crypto_type, validate_role_exists};
 use crate::vault::client::VaultClient;
+use crate::vault::PkiClient;
 use std::fs;
 use std::path::Path;
 
@@ -112,7 +113,7 @@ pub async fn sign_certificate_from_csr(
     let ca_chain = client.get_ca_chain(&full_pki).await?;
 
     // Sign certificate using CSR
-    let sign_request = crate::vault::client::SignCertificateRequest {
+    let sign_request = crate::vault::pki_client::SignCertificateRequest {
         pki_mount: &full_pki,
         role: &request.role,
         common_name: &request.cn,

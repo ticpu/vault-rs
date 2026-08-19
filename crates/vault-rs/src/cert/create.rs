@@ -6,7 +6,9 @@ use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::pem::{PemCertificate, PemCertificateChain, PemPrivateKey};
 use crate::utils::prompt::confirm;
 use crate::utils::{parse_comma_separated, resolve_crypto_type, validate_role_exists};
-use crate::vault::client::{IssueCertificateRequest, VaultClient};
+use crate::vault::client::VaultClient;
+use crate::vault::pki_client::IssueCertificateRequest;
+use crate::vault::PkiClient;
 use std::fs;
 use std::path::Path;
 

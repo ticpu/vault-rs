@@ -1,16 +1,54 @@
-//! PKI reads over a `VaultClient` that stay out of the published library:
-//! crypto-type detection parses a certificate rather than reading a plain
-//! Vault field, and the certificate-by-serial calls are CA management, not
-//! session or KV work. Rust has no cross-crate inherent impls, so these
-//! arrive as an extension trait implemented for the library's `VaultClient`.
+//! The PKI engine over a `VaultClient`, which the published library does not
+//! carry: it is CA management rather than session or KV work. Rust has no
+//! cross-crate inherent impls, so these arrive as an extension trait
+//! implemented for the library's `VaultClient`.
 
 use crate::cert::SerialNumber;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::vault::certificates::{CertificateData, CertificateResponse};
 use crate::vault::client::VaultClient;
 use crate::vault::extract_keys_array;
-use serde_json::Value;
+use crate::vault::pki::RoleConfig;
+use serde_json::{json, Value};
 use std::future::Future;
+
+pub struct SignCertificateRequest<'a> {
+    pub pki_mount: &'a str,
+    pub role: &'a str,
+    pub common_name: &'a str,
+    pub csr_content: &'a str,
+    pub alt_names: Option<Vec<String>>,
+    pub ip_sans: Option<Vec<String>>,
+    pub ttl: Option<&'a str>,
+}
+
+pub struct IssueCertificateRequest<'a> {
+    pub pki_mount: &'a str,
+    pub role: &'a str,
+    pub common_name: &'a str,
+    pub alt_names: Option<Vec<String>>,
+    pub ip_sans: Option<Vec<String>>,
+    pub ttl: Option<&'a str>,
+}
+
+/// The subject fields both verbs send the same way: Vault takes each as one
+/// comma-joined string rather than a list, and omits what was never named.
+fn with_subject_fields(
+    payload: &mut Value,
+    alt_names: Option<Vec<String>>,
+    ip_sans: Option<Vec<String>>,
+    ttl: Option<&str>,
+) {
+    if let Some(sans) = alt_names {
+        payload["alt_names"] = json!(sans.join(","));
+    }
+    if let Some(ips) = ip_sans {
+        payload["ip_sans"] = json!(ips.join(","));
+    }
+    if let Some(ttl) = ttl {
+        payload["ttl"] = json!(ttl);
+    }
+}
 
 const OID_RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
 const OID_EC_PUBLIC_KEY: &str = "1.2.840.10045.2.1";
@@ -19,6 +57,40 @@ const OID_ECDSA_WITH_SHA384: &str = "1.2.840.10045.4.3.3";
 const OID_ECDSA_WITH_SHA512: &str = "1.2.840.10045.4.3.4";
 
 pub trait PkiClient {
+    /// The mounts running the PKI engine, without their trailing separator.
+    fn list_pki_mounts(&self) -> impl Future<Output = Result<Vec<String>>> + Send;
+
+    /// List roles for a PKI mount
+    fn list_roles(&self, pki_mount: &str) -> impl Future<Output = Result<Vec<String>>> + Send;
+
+    /// Read a role's configuration for a PKI mount
+    fn read_role(&self, mount: &str, role: &str)
+        -> impl Future<Output = Result<RoleConfig>> + Send;
+
+    /// Get PKI mount issuer configuration to determine crypto type
+    fn get_pki_issuer_info(&self, pki_mount: &str) -> impl Future<Output = Result<Value>> + Send;
+
+    /// Get CA chain for a PKI mount (returns raw PEM data)
+    fn get_ca_chain(&self, pki_mount: &str) -> impl Future<Output = Result<String>> + Send;
+
+    /// The single CA certificate for a PKI mount, as PEM.
+    ///
+    /// `/ca/pem`, not `/cert/ca`: the latter wraps the certificate in a JSON
+    /// envelope, so reading it as text yields a body no PEM parser accepts.
+    fn get_ca_certificate(&self, pki_mount: &str) -> impl Future<Output = Result<String>> + Send;
+
+    /// Issue a new certificate
+    fn issue_certificate(
+        &self,
+        request: IssueCertificateRequest<'_>,
+    ) -> impl Future<Output = Result<Value>> + Send;
+
+    /// Sign a certificate from CSR
+    fn sign_certificate(
+        &self,
+        request: SignCertificateRequest<'_>,
+    ) -> impl Future<Output = Result<Value>> + Send;
+
     /// Detect crypto type for a PKI mount based on its first issuer
     fn detect_crypto_type(&self, pki_mount: &str) -> impl Future<Output = Result<String>> + Send;
 
@@ -51,6 +123,73 @@ pub trait PkiClient {
 }
 
 impl PkiClient for VaultClient {
+    async fn list_pki_mounts(&self) -> Result<Vec<String>> {
+        let mounts = self.list_mounts().await?;
+
+        Ok(mounts
+            .data
+            .iter()
+            .filter(|(_, info)| info.is_pki())
+            .map(|(path, _)| path.trim_end_matches('/').to_string())
+            .collect())
+    }
+
+    async fn list_roles(&self, pki_mount: &str) -> Result<Vec<String>> {
+        let response = self.list(&format!("{pki_mount}/roles")).await?;
+
+        Ok(extract_keys_array(&response))
+    }
+
+    async fn read_role(&self, mount: &str, role: &str) -> Result<RoleConfig> {
+        let path = format!("{mount}/roles/{role}");
+        let response = self.get(&path).await?;
+
+        let data = response.get("data").cloned().unwrap_or(Value::Null);
+        Ok(serde_json::from_value(data)
+            .map_err(|source| vault_session::Error::Decode { path, source })?)
+    }
+
+    async fn get_pki_issuer_info(&self, pki_mount: &str) -> Result<Value> {
+        Ok(self.get(&format!("{pki_mount}/config/issuers")).await?)
+    }
+
+    async fn get_ca_chain(&self, pki_mount: &str) -> Result<String> {
+        Ok(self.get_text(&format!("{pki_mount}/ca_chain")).await?)
+    }
+
+    async fn get_ca_certificate(&self, pki_mount: &str) -> Result<String> {
+        Ok(self.get_text(&format!("{pki_mount}/ca/pem")).await?)
+    }
+
+    async fn issue_certificate(&self, request: IssueCertificateRequest<'_>) -> Result<Value> {
+        let mut payload = json!({ "common_name": request.common_name });
+        with_subject_fields(
+            &mut payload,
+            request.alt_names,
+            request.ip_sans,
+            request.ttl,
+        );
+
+        let path = format!("{}/issue/{}", request.pki_mount, request.role);
+        Ok(self.post(&path, payload).await?)
+    }
+
+    async fn sign_certificate(&self, request: SignCertificateRequest<'_>) -> Result<Value> {
+        let mut payload = json!({
+            "common_name": request.common_name,
+            "csr": request.csr_content,
+        });
+        with_subject_fields(
+            &mut payload,
+            request.alt_names,
+            request.ip_sans,
+            request.ttl,
+        );
+
+        let path = format!("{}/sign/{}", request.pki_mount, request.role);
+        Ok(self.post(&path, payload).await?)
+    }
+
     async fn detect_crypto_type(&self, pki_mount: &str) -> Result<String> {
         tracing::debug!("Detecting crypto type for PKI mount: {pki_mount}");
 

@@ -2,6 +2,7 @@ use crate::cert::parser::CertificateParser;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use crate::vault::client::VaultClient;
+use crate::vault::PkiClient;
 use chrono::{DateTime, Utc};
 use x509_parser::der_parser::oid;
 use x509_parser::prelude::*;

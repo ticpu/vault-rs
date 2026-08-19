@@ -1,30 +1,10 @@
 use crate::utils::errors::{Error, Result};
 use crate::utils::get_vault_addr;
 use crate::vault::mounts::MountsResponse;
-use crate::vault::pki::RoleConfig;
 use crate::vault::transport::{Transport, TransportSettings};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
-pub struct SignCertificateRequest<'a> {
-    pub pki_mount: &'a str,
-    pub role: &'a str,
-    pub common_name: &'a str,
-    pub csr_content: &'a str,
-    pub alt_names: Option<Vec<String>>,
-    pub ip_sans: Option<Vec<String>>,
-    pub ttl: Option<&'a str>,
-}
-
-pub struct IssueCertificateRequest<'a> {
-    pub pki_mount: &'a str,
-    pub role: &'a str,
-    pub common_name: &'a str,
-    pub alt_names: Option<Vec<String>>,
-    pub ip_sans: Option<Vec<String>>,
-    pub ttl: Option<&'a str>,
-}
 
 /// Which storage layout a mount uses, as the mount itself reported it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +107,15 @@ impl VaultClient {
         self.transport.get(path).await
     }
 
+    /// A read whose answer is not JSON, returned as the server sent it.
+    ///
+    /// Some endpoints answer with PEM rather than an envelope, and the ones
+    /// that do have a sibling that wraps the same bytes in JSON — reading the
+    /// wrong one yields a body no parser downstream accepts.
+    pub async fn get_text(&self, path: &str) -> Result<String> {
+        self.transport.get_text(path).await
+    }
+
     /// Generic POST request to Vault API
     pub async fn post(&self, path: &str, data: Value) -> Result<Value> {
         self.transport.post(path, data).await
@@ -174,96 +163,6 @@ impl VaultClient {
             path: "sys/mounts".to_string(),
             source: e,
         })
-    }
-
-    /// List PKI mounts only
-    pub async fn list_pki_mounts(&self) -> Result<Vec<String>> {
-        let mounts = self.list_mounts().await?;
-        Ok(mounts.pki_mounts())
-    }
-
-    /// Issue a new certificate
-    pub async fn issue_certificate(&self, request: IssueCertificateRequest<'_>) -> Result<Value> {
-        let mut payload = json!({
-            "common_name": request.common_name,
-        });
-
-        if let Some(sans) = request.alt_names {
-            payload["alt_names"] = json!(sans.join(","));
-        }
-
-        if let Some(ips) = request.ip_sans {
-            payload["ip_sans"] = json!(ips.join(","));
-        }
-
-        if let Some(ttl_val) = request.ttl {
-            payload["ttl"] = json!(ttl_val);
-        }
-
-        let path = format!("{}/issue/{}", request.pki_mount, request.role);
-        self.post(&path, payload).await
-    }
-
-    /// Get CA chain for a PKI mount (returns raw PEM data)
-    pub async fn get_ca_chain(&self, pki_mount: &str) -> Result<String> {
-        self.transport
-            .get_text(&format!("{pki_mount}/ca_chain"))
-            .await
-    }
-
-    /// Get the (single) CA certificate for a PKI mount (returns raw PEM data).
-    ///
-    /// `/ca/pem`, not `/cert/ca`: the latter wraps the certificate in a JSON
-    /// envelope, so reading it as text yields a body no PEM parser accepts.
-    pub async fn get_ca_certificate(&self, pki_mount: &str) -> Result<String> {
-        self.transport
-            .get_text(&format!("{pki_mount}/ca/pem"))
-            .await
-    }
-
-    /// List roles for a PKI mount
-    pub async fn list_roles(&self, pki_mount: &str) -> Result<Vec<String>> {
-        let response = self.list(&format!("{pki_mount}/roles")).await?;
-
-        Ok(super::extract_keys_array(&response))
-    }
-
-    /// Read a role's configuration for a PKI mount
-    pub async fn read_role(&self, mount: &str, role: &str) -> Result<RoleConfig> {
-        let path = format!("{mount}/roles/{role}");
-        let response = self.get(&path).await?;
-
-        let data = response.get("data").cloned().unwrap_or(Value::Null);
-        serde_json::from_value(data).map_err(|e| Error::Decode { path, source: e })
-    }
-
-    /// Get PKI mount issuer configuration to determine crypto type
-    pub async fn get_pki_issuer_info(&self, pki_mount: &str) -> Result<Value> {
-        let path = format!("{pki_mount}/config/issuers");
-        self.get(&path).await
-    }
-
-    /// Sign a certificate from CSR
-    pub async fn sign_certificate(&self, request: SignCertificateRequest<'_>) -> Result<Value> {
-        let mut payload = json!({
-            "common_name": request.common_name,
-            "csr": request.csr_content,
-        });
-
-        if let Some(sans) = request.alt_names {
-            payload["alt_names"] = json!(sans.join(","));
-        }
-
-        if let Some(ips) = request.ip_sans {
-            payload["ip_sans"] = json!(ips.join(","));
-        }
-
-        if let Some(ttl_val) = request.ttl {
-            payload["ttl"] = json!(ttl_val);
-        }
-
-        let path = format!("{}/sign/{}", request.pki_mount, request.role);
-        self.post(&path, payload).await
     }
 
     /// Which storage layout the mount answering for `path` uses.
@@ -317,6 +216,7 @@ impl VaultClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

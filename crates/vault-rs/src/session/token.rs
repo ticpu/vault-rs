@@ -16,11 +16,11 @@ pub async fn lookup(output: &OutputFormat) -> Result<()> {
     let info = auth.get_token_info(&token).await?;
 
     if output.json {
-        return Ok(output.print_json(&info)?);
+        return output.print_json(&info);
     }
 
     let Some(data) = info.get("data").and_then(|d| d.as_object()) else {
-        return Ok(output.print_json(&info)?);
+        return output.print_json(&info);
     };
 
     let mut rows: Vec<(String, String)> = data

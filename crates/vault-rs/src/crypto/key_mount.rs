@@ -7,8 +7,8 @@
 //! out differently would find no key there, mint a second one, and leave every
 //! artifact sealed under the first unreadable while reporting nothing.
 
+use crate::utils::cli_paths::CliPaths;
 use crate::utils::errors::{Result, VaultCliError};
-use crate::utils::paths::VaultCliPaths;
 use crate::utils::PROGRAM_NAME;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -23,7 +23,7 @@ pub struct RecordedMount {
 /// Where the record lives for a store rooted at the default location. Tests
 /// pass their own scratch root instead, so nothing here reaches a real store.
 pub fn default_record_path() -> Result<PathBuf> {
-    Ok(VaultCliPaths::data_dir()?.join("key-mount.yaml"))
+    Ok(CliPaths::data_dir()?.join("key-mount.yaml"))
 }
 
 pub fn recorded() -> Result<Option<RecordedMount>> {

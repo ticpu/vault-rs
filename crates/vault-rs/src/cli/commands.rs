@@ -36,7 +36,7 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
     }
 
     // Ensure directories exist
-    crate::utils::paths::VaultCliPaths::ensure_all_dirs()?;
+    crate::utils::cli_paths::CliPaths::ensure_all_dirs()?;
 
     match cli.command {
         Commands::Session { command } => crate::session::handle_session_commands(command, &output)

@@ -5,12 +5,10 @@ compile_error!(
      reach Vault over."
 );
 
-pub mod cert;
 pub mod logical;
 pub mod utils;
 pub mod vault;
 
-pub use cert::{CertificateColumn, CertificateMetadata};
 pub use utils::errors::Error;
 pub use utils::{errors, paths};
 pub use vault::client;

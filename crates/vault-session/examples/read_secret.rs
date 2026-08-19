@@ -1,11 +1,10 @@
-//! Read a secret the way a linked program does, over the `client` feature
-//! alone: the address comes from `VAULT_ADDR` or the SRV record, and the token
-//! from a file this program named and nobody else writes — `VAULT_TOKEN` and
-//! the session `vault-rs session login` keeps do not reach it, and a login is
-//! only attempted when there is no usable token.
+//! Read a secret the way a linked program does: the address comes from
+//! `VAULT_ADDR` or the SRV record, and the token from a file this program
+//! named and nobody else writes — `VAULT_TOKEN` and the session
+//! `vault-rs session login` keeps do not reach it, and a login is only
+//! attempted when there is no usable token.
 //!
-//!     cargo run --no-default-features --features client,rustls-aws-lc-rs \
-//!         --example read_secret -- kv fsa/prod
+//!     cargo run --example read_secret -- kv fsa/prod
 
 use std::path::PathBuf;
 use vault_session::logical::kv;

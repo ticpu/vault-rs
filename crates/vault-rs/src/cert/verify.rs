@@ -8,6 +8,7 @@ use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use crate::utils::pem::PemCertificateChain;
 use crate::vault::client::VaultClient;
+use crate::vault::PkiClient;
 use chrono::Utc;
 use rustls_pki_types::{CertificateDer, UnixTime};
 use std::time::{Duration, SystemTime};

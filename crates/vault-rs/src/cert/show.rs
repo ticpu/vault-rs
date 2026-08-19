@@ -16,7 +16,7 @@ pub async fn show_certificate(
     let metadata = CertificateParser::parse_pem(&pem, &mount)?;
 
     if output.json {
-        return Ok(output.print_json(&metadata)?);
+        return output.print_json(&metadata);
     }
 
     // Use OutputFormat to handle raw vs formatted output properly

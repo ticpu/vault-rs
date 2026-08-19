@@ -2,7 +2,6 @@ pub mod auth;
 pub mod client;
 pub mod mounts;
 pub mod oidc;
-pub mod pki;
 mod transport;
 
 use serde_json::Value;

@@ -1,6 +1,8 @@
-pub use vault_session::cert::{
-    metadata, serial, CertificateColumn, CertificateMetadata, SerialNumber,
-};
+pub mod metadata;
+pub mod serial;
+
+pub use metadata::{CertificateColumn, CertificateMetadata};
+pub use serial::SerialNumber;
 
 pub mod ca_info;
 pub mod cache;

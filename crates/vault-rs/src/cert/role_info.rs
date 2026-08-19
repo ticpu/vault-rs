@@ -10,6 +10,7 @@ use crate::cert::report::identity_field_lines;
 use crate::utils::errors::Result;
 use crate::utils::output::OutputFormat;
 use crate::vault::client::VaultClient;
+use crate::vault::PkiClient;
 
 /// Report the identity a role governs.
 ///
@@ -29,7 +30,7 @@ pub async fn show_role_info(
     // carries without saying so.
     if output.json {
         let raw = client.get(&format!("{pki_mount}/roles/{role}")).await?;
-        return Ok(output.print_json(&raw)?);
+        return output.print_json(&raw);
     }
 
     let role_config = client.read_role(pki_mount, role).await?;

@@ -1,5 +1,5 @@
+use crate::cert::serial::SerialNumberParseError;
 use thiserror::Error;
-use vault_session::cert::serial::SerialNumberParseError;
 
 /// Variants carrying a `#[from]` source do NOT repeat it in their message:
 /// the source is printed by whoever walks the chain, and including it here
@@ -11,9 +11,6 @@ pub enum VaultCliError {
     /// survive the trip up here.
     #[error(transparent)]
     Session(#[from] vault_session::Error),
-
-    #[error("Vault API error")]
-    VaultApi(#[from] reqwest::Error),
 
     #[error("Authentication error: {0}")]
     Auth(String),

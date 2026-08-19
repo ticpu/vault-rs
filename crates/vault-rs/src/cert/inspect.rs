@@ -10,6 +10,7 @@ use crate::cert::plan::{build_plan, PlanInput};
 use crate::cert::report::{print_identity_fields, IdentityField};
 use crate::utils::errors::{Result, VaultCliError};
 use crate::vault::client::VaultClient;
+use crate::vault::PkiClient;
 use std::fs;
 
 pub struct InspectCsrRequest {

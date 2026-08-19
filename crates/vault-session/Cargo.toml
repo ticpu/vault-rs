@@ -17,11 +17,10 @@ vaultrs = { version = "0.8", default-features = false }
 rustify = { version = "0.7", default-features = false }
 url = "2"
 rustls = { version = "0.23", default-features = false, optional = true }
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.0", features = ["io-util", "net", "rt", "sync", "time"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
-chrono.workspace = true
 tracing.workspace = true
 thiserror = "2"
 dirs = "6"

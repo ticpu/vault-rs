@@ -3,6 +3,7 @@ use crate::utils::errors::Result;
 use crate::utils::output::OutputFormat;
 use crate::utils::PROGRAM_NAME;
 use crate::vault::client::VaultClient;
+use crate::vault::PkiClient;
 use clap::CommandFactory;
 use clap_complete::{generate, Shell};
 use std::io;
