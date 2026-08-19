@@ -103,7 +103,7 @@ pub enum Error {
 /// Every layer of the cause chain, since `tracing::warn!("{e}")` and a
 /// `Display` impl print only the top: a wrapped failure names the step it was
 /// doing but not why the layer underneath it failed.
-pub(crate) fn render_chain(mut source: &dyn std::error::Error) -> String {
+pub fn render_chain(mut source: &dyn std::error::Error) -> String {
     let mut out = source.to_string();
     while let Some(next) = source.source() {
         out.push_str(": ");

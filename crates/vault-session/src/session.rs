@@ -349,6 +349,21 @@ impl Session {
         self.accept_login("OIDC", &response).await
     }
 
+    /// Whether the mount and role would accept the redirect a login binds,
+    /// without opening a browser or waiting for one.
+    ///
+    /// The port is bound and let go, and the authorization URL is asked for
+    /// and discarded: a role whose `allowed_redirect_uris` omits the callback
+    /// is answered with an empty URL and a success status, so nothing short of
+    /// asking finds out. The URL that comes back is not usable afterwards —
+    /// its nonce belongs to a listener this dropped.
+    pub async fn preflight_oidc(&self, login: &OidcLogin) -> Result<()> {
+        let listener = CallbackListener::bind(login.redirect.clone()).await?;
+        self.oidc_auth_url(login, &listener.redirect_uri(), &client_nonce()?)
+            .await?;
+        Ok(())
+    }
+
     /// The provider's authorization URL, as the mount builds it for this role
     /// and this redirect.
     async fn oidc_auth_url(

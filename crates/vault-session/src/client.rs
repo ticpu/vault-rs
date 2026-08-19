@@ -1,10 +1,10 @@
 use crate::error::{Error, Result};
-use crate::mounts::MountsResponse;
+use crate::mounts::{MountsResponse, VisibleMounts};
 use crate::session::Session;
 use crate::transport::{Transport, TransportSettings};
 use rustify::enums::RequestMethod;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -54,6 +54,37 @@ pub struct HealthStatus {
     /// verdict rather than one derived from the fields.
     #[serde(skip)]
     pub status: u16,
+}
+
+/// What a token may do at one path, as `sys/capabilities-self` reports it.
+#[derive(Clone, Debug, Serialize)]
+#[non_exhaustive]
+pub struct Capabilities {
+    pub path: String,
+    pub granted: Vec<String>,
+}
+
+impl Capabilities {
+    /// Whether the token holds a named capability here. A root token holds
+    /// every one; an explicit denial overrides whatever else was granted.
+    pub fn can(&self, capability: &str) -> bool {
+        let holds = |wanted: &str| self.granted.iter().any(|held| held == wanted);
+        !holds("deny") && (holds(capability) || holds("root"))
+    }
+
+    pub fn can_read(&self) -> bool {
+        self.can("read")
+    }
+
+    /// Vault splits writing into creating a path and updating one that is
+    /// already there; a caller that writes needs whichever applies.
+    pub fn can_write(&self) -> bool {
+        self.can("create") || self.can("update")
+    }
+
+    pub fn can_list(&self) -> bool {
+        self.can("list")
+    }
 }
 
 #[derive(Clone)]
@@ -217,6 +248,76 @@ impl VaultClient {
                 "'{path}' answered with a 'keys' that is not a list"
             ))),
         }
+    }
+
+    /// What this token may do at each path, asked of Vault rather than
+    /// derived from a policy document.
+    ///
+    /// The paths are the ones the caller will actually address: a KV mount's
+    /// two layouts reach a secret through different prefixes, so asking about
+    /// the wrong one answers about a path nothing will ever read.
+    pub async fn capabilities(&self, paths: &[&str]) -> Result<Vec<Capabilities>> {
+        const PATH: &str = "sys/capabilities-self";
+
+        let answer = self.post(PATH, json!({ "paths": paths })).await?;
+
+        paths
+            .iter()
+            .map(|path| {
+                let granted =
+                    answer
+                        .get(*path)
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| Error::Decode {
+                            path: PATH.to_string(),
+                            source: serde::de::Error::custom(format!(
+                                "no capabilities reported for '{path}'"
+                            )),
+                        })?;
+
+                Ok(Capabilities {
+                    path: (*path).to_string(),
+                    granted: granted
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect(),
+                })
+            })
+            .collect()
+    }
+
+    /// The policies attached to this token.
+    ///
+    /// Vault drops a policy name an auth role gives it but does not know,
+    /// rather than refusing the login, so the first sign is a read that fails
+    /// long after the login succeeded.
+    pub async fn token_policies(&self) -> Result<Vec<String>> {
+        const PATH: &str = "auth/token/lookup-self";
+
+        let answer = self.get(PATH).await?;
+        let mut policies: Vec<String> = ["policies", "identity_policies"]
+            .iter()
+            .filter_map(|key| answer["data"][key].as_array())
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+
+        policies.sort();
+        policies.dedup();
+        Ok(policies)
+    }
+
+    /// The mounts this token can see. See `VisibleMounts`.
+    pub async fn visible_mounts(&self) -> Result<VisibleMounts> {
+        const PATH: &str = "sys/internal/ui/mounts";
+
+        let answer = self.get(PATH).await?;
+        serde_json::from_value(answer["data"].clone()).map_err(|source| Error::Decode {
+            path: PATH.to_string(),
+            source,
+        })
     }
 
     /// List all secret engines (mounts)
@@ -428,6 +529,133 @@ mod tests {
             .await
             .expect_err("sealed")
             .is_not_found());
+    }
+
+    /// An explicit denial in a policy overrides everything else granted at the
+    /// path, so a reader that only looks for the capability it wants reports a
+    /// read that Vault will refuse.
+    #[test]
+    fn a_denial_beats_every_other_capability() {
+        let denied = Capabilities {
+            path: "secret/data/app".to_string(),
+            granted: ["read", "list", "deny"].map(str::to_string).to_vec(),
+        };
+        assert!(!denied.can_read());
+
+        let root = Capabilities {
+            path: "secret/data/app".to_string(),
+            granted: vec!["root".to_string()],
+        };
+        assert!(root.can_read() && root.can_write() && root.can_list());
+    }
+
+    /// One request covers every path, and each answer comes back against the
+    /// path it was asked about rather than in whatever order Vault replies.
+    #[tokio::test]
+    async fn capabilities_are_reported_per_path() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "POST",
+            "/v1/sys/capabilities-self",
+            ResponseTemplate::new(200).set_body_json(json!({
+                "secret/data/app": ["read"],
+                "secret/data/other": ["deny"],
+            })),
+        )
+        .await;
+
+        let reported = client(&server)
+            .capabilities(&["secret/data/app", "secret/data/other"])
+            .await
+            .expect("capabilities");
+
+        assert_eq!(reported[0].path, "secret/data/app");
+        assert!(reported[0].can_read());
+        assert_eq!(reported[1].path, "secret/data/other");
+        assert!(!reported[1].can_read());
+    }
+
+    /// A path Vault said nothing about is not a path with no capabilities:
+    /// reading it as denied would report a policy problem where the answer was
+    /// malformed.
+    #[tokio::test]
+    async fn a_path_the_answer_skipped_is_not_a_denial() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "POST",
+            "/v1/sys/capabilities-self",
+            ResponseTemplate::new(200).set_body_json(json!({ "secret/data/app": ["read"] })),
+        )
+        .await;
+
+        client(&server)
+            .capabilities(&["secret/data/app", "secret/data/missing"])
+            .await
+            .expect_err("an answer that skipped a path is malformed");
+    }
+
+    /// The identity's policies count as attached: a role that grants through
+    /// an entity rather than the token itself is otherwise reported as
+    /// carrying nothing.
+    #[tokio::test]
+    async fn token_policies_include_the_identity_s() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "GET",
+            "/v1/auth/token/lookup-self",
+            ResponseTemplate::new(200).set_body_json(json!({
+                "data": {
+                    "policies": ["default", "fsa-read"],
+                    "identity_policies": ["fsa-read", "team"],
+                }
+            })),
+        )
+        .await;
+
+        assert_eq!(
+            client(&server).token_policies().await.expect("policies"),
+            ["default", "fsa-read", "team"]
+        );
+    }
+
+    #[tokio::test]
+    async fn visible_mounts_report_each_kv_mount_s_layout() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "GET",
+            "/v1/sys/internal/ui/mounts",
+            ResponseTemplate::new(200).set_body_json(json!({
+                "data": {
+                    "secret": {
+                        "versioned/": { "type": "kv", "options": { "version": "2" } },
+                        "flat/": { "type": "kv", "options": null },
+                        "pki/": { "type": "pki" },
+                    },
+                    "auth": { "oidc/": { "type": "oidc" } },
+                }
+            })),
+        )
+        .await;
+
+        let visible = client(&server).visible_mounts().await.expect("mounts");
+        let mut kv = visible.kv_mounts();
+        kv.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(
+            kv,
+            [
+                ("flat".to_string(), KvLayout::Flat),
+                ("versioned".to_string(), KvLayout::Versioned)
+            ]
+        );
+        assert_eq!(
+            visible.auth_mounts(),
+            [("oidc".to_string(), "oidc".to_string())]
+        );
     }
 
     async fn probe_answers(server: &MockServer, at: &str, body: Value) {

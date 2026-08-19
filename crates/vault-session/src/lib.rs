@@ -14,12 +14,15 @@ pub mod oidc;
 pub mod paths;
 pub mod session;
 mod transport;
+pub mod verify;
 
-pub use client::VaultClient;
+pub use client::{Capabilities, HealthStatus, KvLayout, MountLayout, VaultClient};
 pub use discovery::Address;
 pub use error::{Error, Result};
+pub use mounts::VisibleMounts;
 pub use oidc::Redirect;
 pub use session::{LoginPresenter, LogoutOutcome, OidcLogin, Session, SessionConfig, TokenState};
+pub use verify::{verify, Expectation, Finding};
 
 /// Confine the unit tests to the build directory.
 ///
