@@ -11,9 +11,8 @@ pub(crate) fn normalize_serial(serial: &str) -> String {
 /// yield. Anything readable from the certificate is read from it on every
 /// listing instead, so no second copy of it can go stale on disk.
 ///
-/// The shape is a strict subset of what earlier builds wrote, keys and
-/// nesting included, so an artifact already on disk still reads and no
-/// second parse path has to exist for it.
+/// Keys and nesting stay a strict subset of the on-disk shape, so one parse
+/// path reads every artifact and none needs a migration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredMetadata {
     /// What the issuance was asked for. No certificate records the request,

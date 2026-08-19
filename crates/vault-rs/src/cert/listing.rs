@@ -391,8 +391,7 @@ mod tests {
         assert_eq!(parse("cn,serial").unwrap(), [C::Cn, C::Serial]);
     }
 
-    /// `+` used to be recognised only as a prefix on the whole string, so this
-    /// reported `Invalid column: +issuer`.
+    /// A `+` is accepted on any entry, not only the first.
     #[test]
     fn plus_is_accepted_anywhere_in_the_list() {
         let columns = parse("cn,+issuer").unwrap();
@@ -411,7 +410,6 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    /// Previously this called process::exit, so it could not be tested at all.
     #[test]
     fn an_unknown_column_is_an_error_not_an_exit() {
         let err = parse("cn,nope").unwrap_err().to_string();

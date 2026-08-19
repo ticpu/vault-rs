@@ -12,22 +12,18 @@ const KEY_USAGE_OID: oid::Oid = oid!(2.5.29 .15);
 const EXTENDED_KEY_USAGE_OID: oid::Oid = oid!(2.5.29 .37);
 const BASIC_CONSTRAINTS_OID: oid::Oid = oid!(2.5.29 .19);
 
-/// A UNIX timestamp as a date, or an error naming the field.
-///
-/// The alternative every call site used was `unwrap_or_else(Utc::now)`, which
-/// puts the current time where a reading belongs — indistinguishable from a
-/// certificate that really does expire now.
+/// A UNIX timestamp as a date, or an error naming the field — never today's
+/// date substituted, which is indistinguishable from a certificate that really
+/// does expire now.
 pub(crate) fn timestamp(seconds: i64, field: &str) -> Result<DateTime<Utc>> {
     DateTime::from_timestamp(seconds, 0).ok_or_else(|| {
         VaultCliError::CertParsing(format!("{field} is not a representable date: {seconds}"))
     })
 }
 
-/// A distinguished name's common name, absent or unreadable reported as such.
-///
-/// Both used to collapse into the literal `Unknown`, so a CN whose encoding
-/// this parser cannot decode printed identically to one that says "Unknown"
-/// and to one that has none at all.
+/// A distinguished name's common name, absent or unreadable reported as such —
+/// not folded into one placeholder, which a CN literally saying that would then
+/// print identically to.
 fn common_name(name: &x509_parser::x509::X509Name, which: &str) -> Result<String> {
     let Some(attribute) = name.iter_common_name().next() else {
         return Ok(format!("(no {which} CN)"));
@@ -92,10 +88,9 @@ impl CertificateParser {
         let cn = common_name(cert.subject(), "subject")?;
         let issuer = common_name(cert.issuer(), "issuer")?;
 
-        // Extract validity dates
-        // Rendering an unrepresentable validity as the current time made a
-        // certificate read as expiring now, which --expiring-within reports as
-        // a match, and the cache then served that conclusion from disk.
+        // An unrepresentable validity aborts rather than falling back to now:
+        // --expiring-within would report that as a match, and the cache would
+        // then serve the conclusion from disk.
         let not_before = timestamp(cert.validity().not_before.timestamp(), "notBefore")?;
         let not_after = timestamp(cert.validity().not_after.timestamp(), "notAfter")?;
 
@@ -288,8 +283,8 @@ mod tests {
         );
     }
 
-    /// The certificate carries digitalSignature + keyEncipherment + a SAN, which
-    /// the removed heuristic reported as "Server". Absent must stay absent.
+    /// digitalSignature + keyEncipherment + a SAN must not read as an implied
+    /// server usage: an EKU is what the certificate states, or nothing.
     #[test]
     fn absent_eku_stays_empty() {
         let cert = fixture("eku-none");

@@ -44,7 +44,7 @@ impl CertificateService {
         let mut all_certificates = Partial::new();
 
         for mount in pki_mounts {
-            // One unreadable mount used to abort the other nine.
+            // A mount that will not list is recorded as a failure, not an abort.
             match self.list_certificates_single_mount(&mount).await {
                 Ok(certs) => all_certificates.absorb(certs),
                 Err(e) => all_certificates.fail(Incomplete::record(&mount, e)),

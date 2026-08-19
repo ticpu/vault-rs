@@ -469,7 +469,7 @@ impl Session {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
         {
-            // A directory the caller named is theirs; only the one this tool
+            // A directory the caller named is theirs; only the one this crate
             // resolves for itself is tightened.
             Some(parent) if !self.resolved_token_dir => paths::create_owner_only_dir(parent)?,
             Some(parent) => paths::ensure_owner_only_dir(parent)?,
@@ -606,7 +606,7 @@ fn client_nonce() -> Result<String> {
 }
 
 /// Every test here turns on the same question: is the credential off this
-/// machine when the command returns? A revocation that fails for an ordinary
+/// machine when the call returns? A revocation that fails for an ordinary
 /// reason must not leave the token on disk, and nothing on this path may renew
 /// the token it is about to destroy — `expect(0)` on the renewal and lookup
 /// mocks is verified when the `MockServer` drops.
@@ -686,8 +686,8 @@ mod tests {
         assert!(!token_file.exists(), "the token file must be gone");
     }
 
-    /// The defect this step exists to remove: a revocation that cannot reach
-    /// Vault used to leave nothing behind to revoke and no error either.
+    /// A refused revocation still has to remove the token: the caller asked for
+    /// the credential to be gone from this machine, whatever the server said.
     #[tokio::test]
     async fn a_refused_revocation_still_removes_the_token() {
         let server = MockServer::start().await;

@@ -111,7 +111,7 @@ impl VaultClient {
     /// another client from the same session. That is why this borrows.
     pub async fn for_session(session: &Session) -> Result<Self> {
         let token = session.get_token().await?;
-        // Char boundaries, not bytes: a short or non-ASCII token panicked here.
+        // Chars, not bytes: a byte offset can land mid-codepoint.
         let prefix: String = token.chars().take(8).collect();
         tracing::debug!("Using {} with token: {prefix}***", session.vault_addr());
 
@@ -141,8 +141,7 @@ impl VaultClient {
         Ok(Self::build(transport))
     }
 
-    /// Where this client is pointed, for recording which Vault sealed an
-    /// artifact and for telling an operator where to point back.
+    /// Where this client is pointed.
     pub fn vault_addr(&self) -> &str {
         self.transport.vault_addr()
     }
@@ -168,10 +167,8 @@ impl VaultClient {
 
     /// The cluster this client is addressing.
     ///
-    /// A failed read propagates: a caller comparing which cluster sealed an
-    /// artifact demotes it to best-effort at its own call site, where the
-    /// choice is visible, and one reporting server status must not print an
-    /// unreachable Vault as an absent field.
+    /// A failed read propagates rather than reading as absent: a caller wanting
+    /// it best-effort demotes it at its own call site, where that is visible.
     pub async fn cluster_id(&self) -> Result<Option<String>> {
         Ok(self.health().await?.cluster_id)
     }

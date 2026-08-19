@@ -200,7 +200,6 @@ impl EncryptionManager {
         Ok(())
     }
 
-    /// Decrypt JSON from file
     pub async fn decrypt_yaml_from_file<T: serde::de::DeserializeOwned, P: AsRef<Path>>(
         &self,
         context: &str,

@@ -624,8 +624,8 @@ mod tests {
         manager(&server).get_master_key().await.expect("mint");
     }
 
-    /// The defect this step exists to remove: a transient failure used to read
-    /// as absence, mint a fresh key and overwrite the real one.
+    /// A transient failure is not absence: minting on one overwrites the real
+    /// key.
     #[tokio::test]
     async fn a_denied_read_never_writes() {
         let server = MockServer::start().await;

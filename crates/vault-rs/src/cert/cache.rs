@@ -193,9 +193,8 @@ impl CertificateCache {
         Ok(cleared_count)
     }
 
-    /// Remove the master index earlier builds wrote. Nothing reads it — the
-    /// artifact directory is the store — so it survives only as a stale copy
-    /// for whoever decrypts it by hand.
+    /// Remove the master index. Nothing reads it — the artifact directory is
+    /// the store — so a leftover copy only misleads a hand decryption.
     fn clear_orphaned_index(&self) -> Result<usize> {
         let Some(cache_root) = self.cache_dir.parent() else {
             return Ok(0);

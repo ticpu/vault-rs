@@ -125,7 +125,7 @@ async fn login_command(request: LoginRequest) -> Result<()> {
         (_, None) => auth.interactive_login(Some(request.method)).await?,
     };
 
-    // Char boundaries, not bytes: a short or non-ASCII token panicked here.
+    // Chars, not bytes: a byte offset can land mid-codepoint.
     let prefix: String = token.chars().take(8).collect();
     eprintln!("Successfully logged in with token: {prefix}***");
     Ok(())
@@ -218,7 +218,6 @@ async fn check_permissions() {
 
     match test_client.health().await {
         Ok(health) => {
-            // A missing seal state used to render as "unsealed".
             let version = health.version.as_deref().unwrap_or("version not reported");
             let state = match health.sealed {
                 Some(true) => "sealed",

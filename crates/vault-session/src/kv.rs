@@ -19,9 +19,8 @@ pub struct Target {
 }
 
 impl Target {
-    /// A secret whose mount and layout the caller already established. The
-    /// master key's mount is chosen by discovery rather than probed, so it
-    /// arrives here already answered rather than being asked again.
+    /// A secret whose mount and layout the caller already established, rather
+    /// than asking `VaultClient::mount_layout` again.
     pub fn known(mount: &str, key: &str, layout: KvLayout) -> Self {
         Self {
             mount: mount.trim_matches('/').to_string(),

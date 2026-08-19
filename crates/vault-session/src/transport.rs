@@ -23,7 +23,7 @@ use vaultrs::client::{
     Client as VaultClientTrait, VaultClient as InnerClient, VaultClientSettings,
 };
 
-/// Reached with whichever verb this tool does not model itself. `path` is
+/// Reached with whichever verb this crate does not model itself. `path` is
 /// handed to rustify's URL builder, which splits it on `/` and
 /// percent-encodes each segment before appending it — so a key containing `?`
 /// or `&` cannot collide with a query parameter the way a hand-built URL

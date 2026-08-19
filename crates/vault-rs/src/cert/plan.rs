@@ -314,10 +314,8 @@ mod tests {
             .unwrap_or_else(|| panic!("no {label} field"))
     }
 
-    /// `inspect-csr` has no CN argument, so the plan must not mention one.
-    /// It used to be handed the CSR's own CN and report it as an unused
-    /// argument — naming an argument that does not exist, with the value it
-    /// had just attributed to the CSR.
+    /// `inspect-csr` has no CN argument, so the plan must not report one as
+    /// unused — that names an argument the verb does not have.
     #[test]
     fn without_an_argument_the_plan_claims_none() {
         let role = csr_signing_role();
@@ -435,8 +433,8 @@ mod tests {
         );
     }
 
-    /// The old wording claimed CSR SANs were dropped even for a CSR that
-    /// carried none, which is a drop that never happened.
+    /// A CSR carrying no SANs has none to drop, so nothing may be reported as
+    /// dropped.
     #[test]
     fn nothing_is_reported_dropped_when_the_csr_has_no_sans() {
         let role = csr_signing_role();

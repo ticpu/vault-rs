@@ -190,7 +190,6 @@ mod tests {
             not_before: Utc::now(),
             not_after: Utc::now(),
             sans: vec!["test.example.test".to_string()],
-            // The shape the removed heuristic read as "Server".
             key_usage: vec![
                 "DigitalSignature".to_string(),
                 "KeyEncipherment".to_string(),
@@ -232,7 +231,7 @@ mod tests {
         assert_eq!(eku_column(&cert(&["1.2.3.4"])), "1.2.3.4");
     }
 
-    /// Previously an unrecognised EKU returned early and lost the marker.
+    /// The CA marker has to survive every EKU branch, unrecognised included.
     #[test]
     fn ca_prefix_survives_every_branch() {
         let ca = |ekus: &[&str]| {

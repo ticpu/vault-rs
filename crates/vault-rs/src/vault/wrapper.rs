@@ -23,7 +23,6 @@ pub async fn exec_vault_command(
     let mut command_args = vec![subcommand.to_string()];
     command_args.extend_from_slice(args);
 
-    // Execute vault with environment variables set
     let mut cmd = Command::new(vault_exe);
     cmd.args(&command_args)
         .env("VAULT_ADDR", &vault_addr)

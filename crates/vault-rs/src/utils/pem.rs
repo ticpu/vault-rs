@@ -271,8 +271,7 @@ fn normalize_pem(pem_data: &str) -> String {
 /// Parse multiple certificates from a PEM string.
 ///
 /// A block that does not end, or does not parse, is an error rather than a
-/// shorter chain: a truncated file used to come back one certificate light,
-/// and the caller had no way to tell that from a chain of that length.
+/// shorter chain, which a caller cannot tell from a chain of that length.
 pub fn parse_certificate_chain(pem_data: &str) -> Result<Vec<PemCertificate>> {
     let mut certificates = Vec::new();
 
@@ -306,8 +305,7 @@ pub struct PemBlock {
 /// Every labelled block in a PEM file, in the order they appear.
 ///
 /// One scanner, because a second one written beside it for a different label
-/// would disagree with this one about the same file — the two already in this
-/// repository disagree on a BEGIN line with trailing characters. Blocks whose
+/// would silently disagree with this one about the same file. Blocks whose
 /// label the caller does not want are its business to skip: a file may
 /// legitimately hold a key, a chain and provenance together.
 pub fn pem_blocks(pem_data: &str) -> Result<Vec<PemBlock>> {
@@ -336,8 +334,8 @@ pub fn pem_blocks(pem_data: &str) -> Result<Vec<PemBlock>> {
             .and_then(|rest| rest.strip_suffix("-----"))
         {
             // A stray END with nothing open is a malformed file, not a block:
-            // treating it as one fed a single line to the certificate parser
-            // and reported it as unparseable base64.
+            // read as one it reaches the certificate parser as a single line
+            // and comes back as unparseable base64, naming the wrong problem.
             let Some((open_label, mut text)) = open.take() else {
                 return Err(VaultCliError::CertParsing(format!(
                     "PEM block {} ends with no matching BEGIN {label}",
@@ -423,8 +421,7 @@ mod tests {
         assert_eq!(parsed.len(), 2);
     }
 
-    /// A truncated file used to come back one certificate short, which the
-    /// caller could not tell from a chain of that length.
+    /// A caller cannot tell a truncated chain from a chain of that length.
     #[test]
     fn a_truncated_block_is_an_error_not_a_shorter_chain() {
         let mut truncated = testdata("chain-no-root");
@@ -505,8 +502,8 @@ mod block_tests {
         assert!(blocks[0].text.starts_with("-----BEGIN"));
     }
 
-    /// Previously fed one line to the certificate parser and reported it as
-    /// unparseable base64, which named neither the real problem nor the file.
+    /// A stray END is malformed input, and has to say so — read as a one-line
+    /// block it reports unparseable base64, naming neither problem nor file.
     #[test]
     fn an_end_with_no_begin_names_the_real_problem() {
         let err = pem_blocks("-----END CERTIFICATE-----\n")
