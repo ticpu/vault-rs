@@ -281,6 +281,87 @@ fn the_token_verbs_act_on_this_session() {
     vault.run(&["session", "login", "--help"]).succeeded();
 }
 
+/// The policy verbs go straight at the API rather than through the `vault`
+/// binary, so a path this tool builds wrong fails nowhere else.
+#[test]
+fn the_policy_verbs_round_trip_a_document() {
+    let vault = vault!("policy");
+
+    vault
+        .run_with_stdin(
+            &["policy", "write", "fsa-read", "-"],
+            "path \"secret/data/fsa/*\" { capabilities = [\"read\"] }\n",
+        )
+        .succeeded();
+
+    vault
+        .run(&["policy", "list"])
+        .succeeded()
+        .stdout_has("fsa-read");
+
+    vault
+        .run(&["policy", "read", "fsa-read"])
+        .succeeded()
+        .stdout_has("secret/data/fsa/*");
+
+    vault.run(&["policy", "delete", "fsa-read"]).succeeded();
+    vault
+        .run(&["policy", "read", "fsa-read"])
+        .failed_with(2)
+        .stdout_lacks("secret/data/fsa/*");
+}
+
+/// A setup that is right says nothing and exits 0; the exit code is what a
+/// startup check reads.
+#[test]
+fn verify_passes_on_a_setup_that_is_right() {
+    let vault = vault!("verify-pass");
+    vault.run(&["kv", "put", "secret/app", "k=v"]).succeeded();
+
+    let passed = vault.run(&[
+        "session",
+        "verify",
+        "--read",
+        "secret/data/app",
+        "--kv-mount",
+        "secret:2",
+    ]);
+    passed.succeeded();
+    assert!(passed.stdout.trim().is_empty(), "{}", passed.report());
+}
+
+/// Every finding is reported, not just the first: an operator fixing a setup
+/// wants the whole list.
+#[test]
+fn verify_names_what_is_wrong_and_exits_one() {
+    let vault = vault!("verify-fail");
+
+    vault
+        .run(&[
+            "session",
+            "verify",
+            "--policy",
+            "a-policy-nobody-wrote",
+            "--kv-mount",
+            "no-such-mount",
+        ])
+        .failed_with(1)
+        .stdout_has("a-policy-nobody-wrote")
+        .stdout_has("no-such-mount");
+}
+
+/// The two KV layouts reach a secret through different prefixes, so a mount
+/// that is there under the other one is not the mount the caller asked for.
+#[test]
+fn verify_reports_a_mount_that_has_the_other_layout() {
+    let vault = vault!("verify-layout");
+
+    vault
+        .run(&["session", "verify", "--kv-mount", "secret:1"])
+        .failed_with(1)
+        .stdout_has("secret");
+}
+
 /// The confinement is a claim about the kernel, so it is checked rather than
 /// trusted: this writes where a stray test would and expects to be refused.
 ///
