@@ -88,28 +88,28 @@ mod confinement {
         // discard-ok: tidying the probe; the assertions below are the report
         let _ = std::fs::remove_file(&inside);
 
+        // Directly under $HOME, whose parent always exists: a path nested under
+        // a directory this machine has never created fails with NotFound during
+        // resolution, before Landlock is consulted, and proves nothing.
         let home = std::env::var("HOME").expect("a home to be kept out of");
-        for outside in [
-            std::path::Path::new(&home).join(".local/share/vault-rs/key-mount.yaml"),
-            std::path::Path::new(&home).join(".vault-rs-should-never-appear"),
-        ] {
-            match std::fs::write(&outside, "this must not land") {
-                Ok(()) => {
-                    // discard-ok: removing what should never have been written
-                    let _ = std::fs::remove_file(&outside);
-                    panic!(
-                        "wrote to {} — the unit tests are not confined, so a path resolved from \
-                         the real environment reaches a real store",
-                        outside.display()
-                    );
-                }
-                Err(e) => assert_eq!(
-                    e.kind(),
-                    std::io::ErrorKind::PermissionDenied,
-                    "{} was refused for the wrong reason: {e}",
+        let outside = std::path::Path::new(&home).join(".vault-session-should-never-appear");
+
+        match std::fs::write(&outside, "this must not land") {
+            Ok(()) => {
+                // discard-ok: removing what should never have been written
+                let _ = std::fs::remove_file(&outside);
+                panic!(
+                    "wrote to {} — the unit tests are not confined, so a path resolved from \
+                     the real environment reaches a real directory",
                     outside.display()
-                ),
+                );
             }
+            Err(e) => assert_eq!(
+                e.kind(),
+                std::io::ErrorKind::PermissionDenied,
+                "{} was refused for the wrong reason: {e}",
+                outside.display()
+            ),
         }
     }
 }

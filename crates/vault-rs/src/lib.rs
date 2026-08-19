@@ -66,9 +66,18 @@ mod confinement {
         let _ = std::fs::remove_file(&inside);
 
         let home = std::env::var("HOME").expect("a home to be kept out of");
-        for outside in [
-            std::path::Path::new(&home).join(".local/share/vault-rs/key-mount.yaml"),
-            std::path::Path::new(&home).join(".vault-rs-should-never-appear"),
+        // Only a path whose parent exists proves the kernel refused it: one
+        // nested under a directory this machine has never created fails with
+        // NotFound during resolution, before Landlock is consulted.
+        for (outside, parent_exists) in [
+            (
+                std::path::Path::new(&home).join(".local/share/vault-rs/key-mount.yaml"),
+                false,
+            ),
+            (
+                std::path::Path::new(&home).join(".vault-rs-should-never-appear"),
+                true,
+            ),
         ] {
             match std::fs::write(&outside, "this must not land") {
                 Ok(()) => {
@@ -80,9 +89,17 @@ mod confinement {
                         outside.display()
                     );
                 }
-                Err(e) => assert_eq!(
+                Err(e) if parent_exists => assert_eq!(
                     e.kind(),
                     std::io::ErrorKind::PermissionDenied,
+                    "{} was refused for the wrong reason: {e}",
+                    outside.display()
+                ),
+                Err(e) => assert!(
+                    matches!(
+                        e.kind(),
+                        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound
+                    ),
                     "{} was refused for the wrong reason: {e}",
                     outside.display()
                 ),
