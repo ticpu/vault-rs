@@ -4,14 +4,13 @@
 //! token by accessor or value is a different operation with a different blast
 //! radius, and it forwards rather than being approximated here.
 
-use crate::utils::dns_discovery::get_vault_addr;
 use crate::utils::errors::Result;
 use crate::utils::output::OutputFormat;
-use crate::vault::auth::{LogoutOutcome, VaultAuth};
 use serde_json::Value;
+use vault_session::LogoutOutcome;
 
 pub async fn lookup(output: &OutputFormat) -> Result<()> {
-    let auth = VaultAuth::new(get_vault_addr().await?)?;
+    let auth = crate::vault::operator_session().await?;
     let token = auth.get_token().await?;
     let info = auth.get_token_info(&token).await?;
 
@@ -43,7 +42,7 @@ pub async fn lookup(output: &OutputFormat) -> Result<()> {
 /// models only the self surface: renewing somebody else's would store theirs
 /// as ours.
 pub async fn renew() -> Result<()> {
-    let auth = VaultAuth::new(get_vault_addr().await?)?;
+    let auth = crate::vault::operator_session().await?;
     let token = auth.get_token().await?;
     auth.renew_token(&token).await?;
 
@@ -62,7 +61,7 @@ pub async fn renew() -> Result<()> {
 /// while leaving the file behind would make every later command fail against a
 /// token the operator believes is fine — logout's own failure mode, inverted.
 pub async fn revoke() -> Result<()> {
-    let auth = VaultAuth::new(get_vault_addr().await?)?;
+    let auth = crate::vault::operator_session().await?;
 
     match auth.logout().await {
         Ok(LogoutOutcome::Revoked) => eprintln!("Token revoked and removed"),

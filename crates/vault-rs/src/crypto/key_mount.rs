@@ -70,7 +70,7 @@ pub fn record_at(path: &std::path::Path, mount: &str) -> Result<()> {
         mount: mount.trim_end_matches('/').to_string(),
     };
     fs::write(path, serde_yaml_ng::to_string(&recorded)?)?;
-    crate::utils::set_secure_file_permissions(path)?;
+    vault_session::paths::set_secure_file_permissions(path)?;
     tracing::info!("This store's master key is on mount '{mount}'");
     Ok(())
 }

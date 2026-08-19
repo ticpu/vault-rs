@@ -5,7 +5,6 @@
 //! along with it.
 
 use crate::utils::errors::Result;
-use crate::utils::paths::VaultCliPaths;
 use crate::utils::PROGRAM_NAME;
 use std::path::PathBuf;
 use vault_session::Error;
@@ -54,14 +53,16 @@ impl CliPaths {
 
     /// Ensure all necessary directories exist
     pub fn ensure_all_dirs() -> Result<()> {
-        VaultCliPaths::ensure_dir_exists(&Self::data_dir()?)?;
-        VaultCliPaths::ensure_dir_exists(&Self::config_dir()?)?;
-        VaultCliPaths::ensure_dir_exists(&VaultCliPaths::runtime_dir()?)?;
-        VaultCliPaths::ensure_dir_exists(&Self::secrets_dir()?)?;
-        VaultCliPaths::ensure_dir_exists(&Self::cache_dir()?)?;
-        VaultCliPaths::ensure_dir_exists(&Self::serial_cache_dir()?)?;
-        VaultCliPaths::ensure_dir_exists(&Self::pki_cache_dir()?)?;
-        VaultCliPaths::ensure_dir_exists(&Self::cert_cache()?)?;
+        vault_session::paths::ensure_owner_only_dir(&Self::data_dir()?)?;
+        vault_session::paths::ensure_owner_only_dir(&Self::config_dir()?)?;
+        vault_session::paths::ensure_owner_only_dir(&vault_session::paths::runtime_dir(
+            crate::utils::PROGRAM_NAME,
+        )?)?;
+        vault_session::paths::ensure_owner_only_dir(&Self::secrets_dir()?)?;
+        vault_session::paths::ensure_owner_only_dir(&Self::cache_dir()?)?;
+        vault_session::paths::ensure_owner_only_dir(&Self::serial_cache_dir()?)?;
+        vault_session::paths::ensure_owner_only_dir(&Self::pki_cache_dir()?)?;
+        vault_session::paths::ensure_owner_only_dir(&Self::cert_cache()?)?;
         Ok(())
     }
 }

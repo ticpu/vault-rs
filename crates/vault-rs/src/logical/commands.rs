@@ -25,13 +25,11 @@ pub async fn read(
 }
 
 pub async fn list(client: &VaultClient, path: &str, output: &OutputFormat) -> Result<()> {
-    let listed = client.list(path).await?;
-
     if output.json {
-        return output.print_json(&listed);
+        return output.print_json(&client.list(path).await?);
     }
 
-    output.print_list(&crate::vault::extract_keys_array(&listed));
+    output.print_list(&client.list_keys(path).await?);
     Ok(())
 }
 

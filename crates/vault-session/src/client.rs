@@ -1,7 +1,7 @@
-use crate::utils::errors::{Error, Result};
-use crate::utils::get_vault_addr;
-use crate::vault::mounts::MountsResponse;
-use crate::vault::transport::{Transport, TransportSettings};
+use crate::error::{Error, Result};
+use crate::mounts::MountsResponse;
+use crate::session::Session;
+use crate::transport::{Transport, TransportSettings};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -24,42 +24,27 @@ pub struct VaultClient {
 }
 
 impl VaultClient {
-    pub async fn new() -> Result<Self> {
-        Self::for_auth(&crate::vault::auth::VaultAuth::new(
-            get_vault_addr().await?,
-        )?)
-        .await
-    }
-
-    /// A client resolving through the session it is given, rather than through
-    /// whatever the environment and the default token file hold.
+    /// A client resolving through the session it is given.
     ///
     /// The token is read once here and sent unchanged from then on; nothing
     /// re-reads the file or renews it, so a program outliving its token builds
-    /// another client from the same session. That is why this borrows. It also
-    /// takes the address the session resolved, so it does not consult the
-    /// override the command line sets.
-    pub async fn for_auth(auth: &crate::vault::auth::VaultAuth) -> Result<Self> {
-        let token = auth.get_token().await?;
+    /// another client from the same session. That is why this borrows.
+    pub async fn for_session(session: &Session) -> Result<Self> {
+        let token = session.get_token().await?;
         // Char boundaries, not bytes: a short or non-ASCII token panicked here.
         let prefix: String = token.chars().take(8).collect();
-        tracing::debug!("Using {} with token: {prefix}***", auth.vault_addr());
+        tracing::debug!("Using {} with token: {prefix}***", session.vault_addr());
 
-        Ok(Self::build(auth.transport().with_token(&token)))
+        Ok(Self::build(session.transport().with_token(&token)))
     }
 
-    /// A client that resolves no token.
+    /// A client over the session's address and namespace that sends no token.
     ///
     /// For the endpoints that answer without one. Reporting a seal state is the
     /// case that needs it: a sealed Vault cannot mint or validate a token, so
     /// requiring one would fail exactly where the report is wanted.
-    pub async fn unauthenticated() -> Result<Self> {
-        let mut settings = TransportSettings::new(get_vault_addr().await?, String::new());
-        // discard-ok: an unset namespace is the ordinary single-tenant case
-        settings.namespace = std::env::var("VAULT_NAMESPACE")
-            .ok()
-            .filter(|n| !n.is_empty());
-        Ok(Self::build(Transport::build(settings)?))
+    pub fn unauthenticated(session: &Session) -> Self {
+        Self::build(session.transport().clone())
     }
 
     fn build(transport: Transport) -> Self {
@@ -153,6 +138,35 @@ impl VaultClient {
     /// Generic LIST request to Vault API
     pub async fn list(&self, path: &str) -> Result<Value> {
         self.transport.list(path).await
+    }
+
+    /// The keys a LIST answered with.
+    ///
+    /// An answer carrying no `keys` at all is an empty listing. One whose
+    /// `keys` is not an array of strings is refused rather than read as empty,
+    /// which is indistinguishable from a mount holding nothing.
+    pub async fn list_keys(&self, path: &str) -> Result<Vec<String>> {
+        let response = self.list(path).await?;
+
+        let Some(keys) = response.get("data").and_then(|data| data.get("keys")) else {
+            return Ok(Vec::new());
+        };
+
+        match keys.as_array() {
+            Some(entries) => entries
+                .iter()
+                .map(|entry| {
+                    entry.as_str().map(str::to_string).ok_or_else(|| {
+                        Error::InvalidInput(format!(
+                            "'{path}' listed an entry that is not a name: {entry}"
+                        ))
+                    })
+                })
+                .collect(),
+            None => Err(Error::InvalidInput(format!(
+                "'{path}' answered with a 'keys' that is not a list"
+            ))),
+        }
     }
 
     /// List all secret engines (mounts)

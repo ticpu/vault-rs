@@ -1,11 +1,11 @@
-//! A `VaultAuth` extension for the CLI's own prompting, kept out of the
+//! A `Session` extension for the CLI's own prompting, kept out of the
 //! published library along with every other `eprintln!`/`stdin` interaction.
 //! Rust has no cross-crate inherent impls, so this is a trait.
 
 use crate::utils::errors::{Result, VaultCliError};
-use crate::vault::auth::VaultAuth;
 use std::future::Future;
 use std::io::{self, Write};
+use vault_session::Session;
 
 pub trait InteractiveLogin {
     /// Interactive login - prompts for username and password
@@ -19,7 +19,7 @@ pub trait InteractiveLogin {
     ) -> impl Future<Output = Result<String>> + Send;
 }
 
-impl InteractiveLogin for VaultAuth {
+impl InteractiveLogin for Session {
     async fn interactive_login(&self, auth_method: Option<String>) -> Result<String> {
         let method = auth_method.unwrap_or_else(|| "ldap".to_string());
 

@@ -207,7 +207,7 @@ pub struct KeyManager {
 
 impl KeyManager {
     pub async fn new() -> Result<Self> {
-        let client = VaultClient::new().await?;
+        let client = crate::vault::operator_client().await?;
         Ok(Self {
             client,
             record: key_mount::default_record_path()?,

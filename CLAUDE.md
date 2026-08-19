@@ -6,7 +6,7 @@ Stdout carries data only; every log, warning, prompt and status line goes to std
 one item per line with no prefixes, headers, labels, leading spaces or alignment fluff that would
 break `grep`/`awk`/`cut`.
 
-### OutputFormat (crates/vault-session/src/utils/output.rs, moving to the binary)
+### OutputFormat (crates/vault-rs/src/utils/output.rs)
 
 **Use `OutputFormat` for all structured data** — `print_table` / `print_table_with_headers` for
 columns, `print_list` for single-column, `print_key_value` for pairs, `print_json` for records. It
@@ -41,7 +41,7 @@ changing issuance, verification or export behaviour.
   feature. There is no separate native-roots feature to enable.
 - The tool's own token is in `XDG_RUNTIME_DIR`, mode 0600; a linking program names its own path,
   which gets the same mode and a directory this tool creates but does not re-mode.
-- Temporary files go under `VaultCliPaths::runtime_dir()`, mode 0600, removed after use.
+- Temporary files go under `paths::runtime_dir(PROGRAM_NAME)`, mode 0600, removed after use.
 
 ## Rust
 

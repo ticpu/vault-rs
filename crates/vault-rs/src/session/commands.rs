@@ -1,12 +1,10 @@
 use crate::cli::args::{KeyCommands, SessionCommands};
 use crate::session::InteractiveLogin;
-use crate::utils::dns_discovery::get_vault_addr;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
-use crate::vault::{
-    auth::{LogoutOutcome, OidcLogin, TokenState, VaultAuth, OIDC_REDIRECT_PORT},
-    client::VaultClient,
-};
+use vault_session::session::OIDC_REDIRECT_PORT;
+use vault_session::Session;
+use vault_session::{LogoutOutcome, OidcLogin, TokenState};
 
 pub async fn handle_session_commands(
     command: SessionCommands,
@@ -81,8 +79,7 @@ impl LoginRequest {
 }
 
 async fn login_command(request: LoginRequest) -> Result<()> {
-    let vault_addr = get_vault_addr().await?;
-    let auth = VaultAuth::new(vault_addr)?;
+    let auth = crate::vault::operator_session().await?;
 
     request.refuse_inert_arguments()?;
 
@@ -108,7 +105,7 @@ async fn login_command(request: LoginRequest) -> Result<()> {
     Ok(())
 }
 
-async fn login_with_credentials(auth: &VaultAuth, method: &str, username: &str) -> Result<String> {
+async fn login_with_credentials(auth: &Session, method: &str, username: &str) -> Result<String> {
     let password = rpassword::prompt_password("Password: ")
         .map_err(|e| VaultCliError::Auth(format!("Failed to read password: {e}")))?;
 
@@ -122,8 +119,7 @@ async fn login_with_credentials(auth: &VaultAuth, method: &str, username: &str) 
 }
 
 async fn logout_command() -> Result<()> {
-    let vault_addr = get_vault_addr().await?;
-    let auth = VaultAuth::new(vault_addr)?;
+    let auth = crate::vault::operator_session().await?;
 
     match auth.logout().await {
         Ok(LogoutOutcome::Revoked) => eprintln!("Logged out: token revoked and removed"),
@@ -143,8 +139,7 @@ async fn logout_command() -> Result<()> {
 /// through `OutputFormat`. The reachability checklist below it is written for
 /// a person and stays on stderr.
 async fn status_command(output: &OutputFormat) -> Result<()> {
-    let vault_addr = get_vault_addr().await?;
-    let auth = VaultAuth::new(vault_addr)?;
+    let auth = crate::vault::operator_session().await?;
 
     let token = match auth.token_state().await? {
         TokenState::Absent => return report_token(output, "absent", &serde_json::Value::Null),
@@ -187,7 +182,7 @@ fn report_token(output: &OutputFormat, state: &str, info: &serde_json::Value) ->
 async fn check_permissions() {
     eprintln!();
     eprintln!("Checking permissions:");
-    let test_client = match VaultClient::new().await {
+    let test_client = match crate::vault::operator_client().await {
         Ok(client) => client,
         Err(e) => {
             eprintln!("✗ Cannot connect to Vault: {e}");

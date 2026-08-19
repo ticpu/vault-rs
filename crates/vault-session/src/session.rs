@@ -1,8 +1,8 @@
-use crate::utils::errors::{Error, Result};
-use crate::utils::paths::VaultCliPaths;
-use crate::utils::PROGRAM_NAME;
-use crate::vault::oidc::CallbackListener;
-use crate::vault::transport::{Transport, TransportSettings};
+use crate::discovery::Address;
+use crate::error::{Error, Result};
+use crate::oidc::CallbackListener;
+use crate::paths;
+use crate::transport::{Transport, TransportSettings};
 use rustify::enums::RequestMethod;
 use serde_json::{json, Value};
 use std::env;
@@ -55,72 +55,102 @@ impl<'a> OidcLogin<'a> {
     }
 }
 
-/// The variable the tool's own session answers to.
-pub const DEFAULT_TOKEN_ENV: &str = "VAULT_TOKEN";
-
-/// A session belonging to the program that named it, rather than to the
-/// operator: its own token file, and nothing taken from the environment unless
-/// it is named here.
-pub struct CallerSession {
+/// What a session needs before it can hold a token.
+///
+/// No field defaults to something read from the environment: one left unset is
+/// a thing the session does not do. The program names both the message that
+/// tells a person how to log in again and, through `for_program`, the
+/// directory the token lands in.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct SessionConfig {
+    pub program: String,
+    pub address: Address,
+    /// Where an address discovered over SRV is kept for its record's TTL.
+    /// `None` queries on every resolution and writes nothing.
+    pub srv_cache: Option<PathBuf>,
     pub token_file: PathBuf,
-    /// Read before the file when named.
+    /// A variable read before the file. `None` reads only the file.
     pub token_env: Option<String>,
     pub namespace: Option<String>,
+    /// Whether the token file's directory is one this crate resolved. One the
+    /// caller named is theirs to mode, and is reported rather than tightened.
+    resolved_token_dir: bool,
 }
 
-impl CallerSession {
-    pub fn new(token_file: PathBuf) -> Self {
-        Self {
-            token_file,
-            token_env: None,
-            namespace: None,
-        }
-    }
-}
-
-pub struct VaultAuth {
-    transport: Transport,
-    vault_addr: String,
-    /// Where the token lives, when it is not the resolved default. The tool's
-    /// own session resolves the path per call, so one with no runtime directory
-    /// fails where the token is used rather than wherever a client was built.
-    token_file: Option<PathBuf>,
-    /// The variable consulted before the file, where a session has one.
-    token_env: Option<String>,
-    namespace: Option<String>,
-}
-
-impl VaultAuth {
-    pub fn new(vault_addr: String) -> Result<Self> {
-        // discard-ok: an unset namespace is the ordinary single-tenant case
-        let namespace = env::var("VAULT_NAMESPACE").ok().filter(|n| !n.is_empty());
-        let transport = Self::build_transport(&vault_addr, namespace.clone())?;
-
+impl SessionConfig {
+    /// A session keeping its token under the calling program's own runtime
+    /// directory, which it creates owner-only.
+    pub fn for_program(program: impl Into<String>) -> Result<Self> {
+        let program = program.into();
+        let token_file = paths::runtime_dir(&program)?.join("token");
         Ok(Self {
-            transport,
-            vault_addr,
-            token_file: None,
-            token_env: Some(DEFAULT_TOKEN_ENV.to_string()),
-            namespace,
+            resolved_token_dir: true,
+            ..Self::with_token_file(program, token_file)
         })
     }
 
-    /// A session reading the named file and no environment variable.
-    pub fn with_token_file(vault_addr: String, token_file: PathBuf) -> Result<Self> {
-        Self::for_session(vault_addr, CallerSession::new(token_file))
+    /// A session keeping its token in a file the caller names.
+    pub fn with_token_file(program: impl Into<String>, token_file: PathBuf) -> Self {
+        Self {
+            program: program.into(),
+            address: Address::EnvThenSrv,
+            srv_cache: None,
+            token_file,
+            token_env: None,
+            namespace: None,
+            resolved_token_dir: false,
+        }
     }
 
-    /// As `with_token_file`, where the caller also names the variable its token
-    /// may arrive in and the namespace it works under.
-    pub fn for_session(vault_addr: String, session: CallerSession) -> Result<Self> {
-        let transport = Self::build_transport(&vault_addr, session.namespace.clone())?;
+    pub fn address(mut self, address: Address) -> Self {
+        self.address = address;
+        self
+    }
+
+    pub fn srv_cache(mut self, path: PathBuf) -> Self {
+        self.srv_cache = Some(path);
+        self
+    }
+
+    pub fn token_env(mut self, name: impl Into<String>) -> Self {
+        self.token_env = Some(name.into());
+        self
+    }
+
+    pub fn namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.namespace = Some(namespace.into());
+        self
+    }
+}
+
+/// A token's lifecycle against one Vault: where it comes from, whether it is
+/// still good, and where it goes when the caller is done with it.
+pub struct Session {
+    transport: Transport,
+    vault_addr: String,
+    program: String,
+    token_file: PathBuf,
+    /// The variable consulted before the file, where a session has one.
+    token_env: Option<String>,
+    namespace: Option<String>,
+    resolved_token_dir: bool,
+}
+
+impl Session {
+    /// Resolve the address and build the transport this session sends over.
+    pub async fn open(config: SessionConfig) -> Result<Self> {
+        let vault_addr = config.address.resolve(config.srv_cache.as_deref()).await?;
+        let transport = Self::build_transport(&vault_addr, config.namespace.clone())?;
 
         Ok(Self {
             transport,
             vault_addr,
-            token_file: Some(session.token_file),
-            token_env: session.token_env,
-            namespace: session.namespace,
+            program: config.program,
+            token_file: config.token_file,
+            token_env: config.token_env,
+            namespace: config.namespace,
+            resolved_token_dir: config.resolved_token_dir,
         })
     }
 
@@ -142,17 +172,14 @@ impl VaultAuth {
         self.namespace.as_deref()
     }
 
+    pub fn token_file(&self) -> &std::path::Path {
+        &self.token_file
+    }
+
     /// Shared rather than rebuilt, so a client resolving through this session
     /// does not open a second connection pool and repeat the TLS setup.
     pub(crate) fn transport(&self) -> &Transport {
         &self.transport
-    }
-
-    fn token_file(&self) -> Result<PathBuf> {
-        match &self.token_file {
-            Some(path) => Ok(path.clone()),
-            None => VaultCliPaths::vault_token(),
-        }
     }
 
     /// The token this session's variable holds, where it names one.
@@ -171,11 +198,11 @@ impl VaultAuth {
         let token = match self.token_from_env() {
             Some(token) => token,
             None => {
-                let token_file = self.token_file()?;
+                let token_file = &self.token_file;
                 if !token_file.exists() {
                     return Ok(TokenState::Absent);
                 }
-                let token = fs::read_to_string(&token_file)?.trim().to_string();
+                let token = fs::read_to_string(token_file)?.trim().to_string();
                 if token.is_empty() {
                     return Ok(TokenState::Absent);
                 }
@@ -363,7 +390,7 @@ impl VaultAuth {
 
     /// Store the token at this session's path, owner-only.
     async fn store_token(&self, token: &str) -> Result<()> {
-        let token_file = self.token_file()?;
+        let token_file = &self.token_file;
 
         // An empty parent is a bare relative filename: the directory is the one
         // the process is already in, and there is nothing to create.
@@ -373,10 +400,8 @@ impl VaultAuth {
         {
             // A directory the caller named is theirs; only the one this tool
             // resolves for itself is tightened.
-            Some(parent) if self.token_file.is_some() => {
-                VaultCliPaths::create_owner_only_dir(parent)?
-            }
-            Some(parent) => VaultCliPaths::ensure_dir_exists(parent)?,
+            Some(parent) if !self.resolved_token_dir => paths::create_owner_only_dir(parent)?,
+            Some(parent) => paths::ensure_owner_only_dir(parent)?,
             None => {}
         }
 
@@ -387,10 +412,10 @@ impl VaultAuth {
             .create(true)
             .truncate(true)
             .write(true)
-            .open(&token_file)?
+            .open(token_file)?
             .write_all(token.as_bytes())?;
         // The mode on open does not reach a file that was already there.
-        crate::utils::paths::set_secure_file_permissions(&token_file)?;
+        crate::paths::set_secure_file_permissions(token_file)?;
 
         tracing::debug!("Token stored at: {}", token_file.display());
         Ok(())
@@ -398,7 +423,7 @@ impl VaultAuth {
 
     /// Read stored token from file
     async fn read_stored_token(&self) -> Result<String> {
-        let token_file = self.token_file()?;
+        let token_file = &self.token_file;
 
         if !token_file.exists() {
             return Err(Error::Auth(
@@ -406,7 +431,7 @@ impl VaultAuth {
             ));
         }
 
-        let token = fs::read_to_string(&token_file)?;
+        let token = fs::read_to_string(token_file)?;
         let token = token.trim().to_string();
 
         if token.is_empty() {
@@ -427,7 +452,7 @@ impl VaultAuth {
             };
             // Nothing else expires this file, and it outlives the session when
             // the fallback state directory is in use.
-            if let Err(e) = fs::remove_file(&token_file) {
+            if let Err(e) = fs::remove_file(token_file) {
                 tracing::warn!(
                     "Failed to remove the expired token at {}: {e}",
                     token_file.display()
@@ -438,7 +463,7 @@ impl VaultAuth {
             // naming only the renewal sends the operator to look at a lease
             // when what they need is to log in again.
             return Err(Error::Rejected {
-                program: PROGRAM_NAME,
+                program: self.program.clone(),
                 source: Box::new(renewal_error),
             });
         }
@@ -466,13 +491,13 @@ impl VaultAuth {
     /// the caller's shell and is theirs to revoke; this removes what the tool
     /// stored.
     pub async fn logout(&self) -> Result<LogoutOutcome> {
-        let token_file = self.token_file()?;
+        let token_file = &self.token_file;
 
         if !token_file.exists() {
             return Ok(LogoutOutcome::NoToken);
         }
 
-        let token = fs::read_to_string(&token_file)?.trim().to_string();
+        let token = fs::read_to_string(token_file)?.trim().to_string();
         let revocation = match token.is_empty() {
             true => Ok(()),
             false => self.revoke_self(&token).await,
@@ -480,7 +505,7 @@ impl VaultAuth {
 
         // Unconditional: a revocation that could not reach Vault must not leave
         // the credential sitting on disk.
-        if let Err(removal) = fs::remove_file(&token_file) {
+        if let Err(removal) = fs::remove_file(token_file) {
             if let Err(e) = &revocation {
                 tracing::error!("Revoking the token also failed: {e}");
             }
@@ -548,6 +573,16 @@ mod tests {
         dir.join("token")
     }
 
+    /// A session against a named address, reading no environment.
+    async fn session_at(address: &str, token_file: PathBuf) -> Session {
+        Session::open(
+            SessionConfig::with_token_file("test", token_file)
+                .address(Address::Explicit(address.to_string())),
+        )
+        .await
+        .expect("session")
+    }
+
     async fn respond_to_revoke(server: &MockServer, response: ResponseTemplate) {
         Mock::given(method("POST"))
             .and(path(REVOKE))
@@ -585,7 +620,7 @@ mod tests {
 
         let token_file = token_at("revokes");
         fs::write(&token_file, "s.stored-token").expect("token");
-        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone()).expect("session");
+        let auth = session_at(&server.uri(), token_file.clone()).await;
 
         assert!(matches!(
             auth.logout().await.expect("logout"),
@@ -604,7 +639,7 @@ mod tests {
 
         let token_file = token_at("refused");
         fs::write(&token_file, "s.expired-token").expect("token");
-        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone()).expect("session");
+        let auth = session_at(&server.uri(), token_file.clone()).await;
 
         let err = auth
             .logout()
@@ -623,8 +658,7 @@ mod tests {
         let token_file = token_at("unreachable");
         fs::write(&token_file, "s.stored-token").expect("token");
         // A port nothing is listening on; the request fails to connect.
-        let auth = VaultAuth::with_token_file("http://127.0.0.1:1".to_string(), token_file.clone())
-            .expect("session");
+        let auth = session_at("http://127.0.0.1:1", token_file.clone()).await;
 
         auth.logout()
             .await
@@ -657,8 +691,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let auth =
-            VaultAuth::with_token_file(server.uri(), token_at("oidc-refused")).expect("session");
+        let auth = session_at(&server.uri(), token_at("oidc-refused")).await;
         let err = auth
             .login_oidc_with(oidc_at(18251))
             .await
@@ -696,7 +729,7 @@ mod tests {
             .parent()
             .expect("scratch")
             .join("session/token");
-        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone()).expect("session");
+        let auth = session_at(&server.uri(), token_file.clone()).await;
         let login = tokio::spawn(async move { auth.login_oidc_with(oidc_at(port)).await });
 
         redirect_to(port, "/oidc/callback?state=st&code=xyz").await;
@@ -750,7 +783,7 @@ mod tests {
         expect_no_renewal(&server).await;
 
         let token_file = token_at("absent");
-        let auth = VaultAuth::with_token_file(server.uri(), token_file).expect("session");
+        let auth = session_at(&server.uri(), token_file).await;
 
         assert!(matches!(
             auth.logout().await.expect("logout"),

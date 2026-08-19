@@ -1,17 +1,16 @@
 use crate::utils::errors::{Result, VaultCliError};
-use crate::vault::auth::VaultAuth;
 use std::env;
 use std::process::Command;
+use vault_session::Session;
 
 /// Execute the system vault command with preset VAULT_ADDR and VAULT_TOKEN
 pub async fn exec_vault_command(
-    vault_addr: String,
+    session: &Session,
     subcommand: &str,
     args: &[String],
 ) -> Result<()> {
-    // Get the token from VaultAuth
-    let auth = VaultAuth::new(vault_addr.clone())?;
-    let token = auth.get_token().await?;
+    let vault_addr = session.vault_addr().to_string();
+    let token = session.get_token().await?;
 
     // Find the vault executable
     let vault_exe = which::which("vault").map_err(|e| {

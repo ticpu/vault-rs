@@ -11,7 +11,6 @@ use crate::storage::local::LocalStorage;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use crate::utils::PROGRAM_NAME;
-use crate::vault::client::VaultClient;
 
 /// Where the key is, whether replacing it could be undone, and which cluster
 /// answered.
@@ -21,7 +20,7 @@ use crate::vault::client::VaultClient;
 /// cluster that sealed an artifact, and the two look alike until they are
 /// named.
 pub async fn status(output: &OutputFormat) -> Result<()> {
-    let client = VaultClient::new().await?;
+    let client = crate::vault::operator_client().await?;
     let manager = KeyManager::with_client(client.clone())?;
     let location = manager.key_location().await?;
 
@@ -56,7 +55,7 @@ pub async fn status(output: &OutputFormat) -> Result<()> {
 
 /// Every version the mount still holds, and what state each is in.
 pub async fn history(output: &OutputFormat) -> Result<()> {
-    let client = VaultClient::new().await?;
+    let client = crate::vault::operator_client().await?;
     let location = KeyManager::with_client(client.clone())?
         .key_location()
         .await?;
@@ -72,7 +71,7 @@ pub async fn history(output: &OutputFormat) -> Result<()> {
 /// under different keys and by different clusters at once, so checking one
 /// artifact reports whichever verdict that artifact happened to carry.
 pub async fn restore(version: u64) -> Result<()> {
-    let client = VaultClient::new().await?;
+    let client = crate::vault::operator_client().await?;
     let location = KeyManager::with_client(client.clone())?
         .key_location()
         .await?;
@@ -148,7 +147,7 @@ pub fn choose_mount(mount: &str) -> Result<()> {
 /// than enforced — the mount may be about to receive one.
 pub async fn use_mount(mount: &str) -> Result<()> {
     let mount = mount.trim_end_matches('/');
-    let client = VaultClient::new().await?;
+    let client = crate::vault::operator_client().await?;
 
     let previous = key_mount::recorded()?;
     key_mount::record(mount)?;

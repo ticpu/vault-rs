@@ -6,7 +6,7 @@ pub mod kv_commands;
 /// `crate::logical::kv::put` resolves the way it always has even though the
 /// two halves now live in different crates.
 pub mod kv {
-    pub use vault_session::logical::kv::*;
+    pub use vault_session::kv::*;
 
     pub use super::kv_commands::*;
 }

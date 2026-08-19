@@ -7,7 +7,6 @@ use crate::cert::SerialNumber;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::vault::certificates::{CertificateData, CertificateResponse};
 use crate::vault::client::VaultClient;
-use crate::vault::extract_keys_array;
 use crate::vault::pki::RoleConfig;
 use serde_json::{json, Value};
 use std::future::Future;
@@ -135,9 +134,7 @@ impl PkiClient for VaultClient {
     }
 
     async fn list_roles(&self, pki_mount: &str) -> Result<Vec<String>> {
-        let response = self.list(&format!("{pki_mount}/roles")).await?;
-
-        Ok(extract_keys_array(&response))
+        Ok(self.list_keys(&format!("{pki_mount}/roles")).await?)
     }
 
     async fn read_role(&self, mount: &str, role: &str) -> Result<RoleConfig> {
@@ -245,11 +242,9 @@ impl PkiClient for VaultClient {
     }
 
     async fn list_certificates(&self, pki_mount: &str) -> Result<Vec<SerialNumber>> {
-        let path = format!("{pki_mount}/certs");
-        let response = self.list(&path).await?;
+        let serials = self.list_keys(&format!("{pki_mount}/certs")).await?;
 
-        let serials = extract_keys_array(&response);
-        Ok(serials.into_iter().map(|s| SerialNumber::new(&s)).collect())
+        Ok(serials.iter().map(|s| SerialNumber::new(s)).collect())
     }
 
     async fn revoke_certificate(&self, pki_mount: &str, serial: &SerialNumber) -> Result<Value> {

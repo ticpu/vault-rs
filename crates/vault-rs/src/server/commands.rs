@@ -17,7 +17,8 @@ pub struct ServerStatus {
 }
 
 pub async fn status(output: &OutputFormat) -> Result<ServerStatus> {
-    let client = VaultClient::unauthenticated().await?;
+    let session = crate::vault::operator_session().await?;
+    let client = VaultClient::unauthenticated(&session);
     let seal = client.get("sys/seal-status").await?;
 
     if output.json {

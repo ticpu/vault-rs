@@ -1,12 +1,10 @@
 use crate::cert::show_certificate;
 use crate::cli::args::*;
 use crate::storage::local::LocalStorage;
-use crate::utils::dns_discovery::get_vault_addr;
 use crate::utils::errors::VaultCliError;
 use crate::utils::output::OutputFormat;
 use crate::utils::partial::{Incomplete, Partial};
 use crate::utils::PROGRAM_NAME;
-use crate::vault::client::VaultClient;
 use crate::vault::PkiClient;
 use anyhow::{Context, Result};
 use std::io;
@@ -32,7 +30,7 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
 
     // Before anything builds a client: the address is fixed for the whole run.
     if let Some(ref addr) = cli.vault_addr {
-        crate::utils::dns_discovery::set_vault_addr_override(addr.clone());
+        crate::vault::set_vault_addr_override(addr.clone());
     }
 
     // Ensure directories exist
@@ -60,7 +58,7 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
             ref args,
             ref field,
         } => {
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             crate::logical::commands::read(&client, path, args, field.as_deref(), &output)
                 .await
                 .with_context(|| format!("reading {path}"))
@@ -71,19 +69,19 @@ pub async fn handle_command(cli: Cli) -> Result<()> {
             force,
             ref field,
         } => {
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             crate::logical::commands::write(&client, path, args, force, field.as_deref(), &output)
                 .await
                 .with_context(|| format!("writing {path}"))
         }
         Commands::Delete { ref path } => {
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             crate::logical::commands::delete(&client, path)
                 .await
                 .with_context(|| format!("deleting {path}"))
         }
         Commands::List { ref path } => {
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             crate::logical::commands::list(&client, path, &output)
                 .await
                 .with_context(|| format!("listing {path}"))
@@ -198,7 +196,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             }
         }
         CertCommands::ListMounts { allow_partial } => {
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             let pki_mounts = client.list_pki_mounts().await?;
 
             // The mount name read fine; only the secondary query can fail, so
@@ -230,7 +228,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 )
             })?;
 
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             show_ca_info(&client, &mount, output)
                 .await
                 .with_context(|| format!("reading the CA of mount '{mount}'"))
@@ -259,7 +257,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                 .into());
             };
 
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             show_role_info(&client, &mount, &role, output)
                 .await
                 .with_context(|| format!("reading role '{role}' of mount '{mount}'"))
@@ -289,7 +287,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             // where it would be indistinguishable from a failed check.
             let verdict = async {
                 let client = match request.pki_mount {
-                    Some(_) => Some(VaultClient::new().await?),
+                    Some(_) => Some(crate::vault::operator_client().await?),
                     None => None,
                 };
                 verify_certificate(client.as_ref(), request, output).await
@@ -308,7 +306,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             }
         }
         CertCommands::ListRoles { pki_mount } => {
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
 
             // List available roles in PKI mount - UNIX friendly output
             match client.list_roles(&pki_mount).await {
@@ -341,7 +339,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             use crate::cert::{create_certificate, CreateCertificateRequest};
 
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             let request = CreateCertificateRequest {
                 pki: pki_mount,
                 cn: cn.clone(),
@@ -375,7 +373,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             use crate::cert::{sign_certificate_from_csr, CsrSignRequest};
 
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             let request = CsrSignRequest {
                 pki: pki_mount,
                 cn,
@@ -405,7 +403,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             // clap requires -m/--pki-mount and --role together, so a client
             // is only ever needed when both are present.
             let client = if pki_mount.is_some() {
-                Some(VaultClient::new().await?)
+                Some(crate::vault::operator_client().await?)
             } else {
                 None
             };
@@ -431,7 +429,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             use crate::cert::{
                 export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
             };
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             match find_certificate_by_identifier(&client, &identifier, pki_mount.as_deref()).await {
                 Ok((pem, _serial, mount)) => {
                     let request = ExportCertificateRequest {
@@ -454,7 +452,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             identifier,
             pki_mount,
         } => {
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             show_certificate(&client, &identifier, pki_mount.as_deref(), output)
                 .await
                 .with_context(|| format!("showing '{identifier}'"))
@@ -470,7 +468,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
             use crate::cert::{
                 export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
             };
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             match find_certificate_by_identifier(&client, &serial, pki_mount.as_deref()).await {
                 Ok((pem, _found_serial, mount)) => {
                     let request = ExportCertificateRequest {
@@ -498,7 +496,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
         } => {
             use crate::cert::{revoke_certificate, RevokeRequest};
 
-            let client = VaultClient::new().await?;
+            let client = crate::vault::operator_client().await?;
             let request = RevokeRequest {
                 identifier: identifier.clone(),
                 pki_mount: pki_mount.clone(),
@@ -643,7 +641,7 @@ async fn handle_kv_command(command: KvCommands, output: &OutputFormat) -> Result
         return handle_vault_command("kv", args).await;
     }
 
-    let client = VaultClient::new().await?;
+    let client = crate::vault::operator_client().await?;
 
     match command {
         KvCommands::Get {
@@ -720,8 +718,8 @@ async fn handle_kv_command(command: KvCommands, output: &OutputFormat) -> Result
 }
 
 async fn handle_vault_command(subcommand: &str, args: &[String]) -> Result<()> {
-    let vault_addr = get_vault_addr().await?;
-    crate::vault::wrapper::exec_vault_command(vault_addr, subcommand, args)
+    let session = crate::vault::operator_session().await?;
+    crate::vault::wrapper::exec_vault_command(&session, subcommand, args)
         .await
         .with_context(|| format!("vault {subcommand}"))
 }

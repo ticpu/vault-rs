@@ -5,8 +5,8 @@
 //! Which prefix a verb needs is fixed; which layout the mount uses is not, and
 //! is asked of the mount rather than read off the path's shape.
 
-use crate::utils::errors::{Error, Result};
-use crate::vault::client::{MountVersion, VaultClient};
+use crate::client::{MountVersion, VaultClient};
+use crate::error::{Error, Result};
 #[cfg(test)]
 use serde_json::json;
 use serde_json::Value;

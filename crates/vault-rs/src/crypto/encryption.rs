@@ -119,7 +119,7 @@ impl EncryptionManager {
         fs::write(&file_path, encrypted_data)?;
 
         // Set restrictive permissions on encrypted file
-        crate::utils::set_secure_file_permissions(&file_path)?;
+        vault_session::paths::set_secure_file_permissions(&file_path)?;
 
         Ok(())
     }
@@ -195,7 +195,7 @@ impl EncryptionManager {
         fs::write(&file_path, encrypted_data)?;
 
         // Set restrictive permissions on encrypted file
-        crate::utils::set_secure_file_permissions(&file_path)?;
+        vault_session::paths::set_secure_file_permissions(&file_path)?;
 
         Ok(())
     }

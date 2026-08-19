@@ -5,7 +5,7 @@
 //! and ignored, since answering it is what keeps the connection from being the
 //! callback we are waiting for.
 
-use crate::utils::errors::{Error, Result};
+use crate::error::{Error, Result};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

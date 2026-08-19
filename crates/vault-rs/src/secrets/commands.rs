@@ -1,6 +1,5 @@
 use crate::utils::errors::Result;
 use crate::utils::output::OutputFormat;
-use crate::vault::client::VaultClient;
 use crate::vault::mounts::{MountInfo, MountsResponse};
 
 /// List the enabled secret engines.
@@ -9,7 +8,7 @@ use crate::vault::mounts::{MountInfo, MountsResponse};
 /// different answers: the checklist in `session status` reports the second
 /// and this reports the first.
 pub async fn list(output: &OutputFormat) -> Result<()> {
-    let client = VaultClient::new().await?;
+    let client = crate::vault::operator_client().await?;
 
     // Asserting a permission verdict for what may be a refused connection,
     // and exiting 1 where 1 means a match, not an error.

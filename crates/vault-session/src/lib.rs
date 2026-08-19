@@ -5,13 +5,20 @@ compile_error!(
      reach Vault over."
 );
 
-pub mod logical;
-pub mod utils;
-pub mod vault;
+pub mod client;
+pub mod discovery;
+pub mod error;
+pub mod kv;
+pub mod mounts;
+pub mod oidc;
+pub mod paths;
+pub mod session;
+mod transport;
 
-pub use utils::errors::Error;
-pub use utils::{errors, paths};
-pub use vault::client;
+pub use client::VaultClient;
+pub use discovery::Address;
+pub use error::{Error, Result};
+pub use session::{LogoutOutcome, OidcLogin, Session, SessionConfig, TokenState};
 
 /// Confine the unit tests to the build directory.
 ///

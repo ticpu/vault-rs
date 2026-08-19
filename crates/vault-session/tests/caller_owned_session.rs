@@ -6,7 +6,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use vault_session::vault::auth::{CallerSession, VaultAuth};
+use vault_session::{Address, Session, SessionConfig};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -18,6 +18,7 @@ const CALLER_ENV_TOKEN: &str = "s.caller-env-token";
 const FILE_TOKEN: &str = "s.caller-file-token";
 
 const LOOKUP: &str = "/v1/auth/token/lookup-self";
+const PROGRAM: &str = "read_secret";
 
 /// `set_var` races every other thread's `getenv`, and the harness gives each
 /// test its own thread. Before main is the only point where this binary has
@@ -29,6 +30,14 @@ fn set_up_the_environment_these_tests_read() {
 
     std::env::set_var("VAULT_TOKEN", OPERATOR_TOKEN);
     std::env::set_var(CALLER_ENV, CALLER_ENV_TOKEN);
+}
+
+/// A session against the mock, resolving no address and no variable it was not
+/// given.
+async fn open(server: &MockServer, config: SessionConfig) -> Session {
+    Session::open(config.address(Address::Explicit(server.uri())))
+        .await
+        .expect("session")
 }
 
 fn token_at(name: &str, token: &str) -> PathBuf {
@@ -72,10 +81,16 @@ async fn a_caller_owned_session_reads_its_file_and_not_the_environment() {
     accepts(&server, FILE_TOKEN).await;
     never_asked_about(&server, OPERATOR_TOKEN).await;
 
-    let auth = VaultAuth::with_token_file(server.uri(), token_at("file-only", FILE_TOKEN))
-        .expect("session");
+    let session = open(
+        &server,
+        SessionConfig::with_token_file(PROGRAM, token_at("file-only", FILE_TOKEN)),
+    )
+    .await;
 
-    assert_eq!(auth.get_token().await.expect("the file token"), FILE_TOKEN);
+    assert_eq!(
+        session.get_token().await.expect("the file token"),
+        FILE_TOKEN
+    );
 }
 
 /// A session may name its own variable; naming one is what it takes to read
@@ -86,29 +101,36 @@ async fn a_session_naming_a_variable_reads_that_one() {
     accepts(&server, CALLER_ENV_TOKEN).await;
     never_asked_about(&server, OPERATOR_TOKEN).await;
 
-    let session = CallerSession {
-        token_env: Some(CALLER_ENV.to_string()),
-        ..CallerSession::new(token_at("named-env", FILE_TOKEN))
-    };
-    let auth = VaultAuth::for_session(server.uri(), session).expect("session");
+    let session = open(
+        &server,
+        SessionConfig::with_token_file(PROGRAM, token_at("named-env", FILE_TOKEN))
+            .token_env(CALLER_ENV),
+    )
+    .await;
 
     assert_eq!(
-        auth.get_token().await.expect("the caller's variable"),
+        session.get_token().await.expect("the caller's variable"),
         CALLER_ENV_TOKEN
     );
 }
 
-/// The other direction: the tool's own session still answers to the operator's
-/// variable, so disabling that read for everyone is caught here.
+/// The other direction: a session that does name the operator's variable reads
+/// it, so disabling that read for everyone is caught here. Only the tool's own
+/// session names it.
 #[tokio::test]
-async fn the_tool_s_own_session_still_reads_the_operator_s_variable() {
+async fn a_session_naming_the_operator_s_variable_reads_it() {
     let server = MockServer::start().await;
     accepts(&server, OPERATOR_TOKEN).await;
 
-    let auth = VaultAuth::new(server.uri()).expect("session");
+    let session = open(
+        &server,
+        SessionConfig::with_token_file(PROGRAM, token_at("operator-env", FILE_TOKEN))
+            .token_env("VAULT_TOKEN"),
+    )
+    .await;
 
     assert_eq!(
-        auth.get_token().await.expect("the environment token"),
+        session.get_token().await.expect("the environment token"),
         OPERATOR_TOKEN
     );
 }

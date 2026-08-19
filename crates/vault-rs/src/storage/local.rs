@@ -6,7 +6,6 @@ use crate::storage::metadata::{
 use crate::utils::cli_paths::CliPaths;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::partial::{Incomplete, Partial};
-use crate::utils::paths::VaultCliPaths;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::fs;
@@ -37,7 +36,7 @@ pub struct LocalStorage {
 
 impl LocalStorage {
     pub async fn new() -> Result<Self> {
-        let client = crate::vault::client::VaultClient::new().await?;
+        let client = crate::vault::operator_client().await?;
         Self::with_client(client)
     }
 
@@ -93,7 +92,7 @@ impl LocalStorage {
     /// Store certificate data encrypted locally
     pub async fn store_certificate(&self, cert_data: CertificateData<'_>) -> Result<()> {
         let cert_dir = self.cert_dir(cert_data.pki_mount, cert_data.cn, cert_data.serial);
-        VaultCliPaths::ensure_dir_exists(&cert_dir)?;
+        vault_session::paths::ensure_owner_only_dir(&cert_dir)?;
 
         let context = Self::context(cert_data.pki_mount, cert_data.cn);
 
@@ -185,7 +184,7 @@ impl LocalStorage {
         };
         let path = cert_dir.join(SEALED_BY_FILE);
         fs::write(&path, serde_yaml_ng::to_string(&sealed_by)?)?;
-        crate::utils::set_secure_file_permissions(&path)?;
+        vault_session::paths::set_secure_file_permissions(&path)?;
         Ok(())
     }
 
@@ -613,8 +612,8 @@ impl LocalStorage {
             return Ok(None);
         }
 
-        let temp_dir = VaultCliPaths::runtime_dir()?;
-        VaultCliPaths::ensure_dir_exists(&temp_dir)?;
+        let temp_dir = vault_session::paths::runtime_dir(crate::utils::PROGRAM_NAME)?;
+        vault_session::paths::ensure_owner_only_dir(&temp_dir)?;
         let temp_p12 = temp_dir.join(format!("store_{}.p12", std::process::id()));
 
         crate::utils::create_p12_file(&temp_p12, key_pem, cert_pem, ca_pem, true)?;

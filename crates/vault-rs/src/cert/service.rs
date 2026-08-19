@@ -12,7 +12,7 @@ pub struct CertificateService {
 impl CertificateService {
     pub async fn new() -> Result<Self> {
         Ok(Self {
-            client: VaultClient::new().await?,
+            client: crate::vault::operator_client().await?,
             cache: CertificateCache::new()?,
         })
     }

@@ -8,7 +8,7 @@ use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
 use crate::vault::client::VaultClient;
 use serde_json::{json, Value};
-use vault_session::logical::kv::{read, Target};
+use vault_session::kv::{read, Target};
 
 pub async fn get(
     client: &VaultClient,

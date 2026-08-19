@@ -11,7 +11,7 @@
 //! level directly rather than through those helpers; `vaultrs::error::ClientError`
 //! is still what a failed client *construction* returns, and is mapped below.
 
-use crate::utils::errors::Error;
+use crate::error::Error;
 use rustify::client::Client as HttpClientTrait;
 use rustify::endpoint::{Endpoint, MiddleWare};
 use rustify::enums::{RequestMethod, RequestType, ResponseType};

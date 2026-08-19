@@ -24,9 +24,9 @@ pub fn create_p12_file(
 ) -> Result<()> {
     use std::fs;
     // Create temporary files for OpenSSL input in secure runtime directory
-    use crate::utils::paths::VaultCliPaths;
-    let temp_dir = VaultCliPaths::runtime_dir()?;
-    VaultCliPaths::ensure_dir_exists(&temp_dir)?;
+
+    let temp_dir = vault_session::paths::runtime_dir(crate::utils::PROGRAM_NAME)?;
+    vault_session::paths::ensure_owner_only_dir(&temp_dir)?;
 
     let key_file = temp_dir.join(format!("key_{}.pem", std::process::id()));
     let cert_file = temp_dir.join(format!("cert_{}.pem", std::process::id()));

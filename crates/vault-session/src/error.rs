@@ -90,7 +90,7 @@ pub enum Error {
          removed; log in again with `{program} session login`"
     )]
     Rejected {
-        program: &'static str,
+        program: String,
         #[source]
         source: Box<Error>,
     },
