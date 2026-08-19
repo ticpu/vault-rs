@@ -104,13 +104,16 @@ impl Target {
 /// The server's answer with the mount's layout unwrapped, leases and warnings
 /// still on it.
 pub async fn read(client: &VaultClient, target: &Target, version: Option<u64>) -> Result<Value> {
-    let mut path = target.data();
-    if let Some(version) = version {
-        target.require_versions("get -version")?;
-        path = format!("{path}?version={version}");
-    }
-
-    let secret = client.get_even_if_withdrawn(&path).await?;
+    let path = target.data();
+    let secret = match version {
+        Some(version) => {
+            target.require_versions("get -version")?;
+            client
+                .get_even_if_withdrawn_at_version(&path, version)
+                .await?
+        }
+        None => client.get_even_if_withdrawn(&path).await?,
+    };
     Ok(unwrap_data(&secret, target.versioned()))
 }
 

@@ -19,9 +19,13 @@ pub enum Error {
         errors: Vec<String>,
     },
 
-    /// The request never reached an answer.
+    /// The request never reached an answer, or the transport itself could not
+    /// be built (a CA/identity file it could not read, a proxy it could not
+    /// dial). vaultrs erases the underlying reqwest/rustify error behind
+    /// `anyhow` on most of these paths, so a boxed `dyn Error` is the most
+    /// specific source this can still carry.
     #[error("could not reach Vault")]
-    Transport(#[from] reqwest::Error),
+    Transport(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// An answer that did not have the shape its endpoint promises.
     #[error("could not read Vault's answer for '{path}'")]
@@ -67,6 +71,46 @@ pub enum Error {
 
     #[error("Vault answered with something that is not UTF-8")]
     Utf8(#[from] std::string::FromUtf8Error),
+
+    /// `rustls-ring` leaves the process to install its own `CryptoProvider`;
+    /// reqwest panics at client construction when none is installed, so this
+    /// is reported here instead of letting that panic reach the caller.
+    #[error(
+        "no rustls CryptoProvider is installed in this process; install one (for example \
+         `rustls::crypto::ring::default_provider().install_default()`) before building a \
+         client under the `rustls-ring` feature"
+    )]
+    NoTlsProvider,
+
+    /// A stored token was rejected, and the renewal attempted to recover it
+    /// also failed. The source names why the renewal itself did not work,
+    /// distinct from why the original token was rejected.
+    #[error(
+        "the stored token was rejected by Vault, and renewing it did not help; it has been \
+         removed; log in again with `{program} session login`"
+    )]
+    Rejected {
+        program: &'static str,
+        #[source]
+        source: Box<Error>,
+    },
+
+    /// The randomness source used to bind an OIDC callback to its login.
+    #[error("could not generate an OIDC client nonce")]
+    Random(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
+
+/// Every layer of the cause chain, since `tracing::warn!("{e}")` and a
+/// `Display` impl print only the top: a wrapped failure names the step it was
+/// doing but not why the layer underneath it failed.
+pub(crate) fn render_chain(mut source: &dyn std::error::Error) -> String {
+    let mut out = source.to_string();
+    while let Some(next) = source.source() {
+        out.push_str(": ");
+        out.push_str(&next.to_string());
+        source = next;
+    }
+    out
 }
 
 /// What the server said, appended only when it said anything.

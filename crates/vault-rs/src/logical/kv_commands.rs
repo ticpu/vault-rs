@@ -144,7 +144,7 @@ pub async fn rollback(client: &VaultClient, target: &Target, version: u64) -> Re
         })?;
 
     let wanted = client
-        .get_even_if_withdrawn(&format!("{path}?version={version}"))
+        .get_even_if_withdrawn_at_version(&path, version)
         .await?;
     let metadata = &wanted["data"]["metadata"];
 

@@ -2,17 +2,10 @@ use crate::utils::errors::{Error, Result};
 use crate::utils::get_vault_addr;
 use crate::vault::mounts::MountsResponse;
 use crate::vault::pki::RoleConfig;
-use reqwest::{Client, Response};
+use crate::vault::transport::{Transport, TransportSettings};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
-/// Vault's non-standard `LIST` verb, shared by every LIST-style request
-/// rather than unwrapped inline at each call site.
-fn list_method() -> Result<reqwest::Method> {
-    reqwest::Method::from_bytes(b"LIST")
-        .map_err(|e| Error::InvalidInput(format!("invalid HTTP method: {e}")))
-}
 
 pub struct SignCertificateRequest<'a> {
     pub pki_mount: &'a str,
@@ -44,10 +37,7 @@ pub struct MountVersion {
 
 #[derive(Clone)]
 pub struct VaultClient {
-    client: Client,
-    vault_addr: String,
-    token: String,
-    namespace: Option<String>,
+    transport: Transport,
     /// Answers already had from the version probe. Guards a lookup table and
     /// nothing else: the lock is never held across a request.
     mount_versions: Arc<Mutex<HashMap<String, MountVersion>>>,
@@ -55,7 +45,10 @@ pub struct VaultClient {
 
 impl VaultClient {
     pub async fn new() -> Result<Self> {
-        Self::for_auth(&crate::vault::auth::VaultAuth::new(get_vault_addr().await?)).await
+        Self::for_auth(&crate::vault::auth::VaultAuth::new(
+            get_vault_addr().await?,
+        )?)
+        .await
     }
 
     /// A client resolving through the session it is given, rather than through
@@ -72,12 +65,7 @@ impl VaultClient {
         let prefix: String = token.chars().take(8).collect();
         tracing::debug!("Using {} with token: {prefix}***", auth.vault_addr());
 
-        Ok(Self::build(
-            auth.http_client().clone(),
-            auth.vault_addr().to_string(),
-            token,
-            auth.namespace().map(str::to_string),
-        ))
+        Ok(Self::build(auth.transport().with_token(&token)))
     }
 
     /// A client that resolves no token.
@@ -86,23 +74,17 @@ impl VaultClient {
     /// case that needs it: a sealed Vault cannot mint or validate a token, so
     /// requiring one would fail exactly where the report is wanted.
     pub async fn unauthenticated() -> Result<Self> {
-        Ok(Self::build(
-            super::create_http_client()?,
-            get_vault_addr().await?,
-            String::new(),
-            // discard-ok: an unset namespace is the ordinary single-tenant case
-            std::env::var("VAULT_NAMESPACE")
-                .ok()
-                .filter(|n| !n.is_empty()),
-        ))
+        let mut settings = TransportSettings::new(get_vault_addr().await?, String::new());
+        // discard-ok: an unset namespace is the ordinary single-tenant case
+        settings.namespace = std::env::var("VAULT_NAMESPACE")
+            .ok()
+            .filter(|n| !n.is_empty());
+        Ok(Self::build(Transport::build(settings)?))
     }
 
-    fn build(client: Client, vault_addr: String, token: String, namespace: Option<String>) -> Self {
+    fn build(transport: Transport) -> Self {
         Self {
-            client,
-            vault_addr,
-            token,
-            namespace,
+            transport,
             mount_versions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -110,34 +92,14 @@ impl VaultClient {
     /// A client against an address and token given directly: it consults
     /// neither the environment nor discovery.
     pub fn with_token(vault_addr: String, token: String) -> Result<Self> {
-        Ok(Self {
-            client: super::create_http_client()?,
-            vault_addr,
-            token,
-            namespace: None,
-            mount_versions: Arc::new(Mutex::new(HashMap::new())),
-        })
-    }
-
-    /// Every request carries the token and, where the session names one, the
-    /// namespace. Building requests anywhere else drops both.
-    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
-        let mut builder = self
-            .client
-            .request(method, format!("{}/v1/{}", self.vault_addr, path))
-            .header("X-Vault-Token", &self.token);
-
-        if let Some(namespace) = &self.namespace {
-            builder = builder.header("X-Vault-Namespace", namespace);
-        }
-
-        builder
+        let transport = Transport::build(TransportSettings::new(vault_addr, token))?;
+        Ok(Self::build(transport))
     }
 
     /// Where this client is pointed, for recording which Vault sealed an
     /// artifact and for telling an operator where to point back.
     pub fn vault_addr(&self) -> &str {
-        &self.vault_addr
+        self.transport.vault_addr()
     }
 
     /// Health check
@@ -162,21 +124,12 @@ impl VaultClient {
 
     /// Generic GET request to Vault API
     pub async fn get(&self, path: &str) -> Result<Value> {
-        let response = self.request(reqwest::Method::GET, path).send().await?;
-
-        self.handle_response(path, response).await
+        self.transport.get(path).await
     }
 
     /// Generic POST request to Vault API
     pub async fn post(&self, path: &str, data: Value) -> Result<Value> {
-        let response = self
-            .request(reqwest::Method::POST, path)
-            .header("Content-Type", "application/json")
-            .json(&data)
-            .send()
-            .await?;
-
-        self.handle_response(path, response).await
+        self.transport.post(path, data).await
     }
 
     /// A read where a refusal may still be carrying the record.
@@ -187,46 +140,30 @@ impl VaultClient {
     /// the status alone decide. A refusal with nothing in it is still a
     /// refusal.
     pub async fn get_even_if_withdrawn(&self, path: &str) -> Result<Value> {
-        let response = self.request(reqwest::Method::GET, path).send().await?;
-        let status = response.status();
-        if status.is_success() {
-            return self.handle_response(path, response).await;
-        }
+        self.transport.get_even_if_withdrawn(path).await
+    }
 
-        let body = response
-            .text()
+    /// As `get_even_if_withdrawn`, at a specific version. `version` travels
+    /// as a real query parameter rather than appended to `path`, so a key
+    /// containing `?` cannot collide with it.
+    pub async fn get_even_if_withdrawn_at_version(
+        &self,
+        path: &str,
+        version: u64,
+    ) -> Result<Value> {
+        self.transport
+            .get_even_if_withdrawn_with_query(path, Some(format!("version={version}")))
             .await
-            // discard-ok: building a message from an already-failed response;
-            // the status is the signal, the body is a courtesy
-            .unwrap_or_default();
-
-        if status.as_u16() == 404 {
-            // discard-ok: a body that is not JSON carries no record, which is
-            // the refusal reported below
-            if let Ok(record) = serde_json::from_str::<Value>(&body) {
-                let carries_something = record.get("data").is_some_and(|d| !d.is_null())
-                    || record.get("warnings").is_some_and(|w| !w.is_null());
-                if carries_something {
-                    return Ok(record);
-                }
-            }
-        }
-
-        Err(Error::refusal(path, status.as_u16(), body))
     }
 
     /// Generic DELETE request to Vault API
     pub async fn delete(&self, path: &str) -> Result<Value> {
-        let response = self.request(reqwest::Method::DELETE, path).send().await?;
-
-        self.handle_response(path, response).await
+        self.transport.delete(path).await
     }
 
     /// Generic LIST request to Vault API
     pub async fn list(&self, path: &str) -> Result<Value> {
-        let response = self.request(list_method()?, path).send().await?;
-
-        self.handle_response(path, response).await
+        self.transport.list(path).await
     }
 
     /// List all secret engines (mounts)
@@ -269,20 +206,9 @@ impl VaultClient {
 
     /// Get CA chain for a PKI mount (returns raw PEM data)
     pub async fn get_ca_chain(&self, pki_mount: &str) -> Result<String> {
-        self.get_pem(&format!("{pki_mount}/ca_chain")).await
-    }
-
-    /// A response whose body is a certificate rather than a JSON envelope.
-    /// Refusals still carry their status, so a denied read is not reported as
-    /// an empty chain.
-    async fn get_pem(&self, path: &str) -> Result<String> {
-        let response = self.request(reqwest::Method::GET, path).send().await?;
-
-        let status = response.status();
-        match status.is_success() {
-            true => Ok(response.text().await?),
-            false => Err(Self::refusal(path, status.as_u16(), response).await),
-        }
+        self.transport
+            .get_text(&format!("{pki_mount}/ca_chain"))
+            .await
     }
 
     /// Get the (single) CA certificate for a PKI mount (returns raw PEM data).
@@ -290,7 +216,9 @@ impl VaultClient {
     /// `/ca/pem`, not `/cert/ca`: the latter wraps the certificate in a JSON
     /// envelope, so reading it as text yields a body no PEM parser accepts.
     pub async fn get_ca_certificate(&self, pki_mount: &str) -> Result<String> {
-        self.get_pem(&format!("{pki_mount}/ca/pem")).await
+        self.transport
+            .get_text(&format!("{pki_mount}/ca/pem"))
+            .await
     }
 
     /// List roles for a PKI mount
@@ -336,40 +264,6 @@ impl VaultClient {
 
         let path = format!("{}/sign/{}", request.pki_mount, request.role);
         self.post(&path, payload).await
-    }
-
-    /// Handle HTTP response from Vault
-    async fn handle_response(&self, path: &str, response: Response) -> Result<Value> {
-        let status = response.status();
-
-        if !status.is_success() {
-            return Err(Self::refusal(path, status.as_u16(), response).await);
-        }
-
-        // A write that stores nothing back answers with no content at all, and
-        // decoding that as JSON fails after the write already happened.
-        let body = response.text().await?;
-        match body.trim().is_empty() {
-            true => Ok(Value::Null),
-            false => serde_json::from_str(&body).map_err(|e| Error::Decode {
-                path: path.to_string(),
-                source: e,
-            }),
-        }
-    }
-
-    /// A refusal, with whatever the server said about it. Vault reports these
-    /// in an envelope; a body in any other shape is kept whole rather than
-    /// discarded for not matching.
-    async fn refusal(path: &str, status: u16, response: Response) -> Error {
-        let body = response
-            .text()
-            .await
-            // discard-ok: building a message from an already-failed response;
-            // the status is the signal, the body is a courtesy
-            .unwrap_or_default();
-
-        Error::refusal(path, status, body)
     }
 
     /// Which storage layout the mount answering for `path` uses.

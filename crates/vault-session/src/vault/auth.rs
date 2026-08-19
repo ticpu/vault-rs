@@ -2,7 +2,8 @@ use crate::utils::errors::{Error, Result};
 use crate::utils::paths::VaultCliPaths;
 use crate::utils::PROGRAM_NAME;
 use crate::vault::oidc::CallbackListener;
-use reqwest::Client;
+use crate::vault::transport::{Transport, TransportSettings};
+use rustify::enums::RequestMethod;
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
@@ -78,7 +79,7 @@ impl CallerSession {
 }
 
 pub struct VaultAuth {
-    client: Client,
+    transport: Transport,
     vault_addr: String,
     /// Where the token lives, when it is not the resolved default. The tool's
     /// own session resolves the path per call, so one with no runtime directory
@@ -90,34 +91,47 @@ pub struct VaultAuth {
 }
 
 impl VaultAuth {
-    pub fn new(vault_addr: String) -> Self {
-        let client = super::create_http_client().expect("Failed to create HTTP client");
+    pub fn new(vault_addr: String) -> Result<Self> {
+        // discard-ok: an unset namespace is the ordinary single-tenant case
+        let namespace = env::var("VAULT_NAMESPACE").ok().filter(|n| !n.is_empty());
+        let transport = Self::build_transport(&vault_addr, namespace.clone())?;
 
-        Self {
-            client,
+        Ok(Self {
+            transport,
             vault_addr,
             token_file: None,
             token_env: Some(DEFAULT_TOKEN_ENV.to_string()),
-            // discard-ok: an unset namespace is the ordinary single-tenant case
-            namespace: env::var("VAULT_NAMESPACE").ok().filter(|n| !n.is_empty()),
-        }
+            namespace,
+        })
     }
 
     /// A session reading the named file and no environment variable.
-    pub fn with_token_file(vault_addr: String, token_file: PathBuf) -> Self {
+    pub fn with_token_file(vault_addr: String, token_file: PathBuf) -> Result<Self> {
         Self::for_session(vault_addr, CallerSession::new(token_file))
     }
 
     /// As `with_token_file`, where the caller also names the variable its token
     /// may arrive in and the namespace it works under.
-    pub fn for_session(vault_addr: String, session: CallerSession) -> Self {
-        Self {
-            client: super::create_http_client().expect("Failed to create HTTP client"),
+    pub fn for_session(vault_addr: String, session: CallerSession) -> Result<Self> {
+        let transport = Self::build_transport(&vault_addr, session.namespace.clone())?;
+
+        Ok(Self {
+            transport,
             vault_addr,
             token_file: Some(session.token_file),
             token_env: session.token_env,
             namespace: session.namespace,
-        }
+        })
+    }
+
+    /// This session's own transport is built without a token: every method
+    /// below either does not need one (`login_*`) or names the one it needs
+    /// (`renew_token`, `validate_token`, `get_token_info`, `revoke_self`)
+    /// through `Transport::with_token`, rather than one stored on `self`.
+    fn build_transport(vault_addr: &str, namespace: Option<String>) -> Result<Transport> {
+        let mut settings = TransportSettings::new(vault_addr.to_string(), String::new());
+        settings.namespace = namespace;
+        Transport::build(settings)
     }
 
     pub fn vault_addr(&self) -> &str {
@@ -130,8 +144,8 @@ impl VaultAuth {
 
     /// Shared rather than rebuilt, so a client resolving through this session
     /// does not open a second connection pool and repeat the TLS setup.
-    pub(crate) fn http_client(&self) -> &Client {
-        &self.client
+    pub(crate) fn transport(&self) -> &Transport {
+        &self.transport
     }
 
     fn token_file(&self) -> Result<PathBuf> {
@@ -194,66 +208,29 @@ impl VaultAuth {
         self.read_stored_token().await
     }
 
-    /// Every request this session makes, carrying the namespace it works under.
-    /// Building one anywhere else asks a different namespace than the one the
-    /// token was minted in.
-    fn request(&self, method: reqwest::Method, url: String) -> reqwest::RequestBuilder {
-        let builder = self.client.request(method, url);
-
-        match &self.namespace {
-            Some(namespace) => builder.header("X-Vault-Namespace", namespace),
-            None => builder,
-        }
-    }
-
     /// Authenticate with LDAP and store token
     pub async fn login_ldap(&self, username: &str, password: &str) -> Result<String> {
         let path = format!("auth/ldap/login/{username}");
-        let url = format!("{}/v1/{path}", self.vault_addr);
         let response = self
-            .request(reqwest::Method::POST, url)
-            .header("Content-Type", "application/json")
-            .json(&json!({ "password": password }))
-            .send()
+            .transport
+            .post(&path, json!({ "password": password }))
             .await?;
-
-        self.accept_login("LDAP", &path, response).await
+        self.accept_login("LDAP", &response).await
     }
 
     /// Authenticate with username/password auth method
     pub async fn login_userpass(&self, username: &str, password: &str) -> Result<String> {
         let path = format!("auth/userpass/login/{username}");
-        let url = format!("{}/v1/{path}", self.vault_addr);
         let response = self
-            .request(reqwest::Method::POST, url)
-            .header("Content-Type", "application/json")
-            .json(&json!({ "password": password }))
-            .send()
+            .transport
+            .post(&path, json!({ "password": password }))
             .await?;
-
-        self.accept_login("Userpass", &path, response).await
+        self.accept_login("Userpass", &response).await
     }
 
     /// Take the minted token out of a login answer and store it. Every method
     /// ends here, so a credential never lands in a second place.
-    async fn accept_login(
-        &self,
-        method: &str,
-        path: &str,
-        response: reqwest::Response,
-    ) -> Result<String> {
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                // discard-ok: building a message from an already-failed response;
-                // the status is the signal, the body is a courtesy
-                .unwrap_or_default();
-            return Err(Error::refusal(path, status.as_u16(), body));
-        }
-
-        let auth_response: Value = response.json().await?;
+    async fn accept_login(&self, method: &str, auth_response: &Value) -> Result<String> {
         let token = auth_response["auth"]["client_token"]
             .as_str()
             .ok_or_else(|| {
@@ -313,9 +290,8 @@ impl VaultAuth {
         };
 
         let path = format!("auth/{}/oidc/callback", login.mount);
-        let url = format!("{}/v1/{path}?{query}", self.vault_addr);
-        let response = self.request(reqwest::Method::GET, url).send().await?;
-        self.accept_login("OIDC", &path, response).await
+        let response = self.transport.get_with_query(&path, query).await?;
+        self.accept_login("OIDC", &response).await
     }
 
     /// The provider's authorization URL, as the mount builds it for this role
@@ -327,33 +303,15 @@ impl VaultAuth {
         nonce: &str,
     ) -> Result<String> {
         let path = format!("auth/{}/oidc/auth_url", login.mount);
-        let url = format!("{}/v1/{path}", self.vault_addr);
         let mut payload = json!({ "redirect_uri": redirect_uri, "client_nonce": nonce });
         if let Some(role) = login.role {
             payload["role"] = json!(role);
         }
 
-        let response = self
-            .request(reqwest::Method::POST, url)
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                // discard-ok: building a message from an already-failed response;
-                // the status is the signal, the body is a courtesy
-                .unwrap_or_default();
-            return Err(Error::refusal(&path, status.as_u16(), body));
-        }
+        let answer = self.transport.post(&path, payload).await?;
 
         // A role that does not allow this redirect is answered with an empty
         // URL and no error, which opens a browser at nothing.
-        let answer: Value = response.json().await?;
         match answer["data"]["auth_url"].as_str().unwrap_or_default() {
             "" => Err(Error::Auth(format!(
                 "The '{}' mount returned no authorization URL for {redirect_uri}. The role's \
@@ -366,28 +324,11 @@ impl VaultAuth {
 
     /// Renew the current token
     pub async fn renew_token(&self, token: &str) -> Result<String> {
-        let path = "auth/token/renew-self";
-        let url = format!("{}/v1/{path}", self.vault_addr);
-
-        let response = self
-            .request(reqwest::Method::POST, url)
-            .header("X-Vault-Token", token)
-            .header("Content-Type", "application/json")
-            .send()
+        let renew_response = self
+            .transport
+            .with_token(token)
+            .post_empty("auth/token/renew-self")
             .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                // discard-ok: building a message from an already-failed response;
-                // the status is the signal, the body is a courtesy
-                .unwrap_or_default();
-            return Err(Error::refusal(path, status.as_u16(), body));
-        }
-
-        let renew_response: Value = response.json().await?;
 
         if let Some(auth) = renew_response.get("auth") {
             if let Some(client_token) = auth.get("client_token") {
@@ -406,40 +347,18 @@ impl VaultAuth {
 
     /// Check if token is valid
     pub async fn validate_token(&self, token: &str) -> Result<bool> {
-        let url = format!("{}/v1/auth/token/lookup-self", self.vault_addr);
-
-        let response = self
-            .request(reqwest::Method::GET, url)
-            .header("X-Vault-Token", token)
-            .send()
-            .await?;
-
-        Ok(response.status().is_success())
+        self.transport
+            .with_token(token)
+            .succeeds(RequestMethod::GET, "auth/token/lookup-self")
+            .await
     }
 
     /// Get token info
     pub async fn get_token_info(&self, token: &str) -> Result<Value> {
-        let path = "auth/token/lookup-self";
-        let url = format!("{}/v1/{path}", self.vault_addr);
-
-        let response = self
-            .request(reqwest::Method::GET, url)
-            .header("X-Vault-Token", token)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                // discard-ok: building a message from an already-failed response;
-                // the status is the signal, the body is a courtesy
-                .unwrap_or_default();
-            return Err(Error::refusal(path, status.as_u16(), body));
-        }
-
-        Ok(response.json().await?)
+        self.transport
+            .with_token(token)
+            .get("auth/token/lookup-self")
+            .await
     }
 
     /// Store the token at this session's path, owner-only.
@@ -518,11 +437,10 @@ impl VaultAuth {
             // the token was already rejected before renewal was attempted, and
             // naming only the renewal sends the operator to look at a lease
             // when what they need is to log in again.
-            return Err(Error::Auth(format!(
-                "The stored token was rejected by Vault, and renewing it did not help \
-                 ({renewal_error}). It has been removed; log in again with \
-                 `{PROGRAM_NAME} session login`."
-            )));
+            return Err(Error::Rejected {
+                program: PROGRAM_NAME,
+                source: Box::new(renewal_error),
+            });
         }
 
         Ok(token)
@@ -533,29 +451,10 @@ impl VaultAuth {
     /// Separate from `logout` so the caller decides what a failure means; a
     /// token already past its expiry and an unreachable server both land here.
     pub async fn revoke_self(&self, token: &str) -> Result<()> {
-        let url = format!("{}/v1/auth/token/revoke-self", self.vault_addr);
-
-        let response = self
-            .request(reqwest::Method::POST, url)
-            .header("X-Vault-Token", token)
-            .send()
+        self.transport
+            .with_token(token)
+            .post_empty("auth/token/revoke-self")
             .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                // discard-ok: building a message from an already-failed response;
-                // the status above is the signal, the body is a courtesy
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(Error::refusal(
-                "auth/token/revoke-self",
-                status.as_u16(),
-                error_text,
-            ));
-        }
-
         Ok(())
     }
 
@@ -600,7 +499,7 @@ impl VaultAuth {
 /// refused by Vault rather than exchanged here.
 fn client_nonce() -> Result<String> {
     let mut bytes = [0u8; 20];
-    getrandom::fill(&mut bytes).map_err(std::io::Error::from)?;
+    getrandom::fill(&mut bytes).map_err(|e| Error::Random(Box::new(std::io::Error::from(e))))?;
 
     Ok(bytes.iter().fold(String::new(), |mut nonce, byte| {
         use std::fmt::Write;
@@ -686,7 +585,7 @@ mod tests {
 
         let token_file = token_at("revokes");
         fs::write(&token_file, "s.stored-token").expect("token");
-        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone());
+        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone()).expect("session");
 
         assert!(matches!(
             auth.logout().await.expect("logout"),
@@ -705,7 +604,7 @@ mod tests {
 
         let token_file = token_at("refused");
         fs::write(&token_file, "s.expired-token").expect("token");
-        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone());
+        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone()).expect("session");
 
         let err = auth
             .logout()
@@ -724,7 +623,8 @@ mod tests {
         let token_file = token_at("unreachable");
         fs::write(&token_file, "s.stored-token").expect("token");
         // A port nothing is listening on; the request fails to connect.
-        let auth = VaultAuth::with_token_file("http://127.0.0.1:1".to_string(), token_file.clone());
+        let auth = VaultAuth::with_token_file("http://127.0.0.1:1".to_string(), token_file.clone())
+            .expect("session");
 
         auth.logout()
             .await
@@ -757,7 +657,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let auth = VaultAuth::with_token_file(server.uri(), token_at("oidc-refused"));
+        let auth =
+            VaultAuth::with_token_file(server.uri(), token_at("oidc-refused")).expect("session");
         let err = auth
             .login_oidc_with(oidc_at(18251))
             .await
@@ -795,7 +696,7 @@ mod tests {
             .parent()
             .expect("scratch")
             .join("session/token");
-        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone());
+        let auth = VaultAuth::with_token_file(server.uri(), token_file.clone()).expect("session");
         let login = tokio::spawn(async move { auth.login_oidc_with(oidc_at(port)).await });
 
         redirect_to(port, "/oidc/callback?state=st&code=xyz").await;
@@ -849,7 +750,7 @@ mod tests {
         expect_no_renewal(&server).await;
 
         let token_file = token_at("absent");
-        let auth = VaultAuth::with_token_file(server.uri(), token_file);
+        let auth = VaultAuth::with_token_file(server.uri(), token_file).expect("session");
 
         assert!(matches!(
             auth.logout().await.expect("logout"),

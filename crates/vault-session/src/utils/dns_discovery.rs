@@ -97,7 +97,10 @@ pub async fn discover_vault_addr() -> Result<String> {
 
                     // Cache the discovered address with its TTL
                     if let Err(e) = cache_vault_addr(&vault_addr, ttl) {
-                        tracing::warn!("Failed to cache Vault address: {e}");
+                        tracing::warn!(
+                            "Failed to cache Vault address: {}",
+                            crate::utils::errors::render_chain(&e)
+                        );
                     }
 
                     return Ok(vault_addr);

@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("usage: read_secret <mount> <path>");
     };
 
-    let auth = VaultAuth::with_token_file(get_vault_addr().await?, token_file()?);
+    let auth = VaultAuth::with_token_file(get_vault_addr().await?, token_file()?)?;
     if !matches!(auth.token_state().await?, TokenState::Valid(_)) {
         auth.login_oidc("oidc", None).await?;
     }

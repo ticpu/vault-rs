@@ -10,7 +10,7 @@ pub async fn exec_vault_command(
     args: &[String],
 ) -> Result<()> {
     // Get the token from VaultAuth
-    let auth = VaultAuth::new(vault_addr.clone());
+    let auth = VaultAuth::new(vault_addr.clone())?;
     let token = auth.get_token().await?;
 
     // Find the vault executable

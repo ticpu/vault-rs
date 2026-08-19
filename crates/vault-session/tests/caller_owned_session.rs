@@ -72,7 +72,8 @@ async fn a_caller_owned_session_reads_its_file_and_not_the_environment() {
     accepts(&server, FILE_TOKEN).await;
     never_asked_about(&server, OPERATOR_TOKEN).await;
 
-    let auth = VaultAuth::with_token_file(server.uri(), token_at("file-only", FILE_TOKEN));
+    let auth = VaultAuth::with_token_file(server.uri(), token_at("file-only", FILE_TOKEN))
+        .expect("session");
 
     assert_eq!(auth.get_token().await.expect("the file token"), FILE_TOKEN);
 }
@@ -89,7 +90,7 @@ async fn a_session_naming_a_variable_reads_that_one() {
         token_env: Some(CALLER_ENV.to_string()),
         ..CallerSession::new(token_at("named-env", FILE_TOKEN))
     };
-    let auth = VaultAuth::for_session(server.uri(), session);
+    let auth = VaultAuth::for_session(server.uri(), session).expect("session");
 
     assert_eq!(
         auth.get_token().await.expect("the caller's variable"),
@@ -104,7 +105,7 @@ async fn the_tool_s_own_session_still_reads_the_operator_s_variable() {
     let server = MockServer::start().await;
     accepts(&server, OPERATOR_TOKEN).await;
 
-    let auth = VaultAuth::new(server.uri());
+    let auth = VaultAuth::new(server.uri()).expect("session");
 
     assert_eq!(
         auth.get_token().await.expect("the environment token"),

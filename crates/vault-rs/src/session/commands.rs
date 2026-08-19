@@ -82,7 +82,7 @@ impl LoginRequest {
 
 async fn login_command(request: LoginRequest) -> Result<()> {
     let vault_addr = get_vault_addr().await?;
-    let auth = VaultAuth::new(vault_addr);
+    let auth = VaultAuth::new(vault_addr)?;
 
     request.refuse_inert_arguments()?;
 
@@ -123,7 +123,7 @@ async fn login_with_credentials(auth: &VaultAuth, method: &str, username: &str) 
 
 async fn logout_command() -> Result<()> {
     let vault_addr = get_vault_addr().await?;
-    let auth = VaultAuth::new(vault_addr);
+    let auth = VaultAuth::new(vault_addr)?;
 
     match auth.logout().await {
         Ok(LogoutOutcome::Revoked) => eprintln!("Logged out: token revoked and removed"),
@@ -144,7 +144,7 @@ async fn logout_command() -> Result<()> {
 /// a person and stays on stderr.
 async fn status_command(output: &OutputFormat) -> Result<()> {
     let vault_addr = get_vault_addr().await?;
-    let auth = VaultAuth::new(vault_addr);
+    let auth = VaultAuth::new(vault_addr)?;
 
     let token = match auth.token_state().await? {
         TokenState::Absent => return report_token(output, "absent", &serde_json::Value::Null),
