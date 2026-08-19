@@ -130,6 +130,9 @@ Every check it offers is a read a narrow token can already make. Nothing in it e
 writes a role or a policy: that is the root token holder's work, and a program checking its own
 setup needs no authority over the store.
 
+A requirement a consumer's operator has to satisfy is offered as a check rather than written down
+for them to follow, wherever the token that will use the setup can ask about it.
+
 ## Our own OIDC flow rather than the client library's
 
 The transport is a dependency and its companion login crate is not: that one opens a browser itself,
