@@ -5,7 +5,7 @@
 //! and ignored, since answering it is what keeps the connection from being the
 //! callback we are waiting for.
 
-use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::errors::{Error, Result};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -63,7 +63,7 @@ impl CallbackListener {
     /// Binding one of the two is enough to serve; failing both is not.
     pub async fn bind(port: u16) -> Result<Self> {
         if port == 0 {
-            return Err(VaultCliError::InvalidInput(
+            return Err(Error::InvalidInput(
                 "The OIDC redirect port has to be one the role's allowed redirect URIs name, so \
                  it cannot be left to the kernel to pick."
                     .to_string(),
@@ -93,7 +93,7 @@ impl CallbackListener {
         }
 
         if sockets.is_empty() {
-            return Err(VaultCliError::Auth(format!(
+            return Err(Error::Auth(format!(
                 "No loopback address accepted the OIDC redirect listener ({}). Pass --port to \
                  use one the role also allows.",
                 refusals.join("; ")
@@ -127,13 +127,13 @@ impl CallbackListener {
             Ok(Some(outcome)) => outcome,
             // Every server ended without a callback, which only happens when
             // each of them stopped being able to accept.
-            Ok(None) => Err(VaultCliError::Auth(
+            Ok(None) => Err(Error::Auth(
                 "The OIDC redirect listener stopped before the provider redirected back."
                     .to_string(),
             )),
             // discard-ok: the elapsed error carries only that it elapsed, which
             // is what the message below says
-            Err(_) => Err(VaultCliError::Auth(format!(
+            Err(_) => Err(Error::Auth(format!(
                 "No OIDC redirect arrived within {} seconds. The browser may not have reached \
                  {CALLBACK_PATH} on this machine; over SSH, forward the port with \
                  `ssh -L {port}:localhost:{port}`.",
@@ -201,9 +201,7 @@ async fn handle(mut stream: TcpStream) -> Result<Served> {
     let line = read_request_line(&mut stream).await?;
     let mut words = line.split(' ');
     let (Some(verb), Some(target)) = (words.next(), words.next()) else {
-        return Err(VaultCliError::Auth(format!(
-            "Unparseable request line: {line}"
-        )));
+        return Err(Error::Auth(format!("Unparseable request line: {line}")));
     };
 
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
@@ -212,7 +210,7 @@ async fn handle(mut stream: TcpStream) -> Result<Served> {
         // The body is never read, so a mount configured to post its response
         // would otherwise leave the login waiting out its whole timeout on a
         // redirect that did arrive.
-        (true, "POST") => Served::Redirect(Err(VaultCliError::Auth(
+        (true, "POST") => Served::Redirect(Err(Error::Auth(
             "The identity provider posted its response instead of redirecting to it. Configure \
              the role for a query redirect; this listener reads no request body."
                 .to_string(),
@@ -264,7 +262,7 @@ async fn read_request_line(stream: &mut TcpStream) -> Result<String> {
             break;
         }
         if line.len() >= MAX_REQUEST_LINE {
-            return Err(VaultCliError::Auth(format!(
+            return Err(Error::Auth(format!(
                 "A request to the OIDC listener exceeded {MAX_REQUEST_LINE} bytes before its \
                  first line ended"
             )));
@@ -297,7 +295,7 @@ fn parse_callback(query: &str) -> Option<Result<Callback>> {
 
     let state = state?;
     if let Some(error) = error {
-        return Some(Err(VaultCliError::Auth(match description {
+        return Some(Err(Error::Auth(match description {
             Some(description) => format!("The identity provider refused: {error} ({description})"),
             None => format!("The identity provider refused: {error}"),
         })));
@@ -306,7 +304,7 @@ fn parse_callback(query: &str) -> Option<Result<Callback>> {
     // Exchanging an empty grant reports the provider's refusal as a malformed
     // request to Vault, naming neither.
     if code.is_none() && id_token.is_none() {
-        return Some(Err(VaultCliError::Auth(
+        return Some(Err(Error::Auth(
             "The identity provider redirected back with neither a code nor an identity token, \
              and said nothing about why."
                 .to_string(),

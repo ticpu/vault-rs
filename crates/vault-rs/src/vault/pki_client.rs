@@ -89,7 +89,7 @@ impl PkiClient for VaultClient {
 
     async fn get_certificate_info(&self, pki_mount: &str, serial: &str) -> Result<Value> {
         let path = format!("{pki_mount}/cert/{serial}");
-        self.get(&path).await
+        Ok(self.get(&path).await?)
     }
 
     async fn get_certificate_pem(
@@ -119,7 +119,7 @@ impl PkiClient for VaultClient {
         });
 
         let path = format!("{pki_mount}/revoke");
-        self.post(&path, payload).await
+        Ok(self.post(&path, payload).await?)
     }
 }
 

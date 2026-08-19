@@ -1,4 +1,4 @@
-use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::errors::{Error, Result};
 use crate::utils::paths::VaultCliPaths;
 use crate::utils::PROGRAM_NAME;
 use crate::vault::oidc::CallbackListener;
@@ -208,7 +208,8 @@ impl VaultAuth {
 
     /// Authenticate with LDAP and store token
     pub async fn login_ldap(&self, username: &str, password: &str) -> Result<String> {
-        let url = format!("{}/v1/auth/ldap/login/{}", self.vault_addr, username);
+        let path = format!("auth/ldap/login/{username}");
+        let url = format!("{}/v1/{path}", self.vault_addr);
         let response = self
             .request(reqwest::Method::POST, url)
             .header("Content-Type", "application/json")
@@ -216,12 +217,13 @@ impl VaultAuth {
             .send()
             .await?;
 
-        self.accept_login("LDAP", response).await
+        self.accept_login("LDAP", &path, response).await
     }
 
     /// Authenticate with username/password auth method
     pub async fn login_userpass(&self, username: &str, password: &str) -> Result<String> {
-        let url = format!("{}/v1/auth/userpass/login/{}", self.vault_addr, username);
+        let path = format!("auth/userpass/login/{username}");
+        let url = format!("{}/v1/{path}", self.vault_addr);
         let response = self
             .request(reqwest::Method::POST, url)
             .header("Content-Type", "application/json")
@@ -229,30 +231,33 @@ impl VaultAuth {
             .send()
             .await?;
 
-        self.accept_login("Userpass", response).await
+        self.accept_login("Userpass", &path, response).await
     }
 
     /// Take the minted token out of a login answer and store it. Every method
     /// ends here, so a credential never lands in a second place.
-    async fn accept_login(&self, method: &str, response: reqwest::Response) -> Result<String> {
+    async fn accept_login(
+        &self,
+        method: &str,
+        path: &str,
+        response: reqwest::Response,
+    ) -> Result<String> {
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response
+            let body = response
                 .text()
                 .await
                 // discard-ok: building a message from an already-failed response;
-                // the status above is the signal, the body is a courtesy
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(VaultCliError::Auth(format!(
-                "{method} authentication failed: {status} - {error_text}"
-            )));
+                // the status is the signal, the body is a courtesy
+                .unwrap_or_default();
+            return Err(Error::refusal(path, status.as_u16(), body));
         }
 
         let auth_response: Value = response.json().await?;
         let token = auth_response["auth"]["client_token"]
             .as_str()
             .ok_or_else(|| {
-                VaultCliError::Auth(format!(
+                Error::Auth(format!(
                     "{method} authentication answered without a token; \
                      Vault reported: {auth_response}"
                 ))
@@ -307,12 +312,10 @@ impl VaultAuth {
             query.finish()
         };
 
-        let url = format!(
-            "{}/v1/auth/{}/oidc/callback?{query}",
-            self.vault_addr, login.mount
-        );
+        let path = format!("auth/{}/oidc/callback", login.mount);
+        let url = format!("{}/v1/{path}?{query}", self.vault_addr);
         let response = self.request(reqwest::Method::GET, url).send().await?;
-        self.accept_login("OIDC", response).await
+        self.accept_login("OIDC", &path, response).await
     }
 
     /// The provider's authorization URL, as the mount builds it for this role
@@ -323,7 +326,8 @@ impl VaultAuth {
         redirect_uri: &str,
         nonce: &str,
     ) -> Result<String> {
-        let url = format!("{}/v1/auth/{}/oidc/auth_url", self.vault_addr, login.mount);
+        let path = format!("auth/{}/oidc/auth_url", login.mount);
+        let url = format!("{}/v1/{path}", self.vault_addr);
         let mut payload = json!({ "redirect_uri": redirect_uri, "client_nonce": nonce });
         if let Some(role) = login.role {
             payload["role"] = json!(role);
@@ -338,22 +342,20 @@ impl VaultAuth {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response
+            let body = response
                 .text()
                 .await
                 // discard-ok: building a message from an already-failed response;
-                // the status above is the signal, the body is a courtesy
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(VaultCliError::Auth(format!(
-                "OIDC authentication failed: {status} - {error_text}"
-            )));
+                // the status is the signal, the body is a courtesy
+                .unwrap_or_default();
+            return Err(Error::refusal(&path, status.as_u16(), body));
         }
 
         // A role that does not allow this redirect is answered with an empty
         // URL and no error, which opens a browser at nothing.
         let answer: Value = response.json().await?;
         match answer["data"]["auth_url"].as_str().unwrap_or_default() {
-            "" => Err(VaultCliError::Auth(format!(
+            "" => Err(Error::Auth(format!(
                 "The '{}' mount returned no authorization URL for {redirect_uri}. The role's \
                  allowed_redirect_uris has to name it; --port changes the port this asks for.",
                 login.mount
@@ -364,7 +366,8 @@ impl VaultAuth {
 
     /// Renew the current token
     pub async fn renew_token(&self, token: &str) -> Result<String> {
-        let url = format!("{}/v1/auth/token/renew-self", self.vault_addr);
+        let path = "auth/token/renew-self";
+        let url = format!("{}/v1/{path}", self.vault_addr);
 
         let response = self
             .request(reqwest::Method::POST, url)
@@ -375,15 +378,13 @@ impl VaultAuth {
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response
+            let body = response
                 .text()
                 .await
                 // discard-ok: building a message from an already-failed response;
-                // the status above is the signal, the body is a courtesy
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(VaultCliError::Auth(format!(
-                "Token renewal failed: {status} - {error_text}"
-            )));
+                // the status is the signal, the body is a courtesy
+                .unwrap_or_default();
+            return Err(Error::refusal(path, status.as_u16(), body));
         }
 
         let renew_response: Value = response.json().await?;
@@ -418,7 +419,8 @@ impl VaultAuth {
 
     /// Get token info
     pub async fn get_token_info(&self, token: &str) -> Result<Value> {
-        let url = format!("{}/v1/auth/token/lookup-self", self.vault_addr);
+        let path = "auth/token/lookup-self";
+        let url = format!("{}/v1/{path}", self.vault_addr);
 
         let response = self
             .request(reqwest::Method::GET, url)
@@ -428,9 +430,13 @@ impl VaultAuth {
 
         if !response.status().is_success() {
             let status = response.status();
-            return Err(VaultCliError::Auth(format!(
-                "Failed to get token info: {status}"
-            )));
+            let body = response
+                .text()
+                .await
+                // discard-ok: building a message from an already-failed response;
+                // the status is the signal, the body is a courtesy
+                .unwrap_or_default();
+            return Err(Error::refusal(path, status.as_u16(), body));
         }
 
         Ok(response.json().await?)
@@ -476,7 +482,7 @@ impl VaultAuth {
         let token_file = self.token_file()?;
 
         if !token_file.exists() {
-            return Err(VaultCliError::Auth(
+            return Err(Error::Auth(
                 "No stored token found. Please login first.".to_string(),
             ));
         }
@@ -485,7 +491,7 @@ impl VaultAuth {
         let token = token.trim().to_string();
 
         if token.is_empty() {
-            return Err(VaultCliError::Auth(
+            return Err(Error::Auth(
                 "Empty token file. Please login again.".to_string(),
             ));
         }
@@ -512,7 +518,7 @@ impl VaultAuth {
             // the token was already rejected before renewal was attempted, and
             // naming only the renewal sends the operator to look at a lease
             // when what they need is to log in again.
-            return Err(VaultCliError::Auth(format!(
+            return Err(Error::Auth(format!(
                 "The stored token was rejected by Vault, and renewing it did not help \
                  ({renewal_error}). It has been removed; log in again with \
                  `{PROGRAM_NAME} session login`."
@@ -543,9 +549,11 @@ impl VaultAuth {
                 // discard-ok: building a message from an already-failed response;
                 // the status above is the signal, the body is a courtesy
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(VaultCliError::Auth(format!(
-                "Token revocation failed: {status} - {error_text}"
-            )));
+            return Err(Error::refusal(
+                "auth/token/revoke-self",
+                status.as_u16(),
+                error_text,
+            ));
         }
 
         Ok(())
@@ -592,9 +600,7 @@ impl VaultAuth {
 /// refused by Vault rather than exchanged here.
 fn client_nonce() -> Result<String> {
     let mut bytes = [0u8; 20];
-    getrandom::fill(&mut bytes).map_err(|e| {
-        VaultCliError::Auth(format!("Could not generate an OIDC client nonce: {e}"))
-    })?;
+    getrandom::fill(&mut bytes).map_err(std::io::Error::from)?;
 
     Ok(bytes.iter().fold(String::new(), |mut nonce, byte| {
         use std::fmt::Write;
@@ -706,7 +712,8 @@ mod tests {
             .await
             .expect_err("a refused revocation is reported")
             .to_string();
-        assert!(err.contains("revocation failed"), "{err}");
+        assert!(err.contains("403"), "{err}");
+        assert!(err.contains("auth/token/revoke-self"), "{err}");
         assert!(!token_file.exists(), "the token file must be gone anyway");
     }
 

@@ -420,7 +420,7 @@ impl KeyManager {
             // Vault answers alike for a path never written and for a version
             // withdrawn; either way there is no key here.
             Err(e) if e.is_not_found() => return Ok(None),
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.into()),
         };
 
         // Handle both KV v1 and v2 response formats

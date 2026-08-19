@@ -1,6 +1,7 @@
-pub use vault_session::utils::{dns_discovery, errors, output, paths, PROGRAM_NAME};
+pub use vault_session::utils::{dns_discovery, output, paths, PROGRAM_NAME};
 
 pub mod cert_utils;
+pub mod errors;
 pub mod partial;
 pub mod pem;
 pub mod prompt;

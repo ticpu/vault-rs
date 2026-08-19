@@ -1,4 +1,4 @@
-use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::errors::{Error, Result};
 use hickory_resolver::proto::rr::RData;
 use hickory_resolver::TokioResolver;
 use ordermap::OrderSet;
@@ -60,9 +60,15 @@ pub async fn discover_vault_addr() -> Result<String> {
 
     // Create DNS resolver with system configuration
     let resolver = TokioResolver::builder_tokio()
-        .map_err(|e| VaultCliError::Config(format!("Failed to create DNS resolver: {e}")))?
+        .map_err(|e| Error::Discovery {
+            doing: "creating the DNS resolver",
+            source: Box::new(e),
+        })?
         .build()
-        .map_err(|e| VaultCliError::Config(format!("Failed to build DNS resolver: {e}")))?;
+        .map_err(|e| Error::Discovery {
+            doing: "building the DNS resolver",
+            source: Box::new(e),
+        })?;
 
     // Try each search domain
     for domain in search_domains {
@@ -104,15 +110,17 @@ pub async fn discover_vault_addr() -> Result<String> {
         }
     }
 
-    Err(VaultCliError::Config(
-        "Could not discover Vault server via DNS. No SRV records found for _vault._tcp in any search domain.".to_string()
+    Err(Error::NoAddress(
+        "no SRV records found for _vault._tcp in any search domain".to_string(),
     ))
 }
 
 /// Parse search domains from /etc/resolv.conf
 fn parse_resolv_conf_search_domains() -> Result<OrderSet<String>> {
-    let resolv_conf = fs::read_to_string("/etc/resolv.conf")
-        .map_err(|e| VaultCliError::Config(format!("Failed to read /etc/resolv.conf: {e}")))?;
+    let resolv_conf = fs::read_to_string("/etc/resolv.conf").map_err(|e| Error::Discovery {
+        doing: "reading /etc/resolv.conf",
+        source: Box::new(e),
+    })?;
 
     let mut search_domains = OrderSet::new();
 
@@ -135,8 +143,8 @@ fn parse_resolv_conf_search_domains() -> Result<OrderSet<String>> {
     }
 
     if search_domains.is_empty() {
-        return Err(VaultCliError::Config(
-            "No search domains found in /etc/resolv.conf".to_string(),
+        return Err(Error::NoAddress(
+            "no search domains found in /etc/resolv.conf".to_string(),
         ));
     }
 
@@ -157,14 +165,19 @@ fn get_cached_vault_addr() -> Result<String> {
     let cache_file = get_cache_file_path()?;
 
     if !cache_file.exists() {
-        return Err(VaultCliError::Config("No cached Vault address".to_string()));
+        return Err(Error::NoAddress("no cached Vault address".to_string()));
     }
 
-    let cache_content = fs::read_to_string(&cache_file)
-        .map_err(|e| VaultCliError::Config(format!("Failed to read cached Vault address: {e}")))?;
+    let cache_content = fs::read_to_string(&cache_file).map_err(|e| Error::Discovery {
+        doing: "reading the cached Vault address",
+        source: Box::new(e),
+    })?;
 
-    let cached: CachedVaultAddr = serde_yaml_ng::from_str(&cache_content)
-        .map_err(|e| VaultCliError::Config(format!("Failed to parse cached Vault address: {e}")))?;
+    let cached: CachedVaultAddr =
+        serde_yaml_ng::from_str(&cache_content).map_err(|e| Error::Discovery {
+            doing: "parsing the cached Vault address",
+            source: Box::new(e),
+        })?;
 
     // Check if cache has expired based on DNS TTL
     let now = std::time::SystemTime::now()
@@ -181,8 +194,8 @@ fn get_cached_vault_addr() -> Result<String> {
             age,
             cached.ttl_seconds
         );
-        return Err(VaultCliError::Config(
-            "Cache expired based on DNS TTL".to_string(),
+        return Err(Error::NoAddress(
+            "cache expired based on DNS TTL".to_string(),
         ));
     }
 
@@ -216,11 +229,15 @@ fn cache_vault_addr(vault_addr: &str, ttl_seconds: u32) -> Result<()> {
         ttl_seconds: ttl_seconds as u64,
     };
 
-    let cache_content = serde_yaml_ng::to_string(&cached)
-        .map_err(|e| VaultCliError::Config(format!("Failed to serialize cache data: {e}")))?;
+    let cache_content = serde_yaml_ng::to_string(&cached).map_err(|e| Error::Discovery {
+        doing: "serializing the cached Vault address",
+        source: Box::new(e),
+    })?;
 
-    fs::write(&cache_file, cache_content)
-        .map_err(|e| VaultCliError::Config(format!("Failed to cache Vault address: {e}")))?;
+    fs::write(&cache_file, cache_content).map_err(|e| Error::Discovery {
+        doing: "writing the cached Vault address",
+        source: Box::new(e),
+    })?;
 
     tracing::debug!(
         "Cached Vault address to: {} (TTL: {}s)",

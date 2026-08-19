@@ -29,7 +29,7 @@ pub async fn show_role_info(
     // carries without saying so.
     if output.json {
         let raw = client.get(&format!("{pki_mount}/roles/{role}")).await?;
-        return output.print_json(&raw);
+        return Ok(output.print_json(&raw)?);
     }
 
     let role_config = client.read_role(pki_mount, role).await?;

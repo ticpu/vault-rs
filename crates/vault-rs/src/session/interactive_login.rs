@@ -24,7 +24,7 @@ impl InteractiveLogin for VaultAuth {
         let method = auth_method.unwrap_or_else(|| "ldap".to_string());
 
         if method == "oidc" {
-            return self.login_oidc(&method, None).await;
+            return Ok(self.login_oidc(&method, None).await?);
         }
 
         // Get username
@@ -40,8 +40,8 @@ impl InteractiveLogin for VaultAuth {
             .map_err(|e| VaultCliError::Auth(format!("Failed to read password: {e}")))?;
 
         match method.as_str() {
-            "ldap" => self.login_ldap(username, &password).await,
-            "userpass" => self.login_userpass(username, &password).await,
+            "ldap" => Ok(self.login_ldap(username, &password).await?),
+            "userpass" => Ok(self.login_userpass(username, &password).await?),
             _ => Err(VaultCliError::Auth(format!(
                 "Unsupported auth method: {method}"
             ))),

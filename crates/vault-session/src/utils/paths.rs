@@ -1,4 +1,4 @@
-use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::errors::{Error, Result};
 use crate::utils::PROGRAM_NAME;
 use dirs;
 use std::fs;
@@ -11,16 +11,14 @@ impl VaultCliPaths {
     pub fn data_dir() -> Result<PathBuf> {
         dirs::data_local_dir()
             .map(|dir| dir.join(PROGRAM_NAME))
-            .ok_or_else(|| {
-                VaultCliError::Config("Cannot determine local data directory".to_string())
-            })
+            .ok_or_else(|| Error::Paths("Cannot determine local data directory".to_string()))
     }
 
     /// Get the config directory: ~/.config/vault-rs/
     pub fn config_dir() -> Result<PathBuf> {
         dirs::config_dir()
             .map(|dir| dir.join(PROGRAM_NAME))
-            .ok_or_else(|| VaultCliError::Config("Cannot determine config directory".to_string()))
+            .ok_or_else(|| Error::Paths("Cannot determine config directory".to_string()))
     }
 
     /// Get the runtime directory: `$XDG_RUNTIME_DIR/vault-rs/`, falling back to
@@ -36,7 +34,7 @@ impl VaultCliPaths {
         dirs::state_dir()
             .map(|dir| dir.join(PROGRAM_NAME))
             .ok_or_else(|| {
-                VaultCliError::Config(
+                Error::Paths(
                     "XDG_RUNTIME_DIR is unset and no state directory could be determined. \
                      The authentication token goes in one of those two or nowhere; set \
                      XDG_RUNTIME_DIR or XDG_STATE_HOME."

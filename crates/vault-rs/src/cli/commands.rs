@@ -317,7 +317,7 @@ async fn handle_cert_command(command: CertCommands, output: &OutputFormat) -> Re
                         output.print_list(&roles);
                     }
                 }
-                Err(VaultCliError::Auth(e)) => {
+                Err(e) if e.is_permission_denied() => {
                     eprintln!("Error: cannot list roles in PKI mount '{pki_mount}': {e}");
                     eprintln!("Your token may lack permission; check the mounts you can reach with: {PROGRAM_NAME} cert list-mounts");
                     std::process::exit(2);

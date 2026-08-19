@@ -28,7 +28,7 @@ pub async fn list(client: &VaultClient, path: &str, output: &OutputFormat) -> Re
     let listed = client.list(path).await?;
 
     if output.json {
-        return output.print_json(&listed);
+        return Ok(output.print_json(&listed)?);
     }
 
     output.print_list(&crate::vault::extract_keys_array(&listed));
@@ -129,7 +129,7 @@ pub fn report_secret(secret: &Value, field: Option<&str>, output: &OutputFormat)
     // The whole envelope, not just its data: leases and warnings are part of
     // what the server answered.
     if output.json {
-        return output.print_json(secret);
+        return Ok(output.print_json(secret)?);
     }
 
     let Some(fields) = data.as_object() else {

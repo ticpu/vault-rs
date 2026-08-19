@@ -5,7 +5,7 @@
 //! Which prefix a verb needs is fixed; which layout the mount uses is not, and
 //! is asked of the mount rather than read off the path's shape.
 
-use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::errors::{Error, Result};
 use crate::vault::client::{MountVersion, VaultClient};
 #[cfg(test)]
 use serde_json::json;
@@ -58,7 +58,7 @@ impl Target {
         };
 
         if key.is_empty() {
-            return Err(VaultCliError::InvalidInput(format!(
+            return Err(Error::InvalidInput(format!(
                 "'{path}' names a mount but no secret in it"
             )));
         }
@@ -93,7 +93,7 @@ impl Target {
     pub fn require_versions(&self, verb: &str) -> Result<()> {
         match self.versioned {
             true => Ok(()),
-            false => Err(VaultCliError::InvalidInput(format!(
+            false => Err(Error::InvalidInput(format!(
                 "'{}' keeps no version history, so there is nothing for `kv {verb}` to act on",
                 self.mount
             ))),
@@ -131,7 +131,7 @@ pub async fn read_secret(
 
     match envelope.get("data") {
         Some(data) if data.is_object() => Ok(data.clone()),
-        _ => Err(VaultCliError::InvalidInput(format!(
+        _ => Err(Error::InvalidInput(format!(
             "'{}' answered with no fields{}; a withdrawn or destroyed version reads this way",
             target.data(),
             match version {

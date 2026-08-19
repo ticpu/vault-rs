@@ -1,4 +1,4 @@
-use crate::utils::errors::{Result, VaultCliError};
+use crate::utils::errors::{Error, Result};
 use crate::utils::get_vault_addr;
 use crate::vault::mounts::MountsResponse;
 use crate::vault::pki::RoleConfig;
@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 /// rather than unwrapped inline at each call site.
 fn list_method() -> Result<reqwest::Method> {
     reqwest::Method::from_bytes(b"LIST")
-        .map_err(|e| VaultCliError::Storage(format!("invalid HTTP method: {e}")))
+        .map_err(|e| Error::InvalidInput(format!("invalid HTTP method: {e}")))
 }
 
 pub struct SignCertificateRequest<'a> {
@@ -212,7 +212,7 @@ impl VaultClient {
             }
         }
 
-        Err(Self::describe_refusal(path, status.as_u16(), body))
+        Err(Error::refusal(path, status.as_u16(), body))
     }
 
     /// Generic DELETE request to Vault API
@@ -233,8 +233,10 @@ impl VaultClient {
     pub async fn list_mounts(&self) -> Result<MountsResponse> {
         let response = self.get("sys/mounts").await?;
 
-        serde_json::from_value(response)
-            .map_err(|e| VaultCliError::Storage(format!("Failed to parse mounts response: {e}")))
+        serde_json::from_value(response).map_err(|e| Error::Decode {
+            path: "sys/mounts".to_string(),
+            source: e,
+        })
     }
 
     /// List PKI mounts only
@@ -304,8 +306,7 @@ impl VaultClient {
         let response = self.get(&path).await?;
 
         let data = response.get("data").cloned().unwrap_or(Value::Null);
-        serde_json::from_value(data)
-            .map_err(|e| VaultCliError::Storage(format!("Failed to parse role response: {e}")))
+        serde_json::from_value(data).map_err(|e| Error::Decode { path, source: e })
     }
 
     /// Get PKI mount issuer configuration to determine crypto type
@@ -350,14 +351,17 @@ impl VaultClient {
         let body = response.text().await?;
         match body.trim().is_empty() {
             true => Ok(Value::Null),
-            false => Ok(serde_json::from_str(&body)?),
+            false => serde_json::from_str(&body).map_err(|e| Error::Decode {
+                path: path.to_string(),
+                source: e,
+            }),
         }
     }
 
     /// A refusal, with whatever the server said about it. Vault reports these
     /// in an envelope; a body in any other shape is kept whole rather than
     /// discarded for not matching.
-    async fn refusal(path: &str, status: u16, response: Response) -> VaultCliError {
+    async fn refusal(path: &str, status: u16, response: Response) -> Error {
         let body = response
             .text()
             .await
@@ -365,30 +369,7 @@ impl VaultClient {
             // the status is the signal, the body is a courtesy
             .unwrap_or_default();
 
-        Self::describe_refusal(path, status, body)
-    }
-
-    fn describe_refusal(path: &str, status: u16, body: String) -> VaultCliError {
-        let errors = match serde_json::from_str::<Value>(&body) {
-            Ok(envelope) => match envelope.get("errors").and_then(|e| e.as_array()) {
-                Some(reported) => reported
-                    .iter()
-                    .filter_map(|e| e.as_str().map(str::to_string))
-                    .collect(),
-                None => vec![body],
-            },
-            // discard-ok: a body that is not JSON is still what the server said
-            Err(_) => match body.trim().is_empty() {
-                true => Vec::new(),
-                false => vec![body],
-            },
-        };
-
-        VaultCliError::VaultStatus {
-            status,
-            path: path.to_string(),
-            errors,
-        }
+        Error::refusal(path, status, body)
     }
 
     /// Which storage layout the mount answering for `path` uses.

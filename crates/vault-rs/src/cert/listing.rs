@@ -253,7 +253,7 @@ impl CertificateListingService {
             .collect();
 
         if output.json {
-            return output.print_json(&filtered_certs);
+            return Ok(output.print_json(&filtered_certs)?);
         }
 
         if filtered_certs.is_empty() {

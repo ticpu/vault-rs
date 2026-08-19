@@ -144,7 +144,7 @@ async fn load_anchor(client: Option<&VaultClient>, request: &VerifyRequest) -> R
         (Some(path), _) => std::fs::read_to_string(path)
             .map_err(|e| VaultCliError::Storage(format!("Failed to read CA '{path}': {e}"))),
         (None, Some(mount)) => match client {
-            Some(client) => client.get_ca_certificate(mount).await,
+            Some(client) => Ok(client.get_ca_certificate(mount).await?),
             None => Err(VaultCliError::Config(
                 "a mount was given but no Vault client was built".to_string(),
             )),

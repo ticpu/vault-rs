@@ -16,11 +16,11 @@ pub async fn lookup(output: &OutputFormat) -> Result<()> {
     let info = auth.get_token_info(&token).await?;
 
     if output.json {
-        return output.print_json(&info);
+        return Ok(output.print_json(&info)?);
     }
 
     let Some(data) = info.get("data").and_then(|d| d.as_object()) else {
-        return output.print_json(&info);
+        return Ok(output.print_json(&info)?);
     };
 
     let mut rows: Vec<(String, String)> = data
@@ -69,7 +69,7 @@ pub async fn revoke() -> Result<()> {
         Ok(LogoutOutcome::NoToken) => eprintln!("No stored token to revoke"),
         Err(e) => {
             eprintln!("Stored token removed; revoking it on the server failed.");
-            return Err(e);
+            return Err(e.into());
         }
     }
 

@@ -46,7 +46,7 @@ pub async fn show(
     let why = match entry.record {
         Ok(ref record) => {
             return match output.json {
-                true => output.print_json(record),
+                true => Ok(output.print_json(record)?),
                 false => {
                     output.print_key_value(&record_pairs(&entry, record));
                     Ok(())

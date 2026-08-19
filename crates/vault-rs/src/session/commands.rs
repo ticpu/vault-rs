@@ -113,8 +113,8 @@ async fn login_with_credentials(auth: &VaultAuth, method: &str, username: &str) 
         .map_err(|e| VaultCliError::Auth(format!("Failed to read password: {e}")))?;
 
     match method {
-        "ldap" => auth.login_ldap(username, &password).await,
-        "userpass" => auth.login_userpass(username, &password).await,
+        "ldap" => Ok(auth.login_ldap(username, &password).await?),
+        "userpass" => Ok(auth.login_userpass(username, &password).await?),
         _ => Err(VaultCliError::Auth(format!(
             "Unsupported auth method: {method}"
         ))),
@@ -132,7 +132,7 @@ async fn logout_command() -> Result<()> {
         // server and not about whether logging out happened.
         Err(e) => {
             eprintln!("Stored token removed; revoking it on the server failed.");
-            return Err(e);
+            return Err(e.into());
         }
     }
 
