@@ -22,7 +22,6 @@ pub fn create_p12_file(
     no_passphrase: bool,
 ) -> Result<()> {
     use std::fs;
-    // Create temporary files for OpenSSL input in secure runtime directory
 
     let temp_dir = vault_session::paths::runtime_dir(crate::utils::PROGRAM_NAME)?;
     vault_session::paths::ensure_owner_only_dir(&temp_dir)?;
@@ -31,7 +30,6 @@ pub fn create_p12_file(
     let cert_file = temp_dir.join(format!("cert_{}.pem", std::process::id()));
     let ca_file = temp_dir.join(format!("ca_{}.pem", std::process::id()));
 
-    // Write files with secure permissions
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -49,7 +47,6 @@ pub fn create_p12_file(
         }
     }
 
-    // Build OpenSSL command
     let mut args = vec![
         "pkcs12",
         "-export",
@@ -89,7 +86,6 @@ pub fn create_p12_file(
         )));
     }
 
-    // Set secure file permissions on output
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -101,7 +97,6 @@ pub fn create_p12_file(
     Ok(())
 }
 
-/// Write bytes to file, creating directories as needed
 fn write_bytes_to_file(dir: &str, filename: &str, data: &[u8]) -> Result<()> {
     let path = Path::new(dir);
     fs::create_dir_all(path)?;
@@ -113,17 +108,14 @@ fn write_bytes_to_file(dir: &str, filename: &str, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Write text data to file, creating directories as needed
 pub fn write_to_file(dir: &str, filename: &str, data: &str) -> Result<()> {
     write_bytes_to_file(dir, filename, data.as_bytes())
 }
 
-/// Write binary data to file, creating directories as needed
 pub fn write_to_file_bytes(dir: &str, filename: &str, data: &[u8]) -> Result<()> {
     write_bytes_to_file(dir, filename, data)
 }
 
-/// Auto-detect crypto type for a PKI mount or use provided type
 pub async fn resolve_crypto_type(
     client: &VaultClient,
     pki_mount: &str,
@@ -153,7 +145,6 @@ pub async fn validate_role_exists(client: &VaultClient, pki_mount: &str, role: &
     )))
 }
 
-/// Parse comma-separated strings into vectors, trimming whitespace
 pub fn parse_comma_separated(input: Option<&str>) -> Option<Vec<String>> {
     input.map(|names| {
         names
@@ -163,7 +154,6 @@ pub fn parse_comma_separated(input: Option<&str>) -> Option<Vec<String>> {
     })
 }
 
-/// Write content to file or stdout based on output directory
 pub fn write_output_or_print(
     output_dir: Option<&str>,
     filename: &str,
@@ -177,7 +167,6 @@ pub fn write_output_or_print(
     Ok(())
 }
 
-/// Write binary content to file or stdout based on output directory
 pub fn write_output_or_print_bytes(
     output_dir: Option<&str>,
     filename: &str,
@@ -192,7 +181,6 @@ pub fn write_output_or_print_bytes(
     Ok(())
 }
 
-/// Helper for storing certificates to avoid code duplication
 pub struct CertificateStorageHelper {
     pub serial: String,
     pub cn: String,

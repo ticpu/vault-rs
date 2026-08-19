@@ -39,12 +39,8 @@ pub struct StoredIdentity {
 /// is wanted is the moment nothing in that directory decrypts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SealedBy {
-    /// Identifies the cluster, not the material at the key's path — a
-    /// performance secondary serves the replicated KV under its own id — so a
-    /// mismatch ranks the suspicions rather than settling them.
     pub cluster_id: String,
-    /// Where that cluster was reached, as a hint for the operator. Never the
-    /// identity: a cluster outlives any name pointing at it.
+    /// A hint only, never the identity.
     pub address: String,
 }
 
@@ -62,7 +58,6 @@ pub struct CertificateStorage {
 }
 
 impl GetColumnValue for CertificateStorage {
-    /// Get column value for storage certificates using the same system as CertificateMetadata
     fn get_column_value(&self, column: &crate::cert::CertificateColumn) -> String {
         use crate::cert::CertificateColumn;
         match column {
@@ -112,7 +107,6 @@ impl StorageCertificateMetadata {
 }
 
 impl GetColumnValue for StorageCertificateMetadata {
-    /// Get column value using the same system as CertificateMetadata
     fn get_column_value(&self, column: &crate::cert::CertificateColumn) -> String {
         use crate::cert::CertificateColumn;
         match column {

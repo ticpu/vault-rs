@@ -91,7 +91,6 @@ pub fn ensure_owner_only_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Set restrictive permissions (600) on a file for secure storage
 pub fn set_secure_file_permissions<P: AsRef<Path>>(path: P) -> Result<()> {
     #[cfg(unix)]
     {

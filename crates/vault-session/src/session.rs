@@ -253,12 +253,9 @@ impl Session {
         }
     }
 
-    /// Get Vault token from environment or stored token file
     pub async fn get_token(&self) -> Result<String> {
-        // Check environment variable first
         if let Some(token) = self.token_from_env() {
             tracing::debug!("Found a token in the environment");
-            // Validate environment token
             if self.validate_token(&token).await? {
                 tracing::debug!("Environment token is valid");
                 return Ok(token);
@@ -267,7 +264,6 @@ impl Session {
             }
         }
 
-        // Check stored token file
         tracing::trace!("Checking stored token file");
         self.read_stored_token().await
     }
@@ -415,7 +411,6 @@ impl Session {
         }
     }
 
-    /// Renew the current token
     pub async fn renew_token(&self, token: &str) -> Result<String> {
         let renew_response = self
             .transport
@@ -426,7 +421,6 @@ impl Session {
         if let Some(auth) = renew_response.get("auth") {
             if let Some(client_token) = auth.get("client_token") {
                 if let Some(new_token) = client_token.as_str() {
-                    // Store renewed token
                     self.store_token(new_token).await?;
                     tracing::info!("Successfully renewed token");
                     return Ok(new_token.to_string());
@@ -438,7 +432,6 @@ impl Session {
         Ok(token.to_string())
     }
 
-    /// Check if token is valid
     pub async fn validate_token(&self, token: &str) -> Result<bool> {
         self.transport
             .with_token(token)
@@ -446,7 +439,6 @@ impl Session {
             .await
     }
 
-    /// Get token info
     pub async fn get_token_info(&self, token: &str) -> Result<Value> {
         self.transport
             .with_token(token)
@@ -492,7 +484,6 @@ impl Session {
         Ok(())
     }
 
-    /// Read stored token from file
     async fn read_stored_token(&self) -> Result<String> {
         let token_file = &self.token_file;
 
@@ -511,9 +502,7 @@ impl Session {
             ));
         }
 
-        // Validate token is still valid
         if !self.validate_token(&token).await? {
-            // Try to renew token
             let renewal_error = match self.renew_token(&token).await {
                 Ok(renewed_token) => return Ok(renewed_token),
                 // Discarding this reported an unreachable Vault during renewal

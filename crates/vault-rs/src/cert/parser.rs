@@ -6,7 +6,6 @@ use chrono::{DateTime, Utc};
 use x509_parser::der_parser::oid;
 use x509_parser::prelude::*;
 
-// X.509 Extension OIDs
 const SUBJECT_ALT_NAME_OID: oid::Oid = oid!(2.5.29 .17);
 const KEY_USAGE_OID: oid::Oid = oid!(2.5.29 .15);
 const EXTENDED_KEY_USAGE_OID: oid::Oid = oid!(2.5.29 .37);
@@ -37,24 +36,19 @@ fn common_name(name: &x509_parser::x509::X509Name, which: &str) -> Result<String
 pub struct CertificateParser;
 
 impl CertificateParser {
-    /// Parse certificate PEM data into metadata
     pub fn parse_pem(pem_data: &str, pki_mount: &str) -> Result<CertificateMetadata> {
-        // Extract the base64 content from PEM
         let cert_data = Self::extract_cert_from_pem(pem_data)?;
 
-        // Decode base64
         let der_bytes = general_purpose::STANDARD
             .decode(&cert_data)
             .map_err(|e| VaultCliError::CertParsing(format!("Base64 decode error: {e}")))?;
 
-        // Parse DER certificate
         let (_, cert) = X509Certificate::from_der(&der_bytes)
             .map_err(|e| VaultCliError::CertParsing(format!("DER parsing error: {e}")))?;
 
         Self::extract_metadata(&cert, pki_mount)
     }
 
-    /// Extract certificate data from PEM format
     fn extract_cert_from_pem(pem_data: &str) -> Result<String> {
         let mut in_cert = false;
         let mut cert_lines = Vec::new();
@@ -80,9 +74,7 @@ impl CertificateParser {
         Ok(cert_lines.join(""))
     }
 
-    /// Extract metadata from X509 certificate
     fn extract_metadata(cert: &X509Certificate, pki_mount: &str) -> Result<CertificateMetadata> {
-        // Extract serial number - normalize to continuous hex format
         let serial = SerialNumber::new(&hex::encode(cert.serial.to_bytes_be()));
 
         let cn = common_name(cert.subject(), "subject")?;

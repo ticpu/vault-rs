@@ -38,7 +38,6 @@ impl CertificateService {
         Ok(result)
     }
 
-    /// List certificates with metadata from all PKI mounts
     async fn list_certificates_all_mounts(&self) -> Result<Partial<CertificateMetadata>> {
         let pki_mounts = self.client.list_pki_mounts().await?;
         let mut all_certificates = Partial::new();
@@ -61,14 +60,12 @@ impl CertificateService {
     ) -> Result<Partial<CertificateMetadata>> {
         tracing::debug!("Listing certificates for PKI mount: {}", pki_mount);
 
-        // Get list of certificate serials from Vault
         let serials = self.client.list_certificates(pki_mount).await?;
         tracing::debug!("Found {} certificates in Vault", serials.len());
 
         let mut results = Partial::new();
         let mut to_fetch = Vec::new();
 
-        // Check cache for each certificate
         for serial in &serials {
             if let Some(metadata) = self.cache.get_metadata(pki_mount, serial)? {
                 tracing::trace!("Found cached metadata for serial: {}", serial);
@@ -79,7 +76,6 @@ impl CertificateService {
             }
         }
 
-        // Fetch missing certificates from Vault
         if !to_fetch.is_empty() {
             tracing::info!("Fetching {} certificates from Vault", to_fetch.len());
             let mut fetched_metadata = Vec::new();
@@ -106,7 +102,6 @@ impl CertificateService {
         Ok(results)
     }
 
-    /// Fetch certificate metadata from Vault and parse it
     async fn fetch_certificate_metadata(
         &self,
         pki_mount: &str,
@@ -117,7 +112,6 @@ impl CertificateService {
         let cert_data = self.client.get_certificate_pem(pki_mount, serial).await?;
         let mut metadata = CertificateParser::parse_pem(&cert_data.certificate, pki_mount)?;
 
-        // Set revocation time from Vault response
         metadata.revocation_time = cert_data
             .revocation_time
             .map(|t| crate::cert::parser::timestamp(t, "revocation_time"))
@@ -131,17 +125,14 @@ impl CertificateService {
         Ok(metadata)
     }
 
-    /// Clear cache for a PKI mount
     pub fn clear_cache(&self, pki_mount: &str) -> Result<()> {
         self.cache.clear_cache(pki_mount)
     }
 
-    /// Clear all cache files
     pub fn clear_all_cache(&self) -> Result<usize> {
         self.cache.clear_all_cache()
     }
 
-    /// Get cache statistics
     pub fn get_cache_stats(&self) -> Result<Partial<(String, String)>> {
         self.cache.get_stats()
     }

@@ -287,7 +287,7 @@ mod tests {
             client_flag: true,
             server_flag: false,
             ttl: 0,
-            max_ttl: 157_680_000, // 43800h
+            max_ttl: 157_680_000,
             key_type: String::new(),
             key_bits: 0,
             ou: vec!["User TLS Authentication".to_string()],

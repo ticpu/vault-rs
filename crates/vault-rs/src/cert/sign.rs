@@ -30,10 +30,8 @@ pub async fn sign_certificate_from_csr(
     client: &VaultClient,
     request: CsrSignRequest,
 ) -> Result<()> {
-    // Use PKI mount directly - no system-specific suffixes
     let full_pki = request.pki.clone();
 
-    // Auto-detect crypto type if not specified
     let detected_crypto = resolve_crypto_type(
         client,
         &full_pki,
@@ -56,7 +54,6 @@ pub async fn sign_certificate_from_csr(
         eprintln!("TTL: {ttl}");
     }
 
-    // Read CSR from file
     let csr_content = fs::read_to_string(&request.csr_file).map_err(|e| {
         VaultCliError::Storage(format!(
             "Failed to read CSR file '{}': {e}",
@@ -74,7 +71,6 @@ pub async fn sign_certificate_from_csr(
 
     validate_role_exists(client, &full_pki, &request.role).await?;
 
-    // Parse alt_names and ip_sans
     let alt_names_vec = parse_comma_separated(request.alt_names.as_deref());
     let ip_sans_vec = parse_comma_separated(request.ip_sans.as_deref());
 
@@ -111,7 +107,6 @@ pub async fn sign_certificate_from_csr(
 
     let ca_chain = client.get_ca_chain(&full_pki).await?;
 
-    // Sign certificate using CSR
     let sign_request = crate::vault::pki_client::SignCertificateRequest {
         pki_mount: &full_pki,
         role: &request.role,
@@ -124,7 +119,6 @@ pub async fn sign_certificate_from_csr(
 
     let cert_data = client.sign_certificate(sign_request).await?;
 
-    // Extract certificate components
     let certificate = cert_data["data"]["certificate"].as_str().ok_or_else(|| {
         VaultCliError::CertNotFound("Certificate data not found in response".to_string())
     })?;
@@ -161,12 +155,10 @@ pub async fn sign_certificate_from_csr(
         eprintln!("✓ Certificate stored encrypted locally (without private key)");
     }
 
-    // Export plain files if requested
     if let Some(export_dir) = request.export_plain {
         let export_path = Path::new(&export_dir);
         fs::create_dir_all(export_path)?;
 
-        // Write certificate files (no private key for CSR signing)
         let pem_cert = PemCertificate::new(certificate.to_string());
         let pem_issuing_ca = PemCertificate::new(issuing_ca.to_string());
         let ca_chain_with_root = PemCertificateChain::from_pem(&ca_chain)?;

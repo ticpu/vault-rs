@@ -3,7 +3,6 @@ use std::fmt;
 use std::hash::Hash;
 use std::str::FromStr;
 
-/// Represents a certificate serial number that can be formatted in different ways
 #[derive(Debug, Clone, Eq)]
 pub struct SerialNumber {
     hex: String,
@@ -38,7 +37,6 @@ impl SerialNumber {
             return Err(SerialNumberParseError::EmptyString);
         }
 
-        // Remove colons and convert to lowercase
         let cleaned = identifier.replace(':', "").to_lowercase();
 
         // Validate hex characters before length: a non-hex char is a more
@@ -49,7 +47,6 @@ impl SerialNumber {
             }
         }
 
-        // Check if length is even (hex pairs)
         if !cleaned.len().is_multiple_of(2) {
             return Err(SerialNumberParseError::InvalidLength);
         }

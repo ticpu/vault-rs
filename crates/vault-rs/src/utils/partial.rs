@@ -136,9 +136,8 @@ impl<T> Partial<T> {
     ///
     /// Complete, or `allow_partial`: the items, with every skipped subject and
     /// unread field named on stderr. Otherwise an error naming them all and the
-    /// flag, because an exit code that must also mean "answered, partially"
-    /// cannot be acted on. See docs/design-rationale.md, "An incomplete answer
-    /// is refused, not annotated".
+    /// flag. See docs/design-rationale.md, "An incomplete answer is refused,
+    /// not annotated".
     pub fn resolve(self, allow_partial: bool) -> Result<Vec<T>> {
         if self.failures.is_empty() {
             return Ok(self.items);

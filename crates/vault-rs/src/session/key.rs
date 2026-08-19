@@ -96,9 +96,6 @@ pub async fn restore(version: u64) -> Result<()> {
         return Ok(());
     }
 
-    // A partial recovery is a success and has to read as one: taken for a
-    // failure, the next move is to roll back further and burn the version that
-    // was working.
     eprintln!(
         "Restored version {version}. {} of {total} artifacts decrypt, up from {before}.",
         readable.len()

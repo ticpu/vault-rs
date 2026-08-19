@@ -13,12 +13,10 @@ fn print_line(line: &str) {
     }
 }
 
-/// Trait for types that can provide column values
 pub trait GetColumnValue {
     fn get_column_value(&self, column: &CertificateColumn) -> String;
 }
 
-/// Output format configuration
 #[derive(Clone, Debug)]
 pub struct OutputFormat {
     pub raw: bool,
@@ -35,7 +33,6 @@ impl From<crate::config::OutputMode> for OutputFormat {
     }
 }
 
-/// Build table data from certificates and columns
 pub fn build_table_data<T>(
     certificates: &[T],
     parsed_columns: &[CertificateColumn],
@@ -54,7 +51,6 @@ where
         .collect()
 }
 
-/// Build table data with headers from certificates and columns
 pub fn build_table_data_with_headers<T>(
     certificates: &[T],
     parsed_columns: &[CertificateColumn],
@@ -141,7 +137,6 @@ impl OutputFormat {
         }
     }
 
-    /// Print single-column data
     pub fn print_list<T>(&self, items: &[T])
     where
         T: Display,
@@ -151,7 +146,6 @@ impl OutputFormat {
         }
     }
 
-    /// Print key-value pairs
     pub fn print_key_value<K, V>(&self, pairs: &[(K, V)])
     where
         K: Display + AsRef<str>,
@@ -173,7 +167,6 @@ impl OutputFormat {
             return;
         }
 
-        // Calculate column widths
         let num_cols = data[0].len();
         let mut col_widths = vec![0; num_cols];
 
@@ -185,17 +178,14 @@ impl OutputFormat {
             }
         }
 
-        // Print formatted rows
         for row in data {
             let formatted_cells: Vec<String> = row
                 .iter()
                 .enumerate()
                 .map(|(i, cell)| {
                     if i == row.len() - 1 {
-                        // Last column - no padding needed
                         cell.to_string()
                     } else {
-                        // Pad to column width
                         format!("{:<width$}", cell.as_ref(), width = col_widths[i])
                     }
                 })

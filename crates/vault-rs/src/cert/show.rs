@@ -19,7 +19,6 @@ pub async fn show_certificate(
         return output.print_json(&metadata);
     }
 
-    // Use OutputFormat to handle raw vs formatted output properly
     let cert_data = vec![vec![
         metadata.cn,
         metadata.serial.to_string(),

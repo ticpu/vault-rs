@@ -26,7 +26,6 @@ pub struct CaCertInfo {
     pub crl_urls: Vec<String>,
 }
 
-/// Fetch and parse a PKI mount's CA certificate.
 pub async fn show_ca_info(
     client: &VaultClient,
     pki_mount: &str,
@@ -69,7 +68,6 @@ pub async fn show_ca_info(
     Ok(())
 }
 
-/// Parse a CA certificate's identity out of its PEM data.
 pub fn parse_ca_info(pem_data: &str) -> Result<CaCertInfo> {
     let (_, pem) = parse_x509_pem(pem_data.as_bytes())
         .map_err(|e| VaultCliError::CertParsing(format!("Failed to parse PEM certificate: {e}")))?;

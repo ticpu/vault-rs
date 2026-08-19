@@ -11,7 +11,6 @@ pub fn handle_completion_command(command: &CompletionCommands, _cli: &Cli) -> Re
     let shell = command.shell();
     let mut cmd = Cli::command();
 
-    // For bash, add our custom completion enhancement first
     if matches!(shell, Shell::Bash) {
         // clap_complete's bash generator mangles a hyphenated bin name two
         // different ways (`vault__rs__subcmd__cert` when dispatching,
@@ -119,14 +118,12 @@ _vault_rs_override() {{
 "#
         );
 
-        // Generate the base completion
         generate(shell, &mut cmd, &bash_name, &mut io::stdout());
 
         println!();
         println!("# Override the completion function");
         println!("complete -F _vault_rs_override {PROGRAM_NAME}");
     } else {
-        // For non-bash shells, just generate the standard completion
         generate(shell, &mut cmd, PROGRAM_NAME, &mut io::stdout());
     }
 

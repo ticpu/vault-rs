@@ -59,12 +59,10 @@ impl CertificateCache {
         Ok(Self { cache_dir })
     }
 
-    /// Get cache file path for a PKI mount
     fn cache_file_path(&self, pki_mount: &str) -> PathBuf {
         self.cache_dir.join(format!("{pki_mount}.json"))
     }
 
-    /// Load cached certificates for a PKI mount
     pub fn load_cache(&self, pki_mount: &str) -> Result<HashMap<SerialNumber, CacheEntry>> {
         let cache_file = self.cache_file_path(pki_mount);
 
@@ -116,7 +114,6 @@ impl CertificateCache {
         Ok(HashMap::new())
     }
 
-    /// Save cache for a PKI mount
     pub fn save_cache(
         &self,
         pki_mount: &str,
@@ -145,7 +142,6 @@ impl CertificateCache {
         Ok(())
     }
 
-    /// Get certificate metadata from cache
     pub fn get_metadata(
         &self,
         pki_mount: &str,
@@ -156,7 +152,6 @@ impl CertificateCache {
         Ok(cache.get(serial).map(|entry| entry.metadata.clone()))
     }
 
-    /// Clear entire cache for a PKI mount
     pub fn clear_cache(&self, pki_mount: &str) -> Result<()> {
         let cache_file = self.cache_file_path(pki_mount);
         if cache_file.exists() {
@@ -168,7 +163,6 @@ impl CertificateCache {
         Ok(())
     }
 
-    /// Clear all cache files
     pub fn clear_all_cache(&self) -> Result<usize> {
         let mut cleared_count = 0;
 
@@ -244,7 +238,6 @@ impl CertificateCache {
         Ok(stats)
     }
 
-    /// Bulk update cache with multiple certificates
     pub fn bulk_update(
         &self,
         pki_mount: &str,

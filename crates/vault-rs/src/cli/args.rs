@@ -240,9 +240,8 @@ pub enum Commands {
     },
 }
 
-/// Vault's own secrets-engine verbs. Only the listing is modelled; everything
-/// else reaches the same engine through the forwarding command, which is what
-/// keeps `secrets enable` working without this enum growing a variant per verb.
+/// Vault's own secrets-engine verbs. Only the listing is modelled; the rest
+/// forwards.
 #[derive(Subcommand)]
 pub enum SecretsCommands {
     /// List enabled secret engines

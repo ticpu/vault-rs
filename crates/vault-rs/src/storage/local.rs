@@ -89,7 +89,6 @@ impl LocalStorage {
         format!("cert-{pki_mount}-{cn}")
     }
 
-    /// Store certificate data encrypted locally
     pub async fn store_certificate(&self, cert_data: CertificateData<'_>) -> Result<()> {
         let cert_dir = self.cert_dir(cert_data.pki_mount, cert_data.cn, cert_data.serial);
         vault_session::paths::ensure_owner_only_dir(&cert_dir)?;
@@ -568,7 +567,6 @@ impl LocalStorage {
         })
     }
 
-    /// List all locally stored certificates
     pub async fn list_certificates(&self) -> Result<Partial<CertificateStorage>> {
         self.scan().await
     }
@@ -630,7 +628,6 @@ impl LocalStorage {
         Ok(Some(data))
     }
 
-    /// Calculate SHA256 checksum of a file
     fn calculate_file_checksum(&self, file_path: &Path) -> Result<String> {
         let data = fs::read(file_path)?;
         let mut hasher = Sha256::new();

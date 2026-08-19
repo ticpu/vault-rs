@@ -11,9 +11,8 @@ use std::path::PathBuf;
 const KV_PATH: &str = "vault-rs/encryption-key";
 
 /// Where the master key lives: the mount discovered for it, and whether that
-/// mount keeps versions. Carrying the layout with the location is what stops
-/// every consumer reading it back out of the path's shape, which inverts a
-/// consequence of the layout into evidence for it.
+/// mount keeps versions. The layout travels with the location so no consumer
+/// has to read it back out of the path's shape.
 pub struct KeyLocation {
     pub mount: String,
     pub versioned: bool,
@@ -148,10 +147,9 @@ pub async fn retention_at(
 /// back.
 ///
 /// `None` means checked and not that path — never "could not check". The tail
-/// comparison costs nothing and gates the rest, so an ordinary write asks the
-/// server nothing; only a match pays for the mount's answer. What holds the key
-/// is never resolved here: that needs a listing of every mount, a permission the
-/// write itself does not require.
+/// comparison gates the rest, so only a match pays for the mount's answer, and
+/// which mount holds the key is never resolved here: that needs a listing, a
+/// permission the write itself does not require.
 pub async fn master_key_notice(client: &VaultClient, path: &str) -> Option<String> {
     if !path.trim_end_matches('/').ends_with(KV_PATH) {
         return None;
@@ -332,7 +330,6 @@ impl KeyManager {
         )
     }
 
-    /// Generate a new 256-bit master key
     fn generate_master_key(&self) -> [u8; 32] {
         let mut key = [0u8; 32];
         rand::rng().fill_bytes(&mut key);
@@ -424,7 +421,6 @@ impl KeyManager {
             Err(e) => return Err(e.into()),
         };
 
-        // Handle both KV v1 and v2 response formats
         // The versioned layout nests the value one level deeper.
         let key_hex = match location.versioned {
             true => data["data"]["data"]["key"].as_str(),
@@ -454,7 +450,6 @@ impl KeyManager {
         Ok(Some(key))
     }
 
-    /// Store key in Vault KV store
     async fn store_key_in_vault(&self, key: &[u8; 32]) -> Result<()> {
         let location = self.key_location().await?;
         let kv_path = location.data_path();
@@ -476,7 +471,6 @@ impl KeyManager {
         Ok(())
     }
 
-    /// Derive a context-specific key from the master key
     pub fn derive_key(&self, master_key: &[u8; 32], context: &str) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(master_key);
@@ -488,12 +482,10 @@ impl KeyManager {
         derived_key
     }
 
-    /// Create an AES-GCM cipher instance from a key
     pub fn create_cipher(&self, key: &[u8; 32]) -> Aes256Gcm {
         Aes256Gcm::new(&Key::<Aes256Gcm>::from(*key))
     }
 
-    /// Generate a random nonce for AES-GCM
     pub fn generate_nonce(&self) -> [u8; 12] {
         let mut nonce = [0u8; 12];
         rand::rng().fill_bytes(&mut nonce);

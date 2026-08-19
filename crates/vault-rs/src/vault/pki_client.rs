@@ -59,14 +59,11 @@ pub trait PkiClient {
     /// The mounts running the PKI engine, without their trailing separator.
     fn list_pki_mounts(&self) -> impl Future<Output = Result<Vec<String>>> + Send;
 
-    /// List roles for a PKI mount
     fn list_roles(&self, pki_mount: &str) -> impl Future<Output = Result<Vec<String>>> + Send;
 
-    /// Read a role's configuration for a PKI mount
     fn read_role(&self, mount: &str, role: &str)
         -> impl Future<Output = Result<RoleConfig>> + Send;
 
-    /// Get PKI mount issuer configuration to determine crypto type
     fn get_pki_issuer_info(&self, pki_mount: &str) -> impl Future<Output = Result<Value>> + Send;
 
     /// Get CA chain for a PKI mount (returns raw PEM data)
@@ -78,13 +75,11 @@ pub trait PkiClient {
     /// envelope, so reading it as text yields a body no PEM parser accepts.
     fn get_ca_certificate(&self, pki_mount: &str) -> impl Future<Output = Result<String>> + Send;
 
-    /// Issue a new certificate
     fn issue_certificate(
         &self,
         request: IssueCertificateRequest<'_>,
     ) -> impl Future<Output = Result<Value>> + Send;
 
-    /// Sign a certificate from CSR
     fn sign_certificate(
         &self,
         request: SignCertificateRequest<'_>,
@@ -93,7 +88,6 @@ pub trait PkiClient {
     /// Detect crypto type for a PKI mount based on its first issuer
     fn detect_crypto_type(&self, pki_mount: &str) -> impl Future<Output = Result<String>> + Send;
 
-    /// Get certificate details by serial number
     fn get_certificate_info(
         &self,
         pki_mount: &str,
@@ -107,13 +101,11 @@ pub trait PkiClient {
         serial: &SerialNumber,
     ) -> impl Future<Output = Result<CertificateData>> + Send;
 
-    /// List certificates for a PKI mount
     fn list_certificates(
         &self,
         pki_mount: &str,
     ) -> impl Future<Output = Result<Vec<SerialNumber>>> + Send;
 
-    /// Revoke certificate by serial number
     fn revoke_certificate(
         &self,
         pki_mount: &str,
@@ -197,7 +189,6 @@ impl PkiClient for VaultClient {
                 if let Some(issuer_id) = default_issuer_id.as_str() {
                     tracing::debug!("Found default issuer: {issuer_id}");
 
-                    // Get the issuer certificate details
                     let issuer_path = format!("{pki_mount}/issuer/{issuer_id}/json");
                     match self.get(&issuer_path).await {
                         Ok(issuer_info) => {
@@ -217,7 +208,6 @@ impl PkiClient for VaultClient {
             }
         }
 
-        // Fail if we can't detect crypto type - don't risk creating wrong certificate type
         Err(VaultCliError::Storage(format!(
             "Could not detect crypto type for PKI mount '{pki_mount}'. Please specify --crypto explicitly."
         )))
@@ -257,23 +247,18 @@ impl PkiClient for VaultClient {
     }
 }
 
-/// Parse crypto type from certificate PEM
 fn parse_crypto_type_from_pem(cert_pem: &str) -> Result<String> {
     use x509_parser::prelude::*;
 
-    // Parse PEM certificate
     let (_, pem) = parse_x509_pem(cert_pem.as_bytes())
         .map_err(|e| VaultCliError::Storage(format!("Failed to parse PEM certificate: {e}")))?;
 
-    // Parse X.509 certificate from PEM
     let (_, cert) = parse_x509_certificate(&pem.contents)
         .map_err(|e| VaultCliError::Storage(format!("Failed to parse X.509 certificate: {e}")))?;
 
-    // Get the subject public key info
     let public_key_info = &cert.public_key();
     let algorithm_oid = &public_key_info.algorithm.algorithm;
 
-    // Check the algorithm OID to determine crypto type
     match algorithm_oid.to_string().as_str() {
         OID_RSA_ENCRYPTION => Ok("rsa".to_string()),
         OID_EC_PUBLIC_KEY

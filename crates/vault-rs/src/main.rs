@@ -36,9 +36,7 @@ async fn main() {
             std::process::exit(0);
         }
 
-        // `{:#}` prints every cause: a refused connection, an expired server
-        // certificate and a name that does not resolve otherwise render as
-        // the same line.
+        // `{:#}` prints every cause in the chain, not just the top.
         eprintln!("Error: {e:#}");
         std::process::exit(2);
     }

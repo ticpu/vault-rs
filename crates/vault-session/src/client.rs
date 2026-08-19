@@ -173,7 +173,6 @@ impl VaultClient {
         Ok(self.health().await?.cluster_id)
     }
 
-    /// Generic GET request to Vault API
     pub async fn get(&self, path: &str) -> Result<Value> {
         self.transport.get(path).await
     }
@@ -187,7 +186,6 @@ impl VaultClient {
         self.transport.get_text(path).await
     }
 
-    /// Generic POST request to Vault API
     pub async fn post(&self, path: &str, data: Value) -> Result<Value> {
         self.transport.post(path, data).await
     }
@@ -216,12 +214,10 @@ impl VaultClient {
             .await
     }
 
-    /// Generic DELETE request to Vault API
     pub async fn delete(&self, path: &str) -> Result<Value> {
         self.transport.delete(path).await
     }
 
-    /// Generic LIST request to Vault API
     pub async fn list(&self, path: &str) -> Result<Value> {
         self.transport.list(path).await
     }
@@ -325,7 +321,6 @@ impl VaultClient {
         })
     }
 
-    /// List all secret engines (mounts)
     pub async fn list_mounts(&self) -> Result<MountsResponse> {
         let response = self.get("sys/mounts").await?;
 

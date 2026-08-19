@@ -33,11 +33,8 @@ pub async fn list(client: &VaultClient, path: &str, output: &OutputFormat) -> Re
     Ok(())
 }
 
-/// Write to one path.
-///
-/// No confirmation: rehearsing a write is the certificate authority's rule,
-/// and the generic verb has to behave like the generic verb. What it owes is
-/// notice, which `announce` gives before anything is sent.
+/// Write to one path. No confirmation; the notice `announce` gives before
+/// anything is sent is what this owes.
 pub async fn write(
     client: &VaultClient,
     path: &str,

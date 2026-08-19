@@ -28,7 +28,6 @@ impl InteractiveLogin for Session {
                 .await?);
         }
 
-        // Prompts go to stderr: stdout carries data only.
         eprint!("Username: ");
         io::stderr().flush()?;
 
@@ -36,7 +35,6 @@ impl InteractiveLogin for Session {
         io::stdin().read_line(&mut username)?;
         let username = username.trim();
 
-        // Get password securely
         let password = rpassword::prompt_password("Password: ")
             .map_err(|e| VaultCliError::Auth(format!("Failed to read password: {e}")))?;
 

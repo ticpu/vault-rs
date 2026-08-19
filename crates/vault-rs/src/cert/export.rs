@@ -26,7 +26,6 @@ pub struct ExportCertificateRequest {
     pub with_provenance: bool,
 }
 
-/// Find certificate in local storage by identifier (CN or serial)
 async fn find_certificate_in_storage(
     storage: &LocalStorage,
     identifier: &str,
@@ -83,7 +82,6 @@ fn stored_key(pem: String) -> Option<PemPrivateKey> {
     }
 }
 
-/// Get certificate data from local storage by certificate record
 async fn get_certificate_data_from_storage(
     storage: &LocalStorage,
     cert_record: &CertificateStorage,
@@ -98,7 +96,6 @@ async fn get_certificate_data_from_storage(
     Ok((certificate_pem, private_key, ca_chain_pem))
 }
 
-/// Build PEM certificate chain from CA chain PEM data
 fn build_ca_chain(ca_chain_pem: &str) -> Result<PemCertificateChain> {
     let mut ca_chain = PemCertificateChain::new();
     if !ca_chain_pem.is_empty() {
@@ -109,7 +106,6 @@ fn build_ca_chain(ca_chain_pem: &str) -> Result<PemCertificateChain> {
     Ok(ca_chain)
 }
 
-/// Get certificate bundle from local storage
 async fn get_certificate_bundle_from_storage(
     client: &VaultClient,
     identifier: &str,
@@ -258,7 +254,6 @@ async fn export_pem_certificate(
     }
 }
 
-/// Convert PEM certificate data to raw DER bytes
 fn pem_to_der(pem_data: &str) -> Result<Vec<u8>> {
     let (_, pem) = parse_x509_pem(pem_data.as_bytes()).map_err(|e| {
         VaultCliError::CertParsing(format!("Failed to parse PEM for DER export: {e}"))
@@ -266,7 +261,6 @@ fn pem_to_der(pem_data: &str) -> Result<Vec<u8>> {
     Ok(pem.contents)
 }
 
-/// Certificate only, DER-encoded (binary)
 async fn export_der_certificate(
     request: &ExportCertificateRequest,
     certificate: PemCertificate,
@@ -347,7 +341,6 @@ async fn export_certificate_chain(
     }
 }
 
-/// Key export requires local storage lookup
 async fn export_key(client: &VaultClient, request: &ExportCertificateRequest) -> Result<()> {
     let storage = LocalStorage::with_client(client.clone())?;
 
@@ -373,12 +366,10 @@ async fn export_key(client: &VaultClient, request: &ExportCertificateRequest) ->
     }
 }
 
-/// Export certificate in various formats
 pub async fn export_certificate(
     client: &VaultClient,
     request: ExportCertificateRequest,
 ) -> Result<()> {
-    // Parse input PEM data to get the first certificate (leaf certificate)
     let parsed_certs = parse_certificate_chain(&request.pem_data)?;
     let certificate = if let Some(first_cert) = parsed_certs.first() {
         first_cert.clone()
@@ -472,7 +463,6 @@ fn with_provenance(content: String, provenance: Option<&str>) -> String {
     }
 }
 
-/// Sanitize filename by replacing problematic characters
 fn sanitize_filename(name: &str) -> String {
     let mut result = String::with_capacity(name.len());
     let mut in_run = false;

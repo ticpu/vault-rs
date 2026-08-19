@@ -332,7 +332,6 @@ async fn handle_cert_command(
         CertCommands::ListRoles { pki_mount } => {
             let client = crate::vault::operator_client().await?;
 
-            // List available roles in PKI mount - UNIX friendly output
             match client.list_roles(&pki_mount).await {
                 Ok(roles) => {
                     if !roles.is_empty() {
@@ -490,7 +489,6 @@ async fn handle_cert_command(
             output,
             text,
         } => {
-            // Use shared lookup function (serial is treated as identifier)
             use crate::cert::{
                 export_certificate, find_certificate_by_identifier, ExportCertificateRequest,
             };

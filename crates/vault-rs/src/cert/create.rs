@@ -30,10 +30,8 @@ pub async fn create_certificate(
     client: &VaultClient,
     request: CreateCertificateRequest,
 ) -> Result<()> {
-    // Use PKI mount directly - no system-specific suffixes
     let full_pki = request.pki.clone();
 
-    // Auto-detect crypto type if not specified
     let detected_crypto = resolve_crypto_type(
         client,
         &full_pki,
@@ -104,7 +102,6 @@ pub async fn create_certificate(
 
     let cert_data = client.issue_certificate(issue_request).await?;
 
-    // Extract certificate components
     let certificate = cert_data["data"]["certificate"]
         .as_str()
         .ok_or_else(|| VaultCliError::CertNotFound("Certificate data not found".to_string()))?;
@@ -142,7 +139,6 @@ pub async fn create_certificate(
         eprintln!("✓ Certificate stored encrypted locally");
     }
 
-    // Export plain files if requested
     if let Some(export_dir) = request.export_plain {
         let export_path = Path::new(&export_dir);
         fs::create_dir_all(export_path)?;
@@ -153,7 +149,6 @@ pub async fn create_certificate(
         let ca_chain_with_root = PemCertificateChain::from_pem(&ca_chain)?;
         let ca_chain_no_root = ca_chain_with_root.without_root()?;
 
-        // Write certificate files
         fs::write(
             export_path.join(format!("{}.crt", request.cn)),
             pem_cert.pem_data(),

@@ -103,7 +103,6 @@ async fn discover(cache: Option<&Path>) -> Result<String> {
 
         match resolver.srv_lookup(&srv_name).await {
             Ok(lookup) => {
-                // Use the first SRV record found
                 let srv_record = lookup
                     .answers()
                     .iter()
@@ -115,7 +114,6 @@ async fn discover(cache: Option<&Path>) -> Result<String> {
                     let host = srv.target.to_string();
                     let port = srv.port;
 
-                    // Remove trailing dot from DNS name if present
                     let clean_host = host.trim_end_matches('.');
                     let vault_addr = format!("https://{clean_host}:{port}");
 
@@ -145,7 +143,6 @@ async fn discover(cache: Option<&Path>) -> Result<String> {
     ))
 }
 
-/// Parse search domains from /etc/resolv.conf
 fn parse_resolv_conf_search_domains() -> Result<OrderSet<String>> {
     let resolv_conf = fs::read_to_string("/etc/resolv.conf").map_err(|e| Error::Discovery {
         doing: "reading /etc/resolv.conf",
@@ -157,7 +154,6 @@ fn parse_resolv_conf_search_domains() -> Result<OrderSet<String>> {
     for line in resolv_conf.lines() {
         let line = line.trim();
 
-        // Parse "search" lines
         if let Some(domains_str) = line.strip_prefix("search ") {
             let domains: Vec<String> = domains_str
                 .split_whitespace()
@@ -166,7 +162,6 @@ fn parse_resolv_conf_search_domains() -> Result<OrderSet<String>> {
             search_domains.extend(domains);
         }
 
-        // Parse "domain" lines (legacy format)
         if let Some(domain) = line.strip_prefix("domain ") {
             search_domains.insert(domain.trim().to_string());
         }

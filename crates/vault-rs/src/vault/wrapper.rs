@@ -3,7 +3,6 @@ use std::env;
 use std::process::Command;
 use vault_session::Session;
 
-/// Execute the system vault command with preset VAULT_ADDR and VAULT_TOKEN
 pub async fn exec_vault_command(
     session: &Session,
     subcommand: &str,
@@ -12,14 +11,12 @@ pub async fn exec_vault_command(
     let vault_addr = session.vault_addr().to_string();
     let token = session.get_token().await?;
 
-    // Find the vault executable
     let vault_exe = which::which("vault").map_err(|e| {
         VaultCliError::Config(format!(
             "vault command not found in PATH ({e}). Install the HashiCorp Vault CLI."
         ))
     })?;
 
-    // Build command arguments
     let mut command_args = vec![subcommand.to_string()];
     command_args.extend_from_slice(args);
 
@@ -45,7 +42,6 @@ pub async fn exec_vault_command(
         .status()
         .map_err(|e| VaultCliError::Config(format!("Failed to execute vault command: {e}")))?;
 
-    // Exit with the same code as the vault command
     if !status.success() {
         if let Some(code) = status.code() {
             std::process::exit(code);
