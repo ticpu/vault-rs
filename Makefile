@@ -5,6 +5,16 @@ DEB_ARCH ?= amd64
 # suite ships, and that floor is what makes it portable to production servers.
 DEBIAN_SUITE ?= bullseye
 
+GNU_TRIPLE_amd64 := x86_64-linux-gnu
+GNU_TRIPLE_arm64 := aarch64-linux-gnu
+RUST_TARGET_amd64 := x86_64-unknown-linux-gnu
+RUST_TARGET_arm64 := aarch64-unknown-linux-gnu
+GNU_TRIPLE := $(GNU_TRIPLE_$(DEB_ARCH))
+RUST_TARGET := $(RUST_TARGET_$(DEB_ARCH))
+ifeq ($(RUST_TARGET),)
+$(error DEB_ARCH=$(DEB_ARCH) has no target triple mapping)
+endif
+
 DEB_VERSION := $(shell scripts/package-version.sh)
 ifeq ($(DEB_VERSION),)
 $(error scripts/package-version.sh produced no version)
@@ -44,7 +54,7 @@ arch-install:
 	cd packaging/arch && rm -f ./*.pkg.tar.zst && makepkg -sifc
 
 # Built in the container, extracted through a throwaway container: the image is
-# kept (stable tag) so a rebuild reuses its layer and registry caches. The build
+# kept (stable tag) so a rebuild reuses its layer and build caches. The build
 # context is staged rather than the repo root, which carries target/ and the
 # certificate fixtures.
 $(DIST)/$(BINARY): packaging/Containerfile Cargo.toml $(shell find crates -name '*.rs')
@@ -52,7 +62,8 @@ $(DIST)/$(BINARY): packaging/Containerfile Cargo.toml $(shell find crates -name 
 	mkdir -p "$(CTX)"
 	cp -a Cargo.toml crates "$(CTX)/"
 	if [ -f Cargo.lock ]; then cp -a Cargo.lock "$(CTX)/"; fi
-	$(DOCKER) build --platform linux/$(DEB_ARCH) --build-arg SUITE=$(DEBIAN_SUITE) \
+	$(DOCKER) build --build-arg SUITE=$(DEBIAN_SUITE) \
+		--build-arg GNU_TRIPLE=$(GNU_TRIPLE) --build-arg RUST_TARGET=$(RUST_TARGET) \
 		--tag "$(IMG)" -f packaging/Containerfile "$(CTX)"
 	rm -rf "$(CTX)"
 	rm -rf "$(DIST)"

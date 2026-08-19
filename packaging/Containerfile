@@ -1,13 +1,24 @@
 ARG SUITE=bullseye
 FROM docker.io/library/rust:1-slim-${SUITE}
 
+# The image is always the host's architecture and a foreign DEB_ARCH is cross
+# compiled, because qemu-user emulates rustc and aws-lc's C as well as the code
+# being produced: the same build costs minutes emulated and seconds cross.
+ARG GNU_TRIPLE=x86_64-linux-gnu
+ARG RUST_TARGET=x86_64-unknown-linux-gnu
+
 # aws-lc-sys (pulled in by rustls' aws-lc-rs backend) builds C through cmake.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     cmake \
-    binutils
+    binutils && \
+    if [ "$GNU_TRIPLE" != "$(gcc -dumpmachine)" ]; then \
+      apt-get install -y --no-install-recommends \
+        "gcc-$GNU_TRIPLE" "g++-$GNU_TRIPLE" "binutils-$GNU_TRIPLE" && \
+      rustup target add "$RUST_TARGET"; \
+    fi
 
 WORKDIR /app
 # The Makefile stages the context (Cargo.toml, Cargo.lock, crates/); the repo
@@ -17,16 +28,30 @@ COPY . ./
 # Everything the .deb needs ends up under /app/out so the Makefile extracts it
 # in one `cp`. The glibc floor is read off the binary rather than guessed in the
 # control file: it moves with the base image, and a floor that is too low
-# installs cleanly and then dies at exec on a symbol version.
+# installs cleanly and then dies at exec on a symbol version. Generating the
+# completions runs the built binary, so a cross build needs the host's qemu-user
+# binfmt_misc handler, pointed at the cross sysroot for the foreign loader.
+# CARGO_TARGET_DIR is per-target because the host build scripts cargo keeps
+# outside target/<triple>/ are fingerprinted against CC_<triple>: one shared
+# directory has each architecture invalidating the other's on every build.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry \
     --mount=type=cache,target=/usr/local/cargo/git,id=cargo-git \
-    cargo build --release -p vault-rs && \
+    --mount=type=cache,target=/app/target,id=cargo-target \
+    upper="$(echo "$RUST_TARGET" | tr 'a-z-' 'A-Z_')" && \
+    under="$(echo "$RUST_TARGET" | tr - _)" && \
+    export "CARGO_TARGET_${upper}_LINKER=$GNU_TRIPLE-gcc" \
+           "CC_${under}=$GNU_TRIPLE-gcc" \
+           "CXX_${under}=$GNU_TRIPLE-g++" \
+           "AR_${under}=$GNU_TRIPLE-ar" \
+           "QEMU_LD_PREFIX=/usr/$GNU_TRIPLE" \
+           "CARGO_TARGET_DIR=/app/target/$RUST_TARGET" && \
+    cargo build --release -p vault-rs --target "$RUST_TARGET" && \
     mkdir -p /app/out/completions && \
-    cp target/release/vault-rs /app/out/vault-rs && \
-    strip /app/out/vault-rs && \
+    cp "/app/target/$RUST_TARGET/$RUST_TARGET/release/vault-rs" /app/out/vault-rs && \
+    "$GNU_TRIPLE-strip" /app/out/vault-rs && \
     for shell in bash zsh fish; do \
       /app/out/vault-rs completion "$shell" > "/app/out/completions/$shell"; \
     done && \
-    objdump -T /app/out/vault-rs \
+    "$GNU_TRIPLE-objdump" -T /app/out/vault-rs \
       | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' \
       | sort -Vu | tail -1 > /app/out/glibc-floor
