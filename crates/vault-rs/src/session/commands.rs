@@ -1,8 +1,8 @@
 use crate::cli::args::{KeyCommands, SessionCommands};
+use crate::session::presenter::Console;
 use crate::session::InteractiveLogin;
 use crate::utils::errors::{Result, VaultCliError};
 use crate::utils::output::OutputFormat;
-use vault_session::session::OIDC_REDIRECT_PORT;
 use vault_session::Session;
 use vault_session::{LogoutOutcome, OidcLogin, TokenState};
 
@@ -87,12 +87,18 @@ async fn login_command(request: LoginRequest) -> Result<()> {
     // to ask for.
     let token = match (request.method.as_str(), request.username) {
         ("oidc", _) => {
-            auth.login_oidc_with(OidcLogin {
-                mount: &request.method,
-                role: request.role.as_deref(),
-                port: request.port.unwrap_or(OIDC_REDIRECT_PORT),
-                open_browser: !request.no_browser,
-            })
+            let mut login = OidcLogin::new(&request.method);
+            login.role = request.role;
+            if let Some(port) = request.port {
+                login.redirect.port = port;
+            }
+
+            auth.login_oidc_with(
+                &login,
+                Console {
+                    open_browser: !request.no_browser,
+                },
+            )
             .await?
         }
         (method, Some(user)) => login_with_credentials(&auth, method, &user).await?,

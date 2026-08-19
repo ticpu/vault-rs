@@ -19,7 +19,14 @@ async fn main() -> anyhow::Result<()> {
 
     let session = Session::open(SessionConfig::for_program(PROGRAM)?).await?;
     if !matches!(session.token_state().await?, TokenState::Valid(_)) {
-        session.login_oidc("oidc", None).await?;
+        // The library has no console; where the URL goes is this program's
+        // call, and so is whether a browser is launched at all.
+        session
+            .login_oidc("oidc", None, |url: &str| {
+                eprintln!("Open this URL to authenticate:\n\n{url}\n");
+                Ok(())
+            })
+            .await?;
     }
 
     // Built after the login, so it resolves the token that login stored.

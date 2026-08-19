@@ -18,7 +18,8 @@ mod transport;
 pub use client::VaultClient;
 pub use discovery::Address;
 pub use error::{Error, Result};
-pub use session::{LogoutOutcome, OidcLogin, Session, SessionConfig, TokenState};
+pub use oidc::Redirect;
+pub use session::{LoginPresenter, LogoutOutcome, OidcLogin, Session, SessionConfig, TokenState};
 
 /// Confine the unit tests to the build directory.
 ///

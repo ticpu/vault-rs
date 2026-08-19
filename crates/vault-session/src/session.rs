@@ -1,6 +1,6 @@
 use crate::discovery::Address;
 use crate::error::{Error, Result};
-use crate::oidc::CallbackListener;
+use crate::oidc::{CallbackListener, Redirect};
 use crate::paths;
 use crate::transport::{Transport, TransportSettings};
 use rustify::enums::RequestMethod;
@@ -31,27 +31,52 @@ pub enum LogoutOutcome {
     Revoked,
 }
 
-/// The port the official client uses, and so the one a role's allowed redirect
-/// URIs are most likely already written for.
-pub const OIDC_REDIRECT_PORT: u16 = 8250;
-
 /// What an OIDC login needs beyond the auth mount.
-pub struct OidcLogin<'a> {
-    pub mount: &'a str,
-    pub role: Option<&'a str>,
-    /// Has to match a port in the role's allowed redirect URIs.
-    pub port: u16,
-    pub open_browser: bool,
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
+pub struct OidcLogin {
+    pub mount: String,
+    /// A role left absent lets the mount's own default answer.
+    pub role: Option<String>,
+    pub redirect: Redirect,
 }
 
-impl<'a> OidcLogin<'a> {
-    pub fn new(mount: &'a str) -> Self {
+impl OidcLogin {
+    pub fn new(mount: impl Into<String>) -> Self {
         Self {
-            mount,
-            role: None,
-            port: OIDC_REDIRECT_PORT,
-            open_browser: true,
+            mount: mount.into(),
+            ..Self::default()
         }
+    }
+
+    pub fn role(mut self, role: impl Into<String>) -> Self {
+        self.role = Some(role.into());
+        self
+    }
+
+    pub fn redirect(mut self, redirect: Redirect) -> Self {
+        self.redirect = redirect;
+        self
+    }
+}
+
+/// Where an OIDC login's authorization URL goes.
+///
+/// The library has neither a console nor an opinion about launching a browser:
+/// a program with neither still has to be able to complete a login, and one
+/// that has both decides for itself what "open this" means.
+pub trait LoginPresenter {
+    /// Called once, before the redirect is waited for. An error abandons the
+    /// login rather than waiting out a redirect nobody was sent to fetch.
+    fn present(&self, auth_url: &str) -> Result<()>;
+}
+
+impl<F> LoginPresenter for F
+where
+    F: Fn(&str) -> Result<()>,
+{
+    fn present(&self, auth_url: &str) -> Result<()> {
+        self(auth_url)
     }
 }
 
@@ -274,33 +299,36 @@ impl Session {
 
     /// Authenticate through an identity provider and store the token.
     ///
-    /// `mount` is the auth mount's path, not the provider; a role left absent
-    /// lets the mount's own default answer.
-    pub async fn login_oidc(&self, mount: &str, role: Option<&str>) -> Result<String> {
-        self.login_oidc_with(OidcLogin {
-            role,
-            ..OidcLogin::new(mount)
-        })
-        .await
+    /// `mount` is the auth mount's path, not the provider.
+    pub async fn login_oidc(
+        &self,
+        mount: &str,
+        role: Option<&str>,
+        presenter: impl LoginPresenter,
+    ) -> Result<String> {
+        let login = match role {
+            Some(role) => OidcLogin::new(mount).role(role),
+            None => OidcLogin::new(mount),
+        };
+        self.login_oidc_with(&login, presenter).await
     }
 
-    /// As `login_oidc`, where the caller also decides the redirect port and
-    /// whether a browser is launched.
-    pub async fn login_oidc_with(&self, login: OidcLogin<'_>) -> Result<String> {
+    /// As `login_oidc`, where the caller also decides where the provider
+    /// redirects back to and how long that is waited for.
+    pub async fn login_oidc_with(
+        &self,
+        login: &OidcLogin,
+        presenter: impl LoginPresenter,
+    ) -> Result<String> {
         // Bound before Vault is asked for a URL: a port already taken is the
         // caller's to fix, and finding out first leaves no request outstanding.
-        let listener = CallbackListener::bind(login.port).await?;
+        let listener = CallbackListener::bind(login.redirect.clone()).await?;
         let nonce = client_nonce()?;
         let auth_url = self
-            .oidc_auth_url(&login, &listener.redirect_uri(), &nonce)
+            .oidc_auth_url(login, &listener.redirect_uri(), &nonce)
             .await?;
 
-        // Printed whether or not a browser is launched, so a session that has
-        // none is an ordinary case rather than a failure.
-        eprintln!("Open this URL to authenticate:\n\n{auth_url}\n");
-        if login.open_browser {
-            open_in_browser(&auth_url);
-        }
+        presenter.present(&auth_url)?;
 
         let callback = listener.accept().await?;
         // Scoped: the serializer is not `Send`, and holding one across the
@@ -325,13 +353,13 @@ impl Session {
     /// and this redirect.
     async fn oidc_auth_url(
         &self,
-        login: &OidcLogin<'_>,
+        login: &OidcLogin,
         redirect_uri: &str,
         nonce: &str,
     ) -> Result<String> {
         let path = format!("auth/{}/oidc/auth_url", login.mount);
         let mut payload = json!({ "redirect_uri": redirect_uri, "client_nonce": nonce });
-        if let Some(role) = login.role {
+        if let Some(role) = &login.role {
             payload["role"] = json!(role);
         }
 
@@ -534,21 +562,6 @@ fn client_nonce() -> Result<String> {
     }))
 }
 
-/// Launch a browser at the authorization URL, which is already on stderr — a
-/// launcher that is absent or refuses costs nothing.
-fn open_in_browser(url: &str) {
-    // Without a display `xdg-open` reaches for a terminal browser, which takes
-    // over the terminal this login is reporting to.
-    if env::var_os("DISPLAY").is_none() && env::var_os("WAYLAND_DISPLAY").is_none() {
-        eprintln!("No display session; open the URL above yourself.");
-        return;
-    }
-
-    if let Err(e) = std::process::Command::new("xdg-open").arg(url).spawn() {
-        eprintln!("Could not launch a browser with xdg-open ({e}); open the URL above yourself.");
-    }
-}
-
 /// Every test here turns on the same question: is the credential off this
 /// machine when the command returns? A revocation that fails for an ordinary
 /// reason must not leave the token on disk, and nothing on this path may renew
@@ -669,12 +682,17 @@ mod tests {
     const AUTH_URL: &str = "/v1/auth/oidc/oidc/auth_url";
     const CALLBACK: &str = "/v1/auth/oidc/oidc/callback";
 
-    fn oidc_at(port: u16) -> OidcLogin<'static> {
-        OidcLogin {
+    fn oidc_at(port: u16) -> OidcLogin {
+        OidcLogin::new("oidc").redirect(Redirect {
             port,
-            open_browser: false,
-            ..OidcLogin::new("oidc")
-        }
+            ..Redirect::default()
+        })
+    }
+
+    /// Stands in for a console: these tests turn on where the URL went, not on
+    /// how it is shown.
+    fn discard_the_url(_: &str) -> Result<()> {
+        Ok(())
     }
 
     /// Vault answers a redirect the role does not allow with an empty URL and
@@ -693,7 +711,7 @@ mod tests {
 
         let auth = session_at(&server.uri(), token_at("oidc-refused")).await;
         let err = auth
-            .login_oidc_with(oidc_at(18251))
+            .login_oidc_with(&oidc_at(18251), discard_the_url)
             .await
             .expect_err("no URL to open")
             .to_string();
@@ -730,7 +748,10 @@ mod tests {
             .expect("scratch")
             .join("session/token");
         let auth = session_at(&server.uri(), token_file.clone()).await;
-        let login = tokio::spawn(async move { auth.login_oidc_with(oidc_at(port)).await });
+        let login =
+            tokio::spawn(
+                async move { auth.login_oidc_with(&oidc_at(port), discard_the_url).await },
+            );
 
         redirect_to(port, "/oidc/callback?state=st&code=xyz").await;
 

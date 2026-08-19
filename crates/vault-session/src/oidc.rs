@@ -14,10 +14,14 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 /// The path the redirect URI names, and the only one that ends the wait.
-const CALLBACK_PATH: &str = "/oidc/callback";
+pub const DEFAULT_CALLBACK_PATH: &str = "/oidc/callback";
+
+/// The host a redirect URI names by default. Both loopback families are bound
+/// whatever it says; which one the browser reaches is its resolver's choice.
+pub const DEFAULT_REDIRECT_HOST: &str = "localhost";
 
 /// Long enough to reach a provider that wants a password and a second factor.
-const WAIT: Duration = Duration::from_secs(120);
+pub const DEFAULT_WAIT: Duration = Duration::from_secs(120);
 
 /// A request line longer than this is not a redirect from an identity provider.
 const MAX_REQUEST_LINE: usize = 8192;
@@ -51,17 +55,48 @@ pub struct Callback {
     pub id_token: Option<String>,
 }
 
+/// Where the provider redirects back to, and how long that is waited for.
+///
+/// Every field has to agree with the role's `allowed_redirect_uris`, which is
+/// why none of them is fixed.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct Redirect {
+    pub port: u16,
+    pub host: String,
+    pub path: String,
+    pub timeout: Duration,
+}
+
+impl Redirect {
+    /// The port the official client uses, and so the one a role's allowed
+    /// redirect URIs are most likely already written for.
+    pub const DEFAULT_PORT: u16 = 8250;
+}
+
+impl Default for Redirect {
+    fn default() -> Self {
+        Self {
+            port: Self::DEFAULT_PORT,
+            host: DEFAULT_REDIRECT_HOST.to_string(),
+            path: DEFAULT_CALLBACK_PATH.to_string(),
+            timeout: DEFAULT_WAIT,
+        }
+    }
+}
+
 /// Loopback sockets waiting for the redirect.
 pub struct CallbackListener {
     sockets: Vec<TcpListener>,
-    port: u16,
+    redirect: Redirect,
 }
 
 impl CallbackListener {
-    /// Both loopback families, because the redirect URI names `localhost` and
-    /// which family that resolves to is the browser's resolver's choice.
-    /// Binding one of the two is enough to serve; failing both is not.
-    pub async fn bind(port: u16) -> Result<Self> {
+    /// Both loopback families, because the redirect URI names a host whose
+    /// family is the browser's resolver's choice. Binding one of the two is
+    /// enough to serve; failing both is not.
+    pub async fn bind(redirect: Redirect) -> Result<Self> {
+        let port = redirect.port;
         if port == 0 {
             return Err(Error::InvalidInput(
                 "The OIDC redirect port has to be one the role's allowed redirect URIs name, so \
@@ -100,30 +135,39 @@ impl CallbackListener {
             )));
         }
 
-        Ok(Self { sockets, port })
+        Ok(Self { sockets, redirect })
     }
 
     /// The redirect URI to register with the provider. Taken from the listener
     /// so the port asked for and the port bound cannot drift apart.
     pub fn redirect_uri(&self) -> String {
-        format!("http://localhost:{}{CALLBACK_PATH}", self.port)
+        let Redirect {
+            host, port, path, ..
+        } = &self.redirect;
+        format!("http://{host}:{port}{path}")
     }
 
     /// Serve until the callback arrives or the wait runs out.
     pub async fn accept(self) -> Result<Callback> {
-        let port = self.port;
+        let Redirect {
+            port,
+            path,
+            timeout,
+            ..
+        } = self.redirect;
         let (found, mut arrived) = mpsc::channel(1);
         let servers: Vec<JoinHandle<()>> = self
             .sockets
             .into_iter()
             .map(|socket| {
                 let found = found.clone();
-                tokio::spawn(async move { serve(socket, found).await })
+                let path = path.clone();
+                tokio::spawn(async move { serve(socket, &path, found).await })
             })
             .collect();
         drop(found);
 
-        let outcome = match tokio::time::timeout(WAIT, arrived.recv()).await {
+        let outcome = match tokio::time::timeout(timeout, arrived.recv()).await {
             Ok(Some(outcome)) => outcome,
             // Every server ended without a callback, which only happens when
             // each of them stopped being able to accept.
@@ -135,9 +179,9 @@ impl CallbackListener {
             // is what the message below says
             Err(_) => Err(Error::Auth(format!(
                 "No OIDC redirect arrived within {} seconds. The browser may not have reached \
-                 {CALLBACK_PATH} on this machine; over SSH, forward the port with \
+                 {path} on this machine; over SSH, forward the port with \
                  `ssh -L {port}:localhost:{port}`.",
-                WAIT.as_secs(),
+                timeout.as_secs(),
             ))),
         };
 
@@ -162,7 +206,7 @@ enum Served {
 /// Each connection is served on its own task: a browser that opens a socket
 /// speculatively and sends nothing would otherwise hold the accept loop until
 /// the whole login timed out.
-async fn serve(socket: TcpListener, found: mpsc::Sender<Result<Callback>>) {
+async fn serve(socket: TcpListener, callback_path: &str, found: mpsc::Sender<Result<Callback>>) {
     loop {
         let stream = match socket.accept().await {
             Ok((stream, _)) => stream,
@@ -173,8 +217,9 @@ async fn serve(socket: TcpListener, found: mpsc::Sender<Result<Callback>>) {
         };
 
         let found = found.clone();
+        let callback_path = callback_path.to_string();
         tokio::spawn(async move {
-            match tokio::time::timeout(REQUEST_WAIT, handle(stream)).await {
+            match tokio::time::timeout(REQUEST_WAIT, handle(stream, &callback_path)).await {
                 Ok(Ok(Served::Redirect(outcome))) => {
                     // discard-ok: the receiver is gone only once the login
                     // finished, and a second redirect has nothing to add
@@ -197,7 +242,7 @@ async fn serve(socket: TcpListener, found: mpsc::Sender<Result<Callback>>) {
 }
 
 /// One request: answer it, and say what it was.
-async fn handle(mut stream: TcpStream) -> Result<Served> {
+async fn handle(mut stream: TcpStream, callback_path: &str) -> Result<Served> {
     let line = read_request_line(&mut stream).await?;
     let mut words = line.split(' ');
     let (Some(verb), Some(target)) = (words.next(), words.next()) else {
@@ -205,7 +250,7 @@ async fn handle(mut stream: TcpStream) -> Result<Served> {
     };
 
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    let served = match (path == CALLBACK_PATH, verb) {
+    let served = match (path == callback_path, verb) {
         (false, _) => Served::Ignored,
         // The body is never read, so a mount configured to post its response
         // would otherwise leave the login waiting out its whole timeout on a
@@ -335,7 +380,10 @@ mod tests {
         let waiting = tokio::spawn(
             CallbackListener {
                 sockets: vec![socket],
-                port,
+                redirect: Redirect {
+                    port,
+                    ..Redirect::default()
+                },
             }
             .accept(),
         );
@@ -370,7 +418,10 @@ mod tests {
         let waiting = tokio::spawn(
             CallbackListener {
                 sockets: vec![socket],
-                port,
+                redirect: Redirect {
+                    port,
+                    ..Redirect::default()
+                },
             }
             .accept(),
         );

@@ -2,6 +2,7 @@
 //! published library along with every other `eprintln!`/`stdin` interaction.
 //! Rust has no cross-crate inherent impls, so this is a trait.
 
+use crate::session::presenter::Console;
 use crate::utils::errors::{Result, VaultCliError};
 use std::future::Future;
 use std::io::{self, Write};
@@ -24,12 +25,14 @@ impl InteractiveLogin for Session {
         let method = auth_method.unwrap_or_else(|| "ldap".to_string());
 
         if method == "oidc" {
-            return Ok(self.login_oidc(&method, None).await?);
+            return Ok(self
+                .login_oidc(&method, None, Console { open_browser: true })
+                .await?);
         }
 
-        // Get username
-        print!("Username: ");
-        io::stdout().flush()?;
+        // Prompts go to stderr: stdout carries data only.
+        eprint!("Username: ");
+        io::stderr().flush()?;
 
         let mut username = String::new();
         io::stdin().read_line(&mut username)?;
