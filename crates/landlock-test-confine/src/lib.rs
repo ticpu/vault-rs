@@ -17,6 +17,9 @@
 //! paths regardless, and what is lost is the backstop. Pair it with a probe
 //! asserting a write outside the boundary is refused, so a confinement that
 //! stopped working is caught by something harmless.
+//!
+//! A thread holding CAP_DAC_OVERRIDE or CAP_DAC_READ_SEARCH loses them first,
+//! so tests running as root see file modes as any other account does.
 
 use std::path::{Path, PathBuf};
 
@@ -62,6 +65,8 @@ fn apply(writable: &Path) {
         RulesetCreatedAttr, RulesetStatus, ABI,
     };
 
+    drop_dac_override();
+
     // The first version, because every later one is a superset and the crate
     // negotiates upward on its own. Naming a newer one only narrows the
     // kernels these tests can run on.
@@ -99,6 +104,48 @@ fn apply(writable: &Path) {
             "Landlock is built into this kernel but not enabled",
         ),
         (partial, _) => unconfined(writable, &format!("only {partial:?}")),
+    }
+}
+
+/// Make file modes bind this thread as they bind any other account, so a test
+/// running as root is refused a mode-000 open. CAP_FOWNER stays for cleanup.
+#[cfg(target_os = "linux")]
+fn drop_dac_override() {
+    use rustix::thread::{capabilities, set_capabilities, set_no_new_privs, CapabilitySet};
+
+    let dac = CapabilitySet::DAC_OVERRIDE | CapabilitySet::DAC_READ_SEARCH;
+    let mut sets = match capabilities(None) {
+        Ok(sets) => sets,
+        Err(e) if rustix::process::geteuid().is_root() => {
+            panic!("reading this thread's capabilities as root: {e}")
+        }
+        Err(e) => {
+            eprintln!(
+                "warning: could not read this thread's capabilities ({e}); \
+                 a DAC override it holds would not be dropped"
+            );
+            return;
+        }
+    };
+
+    let held = (sets.effective | sets.permitted | sets.inheritable) & dac;
+    if !held.is_empty() {
+        sets.effective.remove(dac);
+        sets.permitted.remove(dac);
+        sets.inheritable.remove(dac);
+        if let Err(e) = set_capabilities(None, sets) {
+            panic!("dropping {held:?} from this thread: {e}");
+        }
+    }
+
+    // Without it a root execve refills permitted from the bounding set, which
+    // is left alone. Landlock sets it too, but not on the paths that bail out.
+    if let Err(e) = set_no_new_privs(true) {
+        if held.is_empty() {
+            eprintln!("warning: could not set no_new_privs ({e})");
+        } else {
+            panic!("setting no_new_privs after dropping {held:?}: {e}; a child run as root would regain it");
+        }
     }
 }
 

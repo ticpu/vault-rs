@@ -44,6 +44,17 @@ caught by something harmless.
 
 Non-Linux platforms warn and continue.
 
+## Root loses the DAC override
+
+A test running as root, as CI containers often do, reads a mode-000 fixture anyway, so a test proving an unreadable file is reported passes without asserting anything. Before applying Landlock, a thread holding CAP_DAC_OVERRIDE or CAP_DAC_READ_SEARCH drops both from its effective, permitted and inheritable sets, whatever its uid, and sets no_new_privs so a child it executes as root cannot regain them from the bounding set. CAP_FOWNER stays, so a test can chmod its own fixture back and clean up.
+
+A failed drop panics rather than warns: a warning leaves exactly the green tests this exists to prevent. Called from a constructor, that panic aborts the test binary after printing.
+
+Consequences:
+
+- A root run that could only reach the directory you pass through the DAC override now fails to write there, as an unprivileged account would.
+- This is not a sandbox against the code under test: a thread can still create a user namespace and hold the override over its own files inside it.
+
 ## License
 
 MIT OR Apache-2.0.

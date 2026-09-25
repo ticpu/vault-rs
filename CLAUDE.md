@@ -91,7 +91,8 @@ A kernel without it warns and continues — the tests are correct about their pa
 what is lost is the backstop. Each binary probes just outside the boundary
 (`the_unit_tests_cannot_write_outside_the_build_directory`,
 `these_tests_cannot_write_outside_their_scratch_directory`) so a confinement that stopped working
-is caught by the harmless probe rather than a real write.
+is caught by the harmless probe rather than a real write. The same step drops root's DAC override,
+so file modes bind a root test run as they bind any account; failing that drop panics.
 
 **Testing by hand goes through `cargo run --features dev-server -- dev-server`, never a bare
 `vault server -dev`.** That server writes its root token to `$HOME`, so started from a shell it

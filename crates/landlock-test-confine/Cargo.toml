@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Confine a test thread to writing only under the build directory, using Landlock"
+description = "Confine a test thread to writing only under the build directory, using Landlock, and drop root's DAC override"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["landlock", "testing", "sandbox", "confinement", "seccomp"]
@@ -15,3 +15,4 @@ categories = ["development-tools::testing", "os::linux-apis"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
+rustix = { version = "1.1", features = ["process", "thread"] }

@@ -112,4 +112,48 @@ mod confinement {
             ),
         }
     }
+
+    const DAC_OVERRIDE_AND_READ_SEARCH: u64 = 0b110;
+
+    fn status_field<'a>(status: &'a str, name: &str) -> &'a str {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(name)?.strip_prefix(':'))
+            .unwrap_or_else(|| panic!("no {name} in /proc status:\n{status}"))
+            .trim()
+    }
+
+    fn assert_no_dac_override(status: &str, whose: &str) {
+        for set in ["CapEff", "CapPrm"] {
+            let bits = u64::from_str_radix(status_field(status, set), 16)
+                .unwrap_or_else(|e| panic!("{whose} {set} is not hex: {e}"));
+            assert_eq!(
+                bits & DAC_OVERRIDE_AND_READ_SEARCH,
+                0,
+                "{whose} still holds a DAC override in {set} ({bits:x}), so a mode-000 \
+                 fixture reads anyway and a test of the refusal asserts nothing"
+            );
+        }
+    }
+
+    /// The child matters under root: without no_new_privs its execve refills
+    /// permitted from the bounding set, and the parent's own sets look clean.
+    #[test]
+    fn neither_this_thread_nor_its_children_hold_a_dac_override() {
+        let own = std::fs::read_to_string("/proc/thread-self/status")
+            .expect("reading this thread's status");
+        assert_no_dac_override(&own, "this thread");
+        assert_eq!(
+            status_field(&own, "NoNewPrivs"),
+            "1",
+            "no_new_privs is not set"
+        );
+
+        let child = std::process::Command::new("cat")
+            .arg("/proc/self/status")
+            .output()
+            .expect("running cat on its own status");
+        assert!(child.status.success(), "cat failed: {child:?}");
+        assert_no_dac_override(&String::from_utf8_lossy(&child.stdout), "a child");
+    }
 }
