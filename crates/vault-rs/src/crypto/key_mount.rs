@@ -87,11 +87,12 @@ pub struct Candidate {
 /// wrong answer is not an error the operator sees, it is a second key and a
 /// store that stops opening.
 pub fn ambiguous(candidates: &[Candidate]) -> VaultCliError {
-    let mut lines = vec![format!(
+    let mut lines = vec![
         "More than one KV mount could hold this store's master key, and picking one is not \
          something to guess at — the wrong choice mints a second key and leaves everything \
          already stored unreadable.\n\nCandidates:"
-    )];
+            .to_string(),
+    ];
 
     for candidate in candidates {
         let note = match candidate.holds_a_key {
