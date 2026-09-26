@@ -40,7 +40,7 @@ rustls-ring = ["reqwest/rustls-no-provider", "vaultrs/rustls-no-provider", "dep:
 [dev-dependencies]
 anyhow = "1"
 wiremock.workspace = true
-landlock-test-confine = { version = "0.4", path = "../landlock-test-confine" }
+landlock-test-confine = { version = "0.5", path = "../landlock-test-confine" }
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

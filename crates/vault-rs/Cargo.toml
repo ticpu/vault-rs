@@ -55,7 +55,7 @@ dev-server = []
 
 [dev-dependencies]
 wiremock.workspace = true
-landlock-test-confine = { version = "0.4", path = "../landlock-test-confine" }
+landlock-test-confine = { version = "0.5", path = "../landlock-test-confine" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 ctor = "1"
