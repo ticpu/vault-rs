@@ -7,9 +7,15 @@ FROM docker.io/library/rust:1-slim-${SUITE}
 ARG GNU_TRIPLE=x86_64-linux-gnu
 ARG RUST_TARGET=x86_64-unknown-linux-gnu
 
+# The bullseye image's packages come from a security pool withdrawn at LTS end,
+# so apt reads the archive as it was when the image was built.
+ARG SNAPSHOT=20260825T000000Z
+
 # aws-lc-sys (pulled in by rustls' aws-lc-rs backend) builds C through cmake.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    sed -i "s|^deb http://deb.debian.org/\(debian[a-z-]*\) |deb [check-valid-until=no] http://snapshot.debian.org/archive/\1/$SNAPSHOT |" \
+      /etc/apt/sources.list && \
     apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     cmake \
