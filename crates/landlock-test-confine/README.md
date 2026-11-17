@@ -25,7 +25,9 @@ whatever binaries they drive. Writing is allowed only under the path you pass, p
 
 `target_dir()` resolves from the running executable rather than `CARGO_MANIFEST_DIR`, so it is
 correct in a workspace (where the manifest sits under `crates/` but `target/` does not) and follows
-`CARGO_TARGET_DIR` when it is set.
+`CARGO_TARGET_DIR` when it is set. It returns cargo's build-dir (`<build-dir>/<triple>` under
+`--target`), which holds `CARGO_TARGET_TMPDIR`, under both the `<profile>/deps/` layout and the
+`<profile>/build/<pkg>/<hash>/out/` one cargo uses since 1.100, and panics on any other.
 
 ## Per thread, not per process
 

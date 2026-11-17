@@ -23,20 +23,50 @@
 
 use std::path::{Path, PathBuf};
 
-/// The build directory this test binary was compiled into.
+/// The build directory this test binary was compiled into: cargo's build-dir,
+/// or `<build-dir>/<triple>` under `--target`, the directory that holds
+/// `CARGO_TARGET_TMPDIR`.
 ///
 /// Resolved from the running executable rather than `CARGO_MANIFEST_DIR`: in a
 /// workspace the manifest sits under `crates/`, while `target/` stays at the
 /// root, so a path built from the manifest names a directory that does not
-/// exist. Test binaries live at `<target>/<profile>/deps/`, and reading it back
-/// from there also survives `CARGO_TARGET_DIR` pointing somewhere else
-/// entirely, which the Arch package sets.
+/// exist. Reading it back from the executable also follows `CARGO_TARGET_DIR`
+/// and a separate build-dir, which the test process is not told about.
+///
+/// # Panics
+///
+/// When the executable is in neither `<root>/<profile>/deps/` nor
+/// `<root>/<profile>/build/<pkg>/<hash>/out/`. A guess there would quietly
+/// shrink or widen the writable root.
 pub fn target_dir() -> PathBuf {
     let exe = std::env::current_exe().expect("a running test binary has a path");
-    exe.ancestors()
-        .nth(3)
-        .unwrap_or_else(|| panic!("{} is not under <target>/<profile>/deps", exe.display()))
+    build_root(&exe)
+        .unwrap_or_else(|| {
+            panic!(
+                "{} is under neither <root>/<profile>/deps nor \
+                 <root>/<profile>/build/<pkg>/<hash>/out",
+                exe.display()
+            )
+        })
         .to_path_buf()
+}
+
+/// The build root above a test executable, for the two layouts cargo has used.
+fn build_root(exe: &Path) -> Option<&Path> {
+    let named = |n: usize, name: &str| {
+        exe.ancestors()
+            .nth(n)
+            .and_then(Path::file_name)
+            .is_some_and(|found| found == name)
+    };
+    let depth = if named(1, "deps") {
+        3
+    } else if named(1, "out") && named(4, "build") {
+        6
+    } else {
+        return None;
+    };
+    exe.ancestors().nth(depth)
 }
 
 /// A scratch directory under the build directory, named for the caller.
@@ -159,4 +189,45 @@ fn unconfined(writable: &Path, why: &str) {
         "warning: not confined to {} ({why}); a stray write outside it would not be refused",
         writable.display()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_root;
+    use std::path::Path;
+
+    #[test]
+    fn the_deps_layout_resolves_to_the_build_dir() {
+        let exe = Path::new("/w/target/release/deps/suite-0123abcd");
+        assert_eq!(build_root(exe), Some(Path::new("/w/target")));
+    }
+
+    #[test]
+    fn the_build_out_layout_resolves_to_the_build_dir() {
+        let exe = Path::new("/w/target/release/build/my-pkg/0123abcd/out/suite-0123abcd");
+        assert_eq!(build_root(exe), Some(Path::new("/w/target")));
+    }
+
+    #[test]
+    fn a_target_triple_stays_part_of_the_root() {
+        let deps = Path::new("/w/target/x86_64-unknown-linux-gnu/debug/deps/suite-0123abcd");
+        let out = Path::new(
+            "/w/target/x86_64-unknown-linux-gnu/debug/build/my-pkg/0123abcd/out/suite-0123abcd",
+        );
+        let root = Some(Path::new("/w/target/x86_64-unknown-linux-gnu"));
+        assert_eq!(build_root(deps), root);
+        assert_eq!(build_root(out), root);
+    }
+
+    #[test]
+    fn an_unrecognised_layout_has_no_root() {
+        for exe in [
+            "/w/target/release/suite-0123abcd",
+            "/w/target/release/build/my-pkg/out/suite-0123abcd",
+            "/w/target/release/elsewhere/my-pkg/0123abcd/out/suite-0123abcd",
+            "/deps/suite",
+        ] {
+            assert_eq!(build_root(Path::new(exe)), None, "{exe}");
+        }
+    }
 }
